@@ -13,6 +13,7 @@
       "params": {
         "style": "flythrough",
         "speed": 2.0,
+        "centerpiece_locked": true,
         "environment": { "source": "primitive:box_corridor" },
         "scatter": { "source": "primitive:cubes", "count": 36 },
         "centerpiece": { "source": "primitive:torus" }

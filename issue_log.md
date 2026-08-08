@@ -1,5 +1,17 @@
 # HyperSpace Issue Log
 
+## 2026-08-08 — Particles target + real ASCII + emission/lights
+
+**Issue:** Particles mostly only hit images; 3D look stuck; emission/lights barely changed; ASCII was a boxy pixelate, not characters. Feedback weak with particles.
+
+**Plan:** `particles_target` (everything / main / environment / media); flythrough centerpiece+camera-following env particles; stronger HSV emission & light; ASCII glyph atlas + charset presets; stronger feedback smear so particle breakup trails.
+
+## 2026-08-08 — Playlist replace/DnD + fixed centerpiece
+
+**Issue:** Hard to replace playlist items; unclear how to swap env/main/scatter; centerpiece flew along the path instead of staying visible on screen.
+
+**Plan:** Click item name → same Add Media dialog as replace; ▶ to play; drag ⋮⋮ to reorder; OS file drop on row/list. Centerpiece camera-locked with slight idle motion. Clearer layer labels (Background / Scatter / Main character).
+
 ## 2026-08-08 — Fly-through system (3 uploadable layers)
 
 **Issue:** One-off corridor was too fast/disorienting/flashy. Need a reusable walkthrough system: shared path+camera, three separately uploadable layers (environment, scatter, centerpiece), calm defaults, test primitives + real file replace.

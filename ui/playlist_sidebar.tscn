@@ -73,7 +73,7 @@ suffix = "s"
 [node name="PlaylistTitle" type="Label" parent="Margin/Column"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 16
-text = "Playlist  (✕ deletes · sec = hold time)"
+text = "Playlist  (click name = replace · ▶ play · drag ⋮⋮ reorder)"
 
 [node name="AddRow" type="HBoxContainer" parent="Margin/Column"]
 layout_mode = 2
@@ -96,12 +96,12 @@ theme_override_constants/separation = 4
 [node name="FlyTitle" type="Label" parent="Margin/Column/FlythroughSection"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 14
-text = "Fly-through layers"
+text = "Fly-through layers (swap independently)"
 
 [node name="FlyHint" type="Label" parent="Margin/Column/FlythroughSection"]
 layout_mode = 2
 autowrap_mode = 3
-text = "Select a fly-through item, then replace each layer."
+text = "Background / scatter / main character — File or Test on each. Main stays centered on screen."
 
 [node name="EnvLayerRow" type="HBoxContainer" parent="Margin/Column/FlythroughSection"]
 layout_mode = 2
@@ -110,7 +110,7 @@ theme_override_constants/separation = 4
 [node name="EnvLabel" type="Label" parent="Margin/Column/FlythroughSection/EnvLayerRow"]
 layout_mode = 2
 size_flags_horizontal = 3
-text = "Environment"
+text = "Background"
 
 [node name="EnvFileBtn" type="Button" parent="Margin/Column/FlythroughSection/EnvLayerRow"]
 layout_mode = 2
@@ -144,7 +144,7 @@ theme_override_constants/separation = 4
 [node name="CenterLabel" type="Label" parent="Margin/Column/FlythroughSection/CenterLayerRow"]
 layout_mode = 2
 size_flags_horizontal = 3
-text = "Centerpiece"
+text = "Main character"
 
 [node name="CenterFileBtn" type="Button" parent="Margin/Column/FlythroughSection/CenterLayerRow"]
 layout_mode = 2

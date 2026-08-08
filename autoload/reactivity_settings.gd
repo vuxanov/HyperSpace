@@ -14,6 +14,8 @@ var affect_emission: bool = true
 var affect_rotation: bool = true
 var scale_amount: float = 5.0  # numeric multiplier — higher = much stronger scale reaction
 var target: String = "centerpiece"  # centerpiece | scatter | environment | all | foreground (alias)
+## What the Particles effect breaks apart: centerpiece | environment | media | all
+var particles_target: String = "all"
 
 
 func set_enabled(value: bool) -> void:

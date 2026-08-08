@@ -104,13 +104,11 @@ func apply_audio_state(state: AudioState) -> void:
 
 
 func _sync_particles() -> void:
-	var want := ShowDirector.get_effect_enabled("particles")
+	var want := RH.particles_applies_to("media")
 	if want == _particles_mode:
 		return
 	_particles_mode = want
 	if _texture_rect:
-		# Keep image visible faintly so ASCII/feedback still have something to sample,
-		# but emphasize particles when active.
 		_texture_rect.modulate.a = 0.25 if _particles_mode else 1.0
 	if _particles:
 		_particles.emitting = _particles_mode

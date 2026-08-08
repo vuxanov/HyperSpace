@@ -96,12 +96,43 @@ func move_item(from_index: int, to_index: int) -> void:
 		return
 	if to_index < 0 or to_index >= items.size():
 		return
+	if from_index == to_index:
+		return
 	var item: PlaylistItem = items[from_index]
 	items.remove_at(from_index)
 	items.insert(to_index, item)
 	if current_index == from_index:
 		current_index = to_index
+	elif from_index < current_index and to_index >= current_index:
+		current_index -= 1
+	elif from_index > current_index and to_index <= current_index:
+		current_index += 1
 	playlist_changed.emit()
+
+
+func replace_item_at(index: int, data: Dictionary, play_now: bool = true) -> void:
+	if index < 0 or index >= items.size():
+		return
+	var old: PlaylistItem = items[index]
+	var old_id := old.id
+	var new_item := PlaylistItem.new(data)
+	if new_item.duration <= 0.0:
+		new_item.duration = old.duration if old.duration > 0.0 else default_item_duration
+	if new_item.id.is_empty():
+		new_item.id = _unique_id(new_item.type)
+	elif new_item.id != old_id and ShowLoader.find_item(items, new_item.id) != null:
+		new_item.id = _unique_id(new_item.id)
+	if _item_nodes.has(old_id):
+		var node: Control = _item_nodes[old_id] as Control
+		if node == current_item_node:
+			current_item_node = null
+		if node != null:
+			node.queue_free()
+		_item_nodes.erase(old_id)
+	items[index] = new_item
+	playlist_changed.emit()
+	if play_now or index == current_index:
+		play_index(index, Transition.Mode.CUT, 0.0)
 
 
 func get_effect_enabled(effect_id: String) -> bool:

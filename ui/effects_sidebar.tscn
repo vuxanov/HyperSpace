@@ -160,6 +160,13 @@ value = 80.0
 layout_mode = 2
 text = "Particles (break objects apart)"
 
+[node name="ParticlesTargetLabel" type="Label" parent="Margin/Column/FxSection"]
+layout_mode = 2
+text = "Particles affect"
+
+[node name="ParticlesTarget" type="OptionButton" parent="Margin/Column/FxSection"]
+layout_mode = 2
+
 [node name="FeedbackToggle" type="CheckButton" parent="Margin/Column/FxSection"]
 layout_mode = 2
 text = "Feedback Trail"

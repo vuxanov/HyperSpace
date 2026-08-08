@@ -129,7 +129,7 @@ func _process(delta: float) -> void:
 
 
 func _sync_particles_mode() -> void:
-	var want := ShowDirector.get_effect_enabled("particles")
+	var want := RH.particles_applies_to("centerpiece") or RH.particles_applies_to("foreground")
 	if want == _particles_mode:
 		return
 	_particles_mode = want
@@ -151,9 +151,10 @@ func apply_audio_state(state: AudioState) -> void:
 			if ring.material_override is StandardMaterial3D:
 				var mat: StandardMaterial3D = ring.material_override
 				mat.emission_energy_multiplier = 0.5 + state.energy * 3.0 * RH.scale_amount() * 0.15
-	if RH.affect_light() and _light and RH.applies_to("foreground"):
+	if RH.affect_light() and _light:
 		_light.light_energy = 1.0 + state.bass * 4.0
 		_light.omni_range = 8.0 + state.energy * 10.0
+		_light.light_color = Color.from_hsv(fposmod(0.55 + state.mids * 0.4, 1.0), 0.5, 1.0)
 	if not RH.applies_to("foreground"):
 		return
 	var scale_amt := 1.0
@@ -176,7 +177,10 @@ func apply_audio_state(state: AudioState) -> void:
 		_mesh.scale = scale_vec
 		if RH.affect_emission() and _mesh.material_override is StandardMaterial3D:
 			var mat: StandardMaterial3D = _mesh.material_override
-			mat.emission = base_color * (0.5 + state.mids * 2.0)
+			var hue := fposmod(state.mids * 0.7, 1.0)
+			mat.emission = Color.from_hsv(hue, 0.7, 1.0)
+			mat.emission_energy_multiplier = 1.0 + state.mids * 5.0
+			mat.albedo_color = base_color.lerp(mat.emission, 0.35)
 	if RH.affect_rotation():
 		_rotation_speed = 0.2 + state.highs * 1.5
 

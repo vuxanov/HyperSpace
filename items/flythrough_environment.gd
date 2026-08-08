@@ -23,7 +23,15 @@ var _centerpiece_mesh: MeshInstance3D
 var _scatter_meshes: Array[MeshInstance3D] = []
 var _center_base_scale := Vector3.ONE
 var _scatter_base_scales: Array[Vector3] = []
-var _follow_centerpiece: bool = true
+## Keep centerpiece locked in the middle of the camera view (not flying along the path).
+var _centerpiece_locked: bool = true
+var _center_distance: float = 4.0
+var _idle_t: float = 0.0
+var _center_particles: GPUParticles3D
+var _env_particles: GPUParticles3D
+var _center_particles_on: bool = false
+var _env_particles_on: bool = false
+var _accent := Color(0.45, 0.75, 1.0)
 
 
 func _ready() -> void:
@@ -45,7 +53,11 @@ func configure_from_params(params: Dictionary) -> void:
 	if params.has("centerpiece") and params["centerpiece"] is Dictionary:
 		_layer_configs["centerpiece"] = (params["centerpiece"] as Dictionary).duplicate(true)
 	if params.has("follow_centerpiece"):
-		_follow_centerpiece = bool(params["follow_centerpiece"])
+		_centerpiece_locked = bool(params["follow_centerpiece"])
+	if params.has("centerpiece_locked"):
+		_centerpiece_locked = bool(params["centerpiece_locked"])
+	if params.has("center_distance"):
+		_center_distance = float(params["center_distance"])
 	if is_inside_tree():
 		if _rig:
 			_rig.fly_speed = fly_speed
@@ -92,7 +104,9 @@ func _build_world() -> void:
 	env.fog_enabled = true
 	env.fog_light_color = Color(0.08, 0.09, 0.11)
 	env.fog_density = 0.015
-	env.glow_enabled = false
+	env.glow_enabled = true
+	env.glow_intensity = 0.9
+	env.glow_bloom = 0.35
 	world_env.environment = env
 	add_child(world_env)
 
@@ -117,6 +131,55 @@ func _build_world() -> void:
 	_center_root = Node3D.new()
 	_center_root.name = "Centerpiece"
 	add_child(_center_root)
+	_setup_particle_systems()
+
+
+func _setup_particle_systems() -> void:
+	_center_particles = GPUParticles3D.new()
+	_center_particles.emitting = false
+	_center_particles.amount = 320
+	_center_particles.lifetime = 1.2
+	_center_particles.explosiveness = 0.35
+	_center_particles.visibility_aabb = AABB(Vector3(-6, -6, -6), Vector3(12, 12, 12))
+	var cmesh := SphereMesh.new()
+	cmesh.radius = 0.06
+	cmesh.height = 0.12
+	_center_particles.draw_pass_1 = cmesh
+	var cmat := ParticleProcessMaterial.new()
+	cmat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+	cmat.emission_sphere_radius = 0.7
+	cmat.direction = Vector3(0, 1, 0)
+	cmat.spread = 180.0
+	cmat.initial_velocity_min = 0.4
+	cmat.initial_velocity_max = 2.5
+	cmat.gravity = Vector3(0, -0.2, 0)
+	cmat.scale_min = 0.5
+	cmat.scale_max = 1.4
+	_center_particles.process_material = cmat
+	_center_root.add_child(_center_particles)
+
+	_env_particles = GPUParticles3D.new()
+	_env_particles.emitting = false
+	_env_particles.amount = 500
+	_env_particles.lifetime = 2.0
+	_env_particles.explosiveness = 0.05
+	_env_particles.visibility_aabb = AABB(Vector3(-20, -10, -40), Vector3(40, 20, 80))
+	var emesh := BoxMesh.new()
+	emesh.size = Vector3(0.08, 0.08, 0.08)
+	_env_particles.draw_pass_1 = emesh
+	var emat := ParticleProcessMaterial.new()
+	emat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	emat.emission_box_extents = Vector3(2.0, 1.6, 8.0)
+	emat.direction = Vector3(0, 0, 1)
+	emat.spread = 25.0
+	emat.initial_velocity_min = 0.2
+	emat.initial_velocity_max = 1.5
+	emat.gravity = Vector3(0, 0, 0)
+	emat.scale_min = 0.4
+	emat.scale_max = 1.2
+	_env_particles.process_material = emat
+	# Follow camera so particles fill the view, not a fixed wall.
+	add_child(_env_particles)
 
 
 func _rebuild_all() -> void:
@@ -164,6 +227,8 @@ func _rebuild_path_from_environment() -> void:
 
 func _rebuild_centerpiece() -> void:
 	for child in _center_root.get_children():
+		if child == _center_particles:
+			continue
 		_center_root.remove_child(child)
 		child.free()
 	_centerpiece_mesh = null
@@ -182,17 +247,32 @@ func _rebuild_centerpiece() -> void:
 	else:
 		_centerpiece_mesh = FlythroughPrimitives.spawn_centerpiece("torus", _center_root)
 		_center_base_scale = Vector3.ONE
+	_center_particles_on = false  # force resync
+	_sync_particles()
 
 
 func _place_centerpiece() -> void:
-	if _center_root.get_child_count() == 0 or _curve == null:
+	# Initial pose; _process keeps it camera-centered when locked.
+	_update_centerpiece_transform(0.0)
+
+
+func _update_centerpiece_transform(delta: float) -> void:
+	if _center_root.get_child_count() == 0 or _camera == null:
 		return
-	# Sit centerpiece ahead on the path so it's readable while flying.
-	var ahead := mini(12.0, _curve.get_baked_length() * 0.25)
-	var xf := _curve.sample_baked_with_rotation(ahead, false)
-	_center_root.global_position = xf.origin
-	if not _follow_centerpiece:
+	if not _centerpiece_locked:
 		return
+	_idle_t += delta
+	var bob := sin(_idle_t * 1.15) * 0.06
+	var sway := cos(_idle_t * 0.85) * 0.04
+	# Stay in the middle of the screen: fixed offset in camera space.
+	var local_offset := Vector3(sway, bob, -_center_distance)
+	_center_root.global_position = _camera.to_global(local_offset)
+	_center_root.global_basis = _camera.global_transform.basis
+	# Slow idle spin on the mesh itself (independent of camera).
+	if delta > 0.0 and _center_root.get_child_count() > 0:
+		var child := _center_root.get_child(0)
+		if child is Node3D:
+			(child as Node3D).rotate_y(delta * 0.4)
 
 
 func _rebuild_scatter() -> void:
@@ -263,56 +343,149 @@ func _process(delta: float) -> void:
 		_rig.advance(delta)
 	if _camera and _light:
 		_light.global_position = _camera.global_position + Vector3(0, 1.2, 0)
-	if _follow_centerpiece and _curve and _center_root.get_child_count() > 0 and _rig:
-		var ahead := fposmod(_rig.get_distance() + 10.0, maxf(_rig.get_path_length(), 0.01))
-		var xf := _curve.sample_baked_with_rotation(ahead, false)
-		_center_root.global_position = xf.origin
+	_update_centerpiece_transform(delta)
+	_sync_particles()
+	# Keep environment particles as a volume just ahead of the camera.
+	if _env_particles and _camera:
+		_env_particles.global_transform = Transform3D(
+			_camera.global_transform.basis,
+			_camera.to_global(Vector3(0, 0, -6.0))
+		)
+
+
+func _sync_particles() -> void:
+	var want_center := RH.particles_applies_to("centerpiece")
+	var want_env := RH.particles_applies_to("environment")
+	if want_center != _center_particles_on:
+		_center_particles_on = want_center
+		if _center_particles:
+			_center_particles.emitting = want_center
+			_center_particles.visible = want_center
+		_set_centerpiece_mesh_visible(not want_center)
+	if want_env != _env_particles_on:
+		_env_particles_on = want_env
+		if _env_particles:
+			_env_particles.emitting = want_env
+			_env_particles.visible = want_env
+
+
+func _set_centerpiece_mesh_visible(vis: bool) -> void:
+	for child in _center_root.get_children():
+		if child == _center_particles:
+			continue
+		if child is Node3D:
+			(child as Node3D).visible = vis
 
 
 func apply_audio_state(state: AudioState) -> void:
+	_sync_particles()
 	if not RH.enabled():
 		_reset_reactive_scales()
 		return
-	# Environment — subtle light only when targeted (no strobing emission).
-	if RH.applies_to("environment"):
-		if RH.affect_light() and _light:
-			_light.light_energy = 0.85 + state.energy * 0.6
+
+	# Lights — strong, visible color + energy shifts when enabled.
+	if RH.affect_light() and _light:
+		var drive := state.bass * 1.2 + state.energy
+		_light.light_energy = 0.7 + drive * 3.5
+		_light.omni_range = 16.0 + state.energy * 18.0
+		var hue := fposmod(0.55 + state.mids * 0.35 + state.highs * 0.25, 1.0)
+		_light.light_color = Color.from_hsv(hue, 0.55 + state.mids * 0.35, 1.0)
 	elif _light:
 		_light.light_energy = 1.0
+		_light.light_color = Color(0.95, 0.95, 1.0)
 
-	# Scatter
+	if RH.applies_to("environment") and RH.affect_emission():
+		_tint_environment_emission(state)
+
 	if RH.applies_to("scatter"):
 		_apply_scatter_audio(state)
 	else:
 		_reset_scatter_scales()
 
-	# Centerpiece (foreground is an alias via ReactivityHub)
 	if RH.applies_to("centerpiece"):
 		_apply_centerpiece_audio(state)
 	else:
 		_reset_centerpiece_scale()
 
+	if _center_particles_on and _center_particles:
+		_center_particles.amount = clampi(int(160 + state.bass * 500), 80, 900)
+		if _center_particles.process_material is ParticleProcessMaterial:
+			var pm: ParticleProcessMaterial = _center_particles.process_material
+			pm.initial_velocity_max = 1.0 + state.energy * 5.0
+			pm.color = Color.from_hsv(fposmod(state.mids, 1.0), 0.7, 1.0)
+		if state.beat:
+			_center_particles.restart()
+	if _env_particles_on and _env_particles:
+		_env_particles.amount = clampi(int(200 + state.energy * 600), 100, 1200)
+		if _env_particles.process_material is ParticleProcessMaterial:
+			var epm: ParticleProcessMaterial = _env_particles.process_material
+			epm.initial_velocity_max = 0.8 + state.highs * 4.0
+			epm.color = Color.from_hsv(fposmod(0.4 + state.highs * 0.5, 1.0), 0.6, 1.0)
+
+
+func _tint_environment_emission(state: AudioState) -> void:
+	var hue := fposmod(0.5 + state.bass * 0.4, 1.0)
+	var col := Color.from_hsv(hue, 0.5, 0.35 + state.energy * 0.65)
+	for child in _env_root.get_children():
+		_tint_mesh_tree(child, col, 0.4 + state.energy * 3.0)
+
+
+func _tint_mesh_tree(node: Node, emission_col: Color, energy: float) -> void:
+	if node is MeshInstance3D:
+		var mi := node as MeshInstance3D
+		if mi.material_override is StandardMaterial3D:
+			var mat: StandardMaterial3D = mi.material_override
+			mat.emission_enabled = true
+			mat.emission = emission_col
+			mat.emission_energy_multiplier = energy
+	for child in node.get_children():
+		_tint_mesh_tree(child, emission_col, energy)
+
 
 func _apply_centerpiece_audio(state: AudioState) -> void:
 	var node: Node3D = null
-	if _center_root.get_child_count() > 0 and _center_root.get_child(0) is Node3D:
-		node = _center_root.get_child(0) as Node3D
+	if _center_root.get_child_count() > 0:
+		for child in _center_root.get_children():
+			if child == _center_particles:
+				continue
+			if child is Node3D:
+				node = child as Node3D
+				break
 	if node == null:
 		return
-	if RH.affect_scale():
+	if RH.affect_scale() and not _center_particles_on:
 		var reactive := state.bass * 1.2 + state.energy * 0.5
 		if state.beat:
 			reactive *= 1.25
 		var amt := clampf(1.0 + reactive * RH.scale_amount() * 0.12, 0.5, 8.0)
 		node.scale = _center_base_scale * RH.scale_vector(amt)
-	if RH.affect_rotation():
+	if RH.affect_rotation() and not _center_particles_on:
 		node.rotate_y(state.mids * 0.04)
-	if RH.affect_emission() and node is MeshInstance3D:
+	if RH.affect_emission():
+		var hue := fposmod(state.mids * 0.8 + state.highs * 0.4, 1.0)
+		var col := Color.from_hsv(hue, 0.75, 1.0)
+		_apply_emission_to_node(node, col, 1.0 + state.mids * 6.0 + state.bass * 2.0)
+
+
+func _apply_emission_to_node(node: Node, col: Color, energy: float) -> void:
+	if node is MeshInstance3D:
 		var mi := node as MeshInstance3D
+		var mat: StandardMaterial3D
 		if mi.material_override is StandardMaterial3D:
-			var mat: StandardMaterial3D = mi.material_override
-			mat.emission_enabled = true
-			mat.emission_energy_multiplier = 0.4 + state.mids * 2.0
+			mat = mi.material_override
+		else:
+			mat = StandardMaterial3D.new()
+			if mi.mesh and mi.mesh.surface_get_material(0):
+				var base := mi.mesh.surface_get_material(0)
+				if base is StandardMaterial3D:
+					mat = (base as StandardMaterial3D).duplicate()
+			mi.material_override = mat
+		mat.emission_enabled = true
+		mat.emission = col
+		mat.emission_energy_multiplier = energy
+		mat.albedo_color = col.lerp(mat.albedo_color, 0.35)
+	for child in node.get_children():
+		_apply_emission_to_node(child, col, energy)
 
 
 func _apply_scatter_audio(state: AudioState) -> void:
@@ -328,7 +501,9 @@ func _apply_scatter_audio(state: AudioState) -> void:
 			if mi.material_override is StandardMaterial3D:
 				var mat: StandardMaterial3D = mi.material_override
 				mat.emission_enabled = true
-				mat.emission_energy_multiplier = 0.2 + state.highs * 1.5
+				var hue := fposmod(0.3 + state.highs * 0.6, 1.0)
+				mat.emission = Color.from_hsv(hue, 0.7, 1.0)
+				mat.emission_energy_multiplier = 0.5 + state.highs * 4.0
 
 
 func _reset_reactive_scales() -> void:
@@ -336,6 +511,8 @@ func _reset_reactive_scales() -> void:
 	_reset_scatter_scales()
 	if _light:
 		_light.light_energy = 1.0
+		_light.light_color = Color(0.95, 0.95, 1.0)
+	_set_centerpiece_mesh_visible(not _center_particles_on)
 
 
 func _reset_centerpiece_scale() -> void:
@@ -359,7 +536,11 @@ func set_cue_param(key: String, value: Variant) -> void:
 			if value is Dictionary:
 				set_layer_source(key, value)
 		"follow_centerpiece":
-			_follow_centerpiece = bool(value)
+			_centerpiece_locked = bool(value)
+		"centerpiece_locked":
+			_centerpiece_locked = bool(value)
+		"center_distance":
+			_center_distance = float(value)
 		"layer":
 			# Expect { "id": "scatter", "config": { ... } }
 			if value is Dictionary:

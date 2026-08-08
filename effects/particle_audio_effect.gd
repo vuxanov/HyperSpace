@@ -1,8 +1,7 @@
 extends EffectLayer
 class_name ParticleAudioEffect
 
-## Marker effect — actual breakup happens on 3D objects (DemoEnvironment).
-## This layer stays lightweight so the toggle still works through ShowDirector.
+## Toggle + target routing. Breakup is applied inside items/environments.
 
 func _ready() -> void:
 	effect_id = "particles"
@@ -12,12 +11,22 @@ func _ready() -> void:
 
 func set_active(is_on: bool) -> void:
 	enabled = is_on
-	visible = false  # mesh→particles is handled inside the 3D environment
+	visible = false
+
+
+func apply_params(params: Dictionary) -> void:
+	super.apply_params(params)
+	if params.has("target"):
+		var hub = load("res://core/reactivity_hub.gd")
+		hub.set_field("particles_target", str(params["target"]))
 
 
 func apply_audio_state(_state: AudioState) -> void:
 	pass
 
 
-func _on_params_changed(_params: Dictionary) -> void:
+func _on_params_changed(params: Dictionary) -> void:
+	if params.has("target"):
+		var hub = load("res://core/reactivity_hub.gd")
+		hub.set_field("particles_target", str(params["target"]))
 	visible = false

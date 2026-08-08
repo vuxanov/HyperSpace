@@ -25,6 +25,7 @@ const RH = preload("res://core/reactivity_hub.gd")
 @onready var ascii_preset: OptionButton = $Margin/Column/FxSection/AsciiPreset
 @onready var ascii_density_slider: HSlider = $Margin/Column/FxSection/AsciiDensitySlider
 @onready var particles_toggle: CheckButton = $Margin/Column/FxSection/ParticlesToggle
+@onready var particles_target: OptionButton = $Margin/Column/FxSection/ParticlesTarget
 @onready var feedback_toggle: CheckButton = $Margin/Column/FxSection/FeedbackToggle
 @onready var cue_container: HFlowContainer = $Margin/Column/CueSection/CueContainer
 
@@ -47,6 +48,12 @@ func _ready() -> void:
 	affect_rotation.button_pressed = bool(RH.get_field("affect_rotation", true))
 	scale_amount_spin.value = RH.scale_amount()
 	_select_target_option(RH.target())
+	particles_target.clear()
+	particles_target.add_item("Everything", 0)
+	particles_target.add_item("Main character", 1)
+	particles_target.add_item("Environment", 2)
+	particles_target.add_item("Media (images)", 3)
+	_select_particles_target(str(RH.get_field("particles_target", "all")))
 	reactivity_toggle.toggled.connect(_on_reactivity_toggled)
 	intensity_slider.value_changed.connect(func(v: float) -> void: AudioAnalyzer.master_intensity = v)
 	sensitivity_slider.value_changed.connect(func(v: float) -> void: AudioAnalyzer.band_sensitivity = v)
@@ -63,6 +70,7 @@ func _ready() -> void:
 	ascii_preset.item_selected.connect(_on_ascii_preset)
 	ascii_density_slider.value_changed.connect(_on_ascii_density)
 	particles_toggle.toggled.connect(_on_particles_toggled)
+	particles_target.item_selected.connect(_on_particles_target_selected)
 	feedback_toggle.toggled.connect(_on_feedback_toggled)
 	ShowDirector.show_loaded.connect(func(_n: String) -> void: _rebuild_cues())
 	AudioAnalyzer.state_updated.connect(_on_audio)
@@ -91,6 +99,33 @@ func _sync_target_controls() -> void:
 	affect_rotation.disabled = not on
 	target_option.disabled = not on
 	scale_amount_spin.editable = on
+	particles_target.disabled = not particles_toggle.button_pressed
+
+
+func _select_particles_target(t: String) -> void:
+	match t:
+		"centerpiece", "foreground":
+			particles_target.select(1)
+		"environment":
+			particles_target.select(2)
+		"media":
+			particles_target.select(3)
+		_:
+			particles_target.select(0)
+
+
+func _on_particles_target_selected(index: int) -> void:
+	var t := "all"
+	match index:
+		1:
+			t = "centerpiece"
+		2:
+			t = "environment"
+		3:
+			t = "media"
+	RH.set_field("particles_target", t)
+	if particles_toggle.button_pressed:
+		ShowDirector.set_effect("particles", true, {"intensity": intensity_slider.value, "target": t})
 
 
 func _on_affect_scale(enabled: bool) -> void:
@@ -152,7 +187,9 @@ func _on_ascii_density(value: float) -> void:
 
 
 func _on_particles_toggled(enabled: bool) -> void:
-	ShowDirector.set_effect("particles", enabled, {"intensity": intensity_slider.value})
+	particles_target.disabled = not enabled
+	var t := str(RH.get_field("particles_target", "all"))
+	ShowDirector.set_effect("particles", enabled, {"intensity": intensity_slider.value, "target": t})
 
 
 func _on_feedback_toggled(enabled: bool) -> void:

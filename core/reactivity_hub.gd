@@ -109,6 +109,29 @@ static func applies_to(object_id: String) -> bool:
 	return false
 
 
+static func particles_target() -> String:
+	var n := node()
+	return str(n.get("particles_target")) if n else "all"
+
+
+static func particles_applies_to(layer_id: String) -> bool:
+	## layer_id: centerpiece | environment | media
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree == null or tree.root == null:
+		return false
+	var director := tree.root.get_node_or_null("ShowDirector")
+	if director == null or not bool(director.call("get_effect_enabled", "particles")):
+		return false
+	var t := particles_target()
+	if t == "all":
+		return true
+	if t == layer_id:
+		return true
+	if t == "centerpiece" and layer_id == "foreground":
+		return true
+	return false
+
+
 static func scale_vector(base: float) -> Vector3:
 	var amount := base - 1.0
 	return Vector3(

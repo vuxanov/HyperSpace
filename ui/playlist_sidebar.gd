@@ -1,6 +1,6 @@
 extends PanelContainer
 
-## Left sidebar — playlist, autoplay, media import, fly-through layer slots.
+## Left sidebar — playlist, replace/reorder, fly-through layer slots.
 
 signal present_requested
 
@@ -18,6 +18,7 @@ signal present_requested
 @onready var file_dialog: FileDialog = $FileDialog
 @onready var layer_file_dialog: FileDialog = $LayerFileDialog
 @onready var fly_section: VBoxContainer = $Margin/Column/FlythroughSection
+@onready var fly_hint: Label = $Margin/Column/FlythroughSection/FlyHint
 @onready var env_label: Label = $Margin/Column/FlythroughSection/EnvLayerRow/EnvLabel
 @onready var scatter_label: Label = $Margin/Column/FlythroughSection/ScatterLayerRow/ScatterLabel
 @onready var center_label: Label = $Margin/Column/FlythroughSection/CenterLayerRow/CenterLabel
@@ -31,6 +32,7 @@ signal present_requested
 var _selected_index: int = -1
 var _rebuilding: bool = false
 var _layer_pick: String = ""  # environment | scatter | centerpiece
+var _replace_index: int = -1  # >=0 means file dialog replaces that playlist slot
 
 
 func _ready() -> void:
@@ -57,6 +59,9 @@ func _ready() -> void:
 	ShowDirector.playlist_changed.connect(_rebuild_playlist)
 	ShowDirector.autoplay_changed.connect(_on_autoplay_changed)
 	default_duration.value = ShowDirector.default_item_duration
+	# OS file drops onto the window → add or replace depending on hover target.
+	get_window().files_dropped.connect(_on_os_files_dropped)
+	fly_hint.text = "Playing a fly-through? Swap each layer separately below (File or Test). Centerpiece stays on-screen."
 	_rebuild_playlist()
 	_refresh_flythrough_section()
 
@@ -115,34 +120,20 @@ func _rebuild_playlist() -> void:
 		child.queue_free()
 	for i in ShowDirector.items.size():
 		var item: PlaylistItem = ShowDirector.items[i]
-		var row := HBoxContainer.new()
-		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		var play_btn := Button.new()
 		var src := str(item.params.get("source_type", item.type))
 		if str(item.params.get("style", "")) == "flythrough":
 			src = "flythrough"
-		play_btn.text = "%d. [%s] %s" % [i + 1, src, item.id]
-		play_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		play_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		play_btn.toggle_mode = true
-		play_btn.button_pressed = (i == _selected_index) or (i == ShowDirector.current_index)
-		play_btn.pressed.connect(_on_row_play.bind(i))
-		var dur := SpinBox.new()
-		dur.min_value = 0.5
-		dur.max_value = 600.0
-		dur.step = 0.5
-		dur.custom_minimum_size = Vector2(72, 0)
-		dur.suffix = "s"
-		dur.value = item.duration if item.duration > 0.0 else ShowDirector.default_item_duration
-		dur.value_changed.connect(_on_row_duration.bind(i))
-		var del_btn := Button.new()
-		del_btn.text = "✕"
-		del_btn.custom_minimum_size = Vector2(36, 0)
-		del_btn.tooltip_text = "Remove from playlist"
-		del_btn.pressed.connect(_on_row_delete.bind(i))
-		row.add_child(play_btn)
-		row.add_child(dur)
-		row.add_child(del_btn)
+		var title := "%d. [%s] %s" % [i + 1, src, item.id]
+		var selected := (i == _selected_index) or (i == ShowDirector.current_index)
+		var dur := item.duration if item.duration > 0.0 else ShowDirector.default_item_duration
+		var row := PlaylistRow.new()
+		row.setup(i, title, dur, selected)
+		row.play_pressed.connect(_on_row_play)
+		row.replace_pressed.connect(_on_row_replace)
+		row.delete_pressed.connect(_on_row_delete)
+		row.duration_changed.connect(_on_row_duration)
+		row.reorder_drop.connect(_on_row_reorder)
+		row.files_dropped_on_row.connect(_on_row_files_dropped)
 		playlist_list.add_child(row)
 	_rebuilding = false
 	_refresh_flythrough_section()
@@ -156,7 +147,6 @@ func _flythrough_index() -> int:
 	if item.type == "scene3d" and str(item.params.get("style", "flythrough")) == "flythrough":
 		return idx
 	if item.type == "scene3d" and str(item.params.get("style", "")) in ["corridor", "tunnel", "city", ""]:
-		# Treat legacy animated styles as flythrough-editable once selected.
 		if str(item.params.get("style", "")) != "demo":
 			return idx
 	return -1
@@ -173,14 +163,14 @@ func _refresh_flythrough_section() -> void:
 	scatter_prim_btn.disabled = not enabled
 	center_prim_btn.disabled = not enabled
 	if not enabled:
-		env_label.text = "Environment"
+		env_label.text = "Background"
 		scatter_label.text = "Scatter"
-		center_label.text = "Centerpiece"
+		center_label.text = "Main character"
 		return
 	var item: PlaylistItem = ShowDirector.items[idx]
-	env_label.text = "Env: " + _short_layer(item.params.get("environment", {"source": "primitive:box_corridor"}))
+	env_label.text = "Background: " + _short_layer(item.params.get("environment", {"source": "primitive:box_corridor"}))
 	scatter_label.text = "Scatter: " + _short_layer(item.params.get("scatter", {"source": "primitive:cubes"}))
-	center_label.text = "Center: " + _short_layer(item.params.get("centerpiece", {"source": "primitive:torus"}))
+	center_label.text = "Main: " + _short_layer(item.params.get("centerpiece", {"source": "primitive:torus"}))
 
 
 func _short_layer(config: Variant) -> String:
@@ -198,7 +188,15 @@ func _on_row_play(index: int) -> void:
 	ShowDirector.play_index(index, Transition.Mode.CUT, 0.0)
 
 
-func _on_row_duration(value: float, index: int) -> void:
+func _on_row_replace(index: int) -> void:
+	_selected_index = index
+	_replace_index = index
+	file_dialog.title = "Replace playlist item #%d" % [index + 1]
+	file_dialog.popup_centered()
+	_refresh_flythrough_section()
+
+
+func _on_row_duration(index: int, value: float) -> void:
 	if _rebuilding:
 		return
 	ShowDirector.set_item_duration(index, value)
@@ -213,7 +211,49 @@ func _on_row_delete(index: int) -> void:
 	_refresh_flythrough_section()
 
 
+func _on_row_reorder(from_index: int, to_index: int) -> void:
+	ShowDirector.move_item(from_index, to_index)
+	_selected_index = to_index
+
+
+func _on_row_files_dropped(index: int, paths: PackedStringArray) -> void:
+	if paths.is_empty():
+		return
+	_replace_with_path(index, paths[0])
+
+
+func _on_os_files_dropped(files: PackedStringArray) -> void:
+	if files.is_empty():
+		return
+	# Prefer dropping onto a specific row under the mouse.
+	var mouse := get_global_mouse_position()
+	for child in playlist_list.get_children():
+		if child is Control and (child as Control).get_global_rect().has_point(mouse):
+			if child is PlaylistRow:
+				_replace_with_path((child as PlaylistRow).index, files[0])
+				return
+	# Otherwise append as new playlist items.
+	for path in files:
+		var data := MediaImport.build_item_dict(path, ShowDirector.default_item_duration)
+		if data.is_empty():
+			continue
+		ShowDirector.add_item_from_dict(data, false)
+	if not ShowDirector.items.is_empty() and ShowDirector.current_index < 0:
+		ShowDirector.play_index(ShowDirector.items.size() - 1, Transition.Mode.CUT, 0.0)
+
+
+func _replace_with_path(index: int, path: String) -> void:
+	var data := MediaImport.build_item_dict(path, ShowDirector.default_item_duration)
+	if data.is_empty():
+		push_warning("Unsupported media: %s" % path)
+		return
+	_selected_index = index
+	ShowDirector.replace_item_at(index, data, true)
+	_refresh_flythrough_section()
+
+
 func _on_add_media() -> void:
+	_replace_index = -1
 	file_dialog.title = "Add Media (GIF / video / image / 3D)"
 	file_dialog.popup_centered()
 
@@ -222,6 +262,7 @@ func _default_flythrough_params() -> Dictionary:
 	return {
 		"style": "flythrough",
 		"speed": 2.0,
+		"centerpiece_locked": true,
 		"environment": {"source": "primitive:box_corridor"},
 		"scatter": {"source": "primitive:cubes", "count": 36},
 		"centerpiece": {"source": "primitive:torus"},
@@ -253,7 +294,12 @@ func _pick_layer_file(layer_id: String) -> void:
 	if _flythrough_index() < 0:
 		return
 	_layer_pick = layer_id
-	layer_file_dialog.title = "Choose %s model" % layer_id
+	var titles := {
+		"environment": "Choose background / environment model",
+		"scatter": "Choose scatter prop model",
+		"centerpiece": "Choose main character / centerpiece model",
+	}
+	layer_file_dialog.title = str(titles.get(layer_id, "Choose layer model"))
 	layer_file_dialog.popup_centered()
 
 
@@ -289,7 +335,6 @@ func _apply_primitive(layer_id: String, config: Dictionary) -> void:
 	var idx := _flythrough_index()
 	if idx < 0:
 		return
-	# Ensure style is flythrough when applying layers to legacy items.
 	var item: PlaylistItem = ShowDirector.items[idx]
 	item.params["style"] = "flythrough"
 	ShowDirector.set_flythrough_layer(layer_id, config, idx)
@@ -301,6 +346,13 @@ func _on_file_selected(path: String) -> void:
 	if data.is_empty():
 		push_warning("Unsupported media: %s" % path)
 		return
+	if _replace_index >= 0:
+		var idx := _replace_index
+		_replace_index = -1
+		ShowDirector.replace_item_at(idx, data, true)
+		_selected_index = idx
+		_refresh_flythrough_section()
+		return
 	ShowDirector.add_item_from_dict(data, true)
 
 
@@ -308,5 +360,6 @@ func _on_clear() -> void:
 	ShowDirector.set_autoplay(false)
 	ShowDirector.clear_playlist()
 	_selected_index = -1
+	_replace_index = -1
 	item_label.text = "No item playing"
 	_refresh_flythrough_section()
