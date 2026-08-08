@@ -1,0 +1,78 @@
+[gd_scene load_steps=5 format=3 uid="uid://main_scene"]
+
+[ext_resource type="Script" path="res://ui/main.gd" id="1"]
+[ext_resource type="Script" path="res://effects/effect_stack.gd" id="2"]
+[ext_resource type="PackedScene" path="res://ui/playlist_sidebar.tscn" id="3"]
+[ext_resource type="PackedScene" path="res://ui/effects_sidebar.tscn" id="4"]
+
+[node name="Main" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1")
+
+[node name="Root" type="HBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 0
+
+[node name="PlaylistSidebar" parent="Root" instance=ExtResource("3")]
+layout_mode = 2
+size_flags_horizontal = 0
+
+[node name="OutputPane" type="PanelContainer" parent="Root"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="OutputColumn" type="VBoxContainer" parent="Root/OutputPane"]
+layout_mode = 2
+theme_override_constants/separation = 0
+
+[node name="OutputHeader" type="HBoxContainer" parent="Root/OutputPane/OutputColumn"]
+layout_mode = 2
+
+[node name="OutputTitle" type="Label" parent="Root/OutputPane/OutputColumn/OutputHeader"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 13
+text = "  Preview  —  Present opens projector window (keep this UI)"
+
+[node name="PresentButton" type="Button" parent="Root/OutputPane/OutputColumn/OutputHeader"]
+layout_mode = 2
+text = "Present Mode"
+
+[node name="OutputViewportContainer" type="SubViewportContainer" parent="Root/OutputPane/OutputColumn"]
+layout_mode = 2
+size_flags_vertical = 3
+stretch = true
+
+[node name="OutputViewport" type="SubViewport" parent="Root/OutputPane/OutputColumn/OutputViewportContainer"]
+handle_input_locally = false
+size = Vector2i(1280, 720)
+render_target_update_mode = 4
+
+[node name="OutputStack" type="Control" parent="Root/OutputPane/OutputColumn/OutputViewportContainer/OutputViewport"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="BackBufferCopy" type="BackBufferCopy" parent="Root/OutputPane/OutputColumn/OutputViewportContainer/OutputViewport"]
+copy_mode = 2
+
+[node name="EffectStack" type="Node" parent="Root/OutputPane/OutputColumn/OutputViewportContainer/OutputViewport"]
+script = ExtResource("2")
+
+[node name="EffectsSidebar" parent="Root" instance=ExtResource("4")]
+layout_mode = 2
+size_flags_horizontal = 0

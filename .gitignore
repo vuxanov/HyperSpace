@@ -1,0 +1,20 @@
+# Godot
+.godot/
+*.import
+export_presets.cfg
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+*.swp
+
+# Build
+build/
+exports/
+
+# Media cache
+shows/**/content/*.webm.import
+shows/**/content/*.mp4.import

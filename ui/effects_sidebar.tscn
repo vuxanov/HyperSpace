@@ -1,0 +1,176 @@
+[gd_scene load_steps=2 format=3 uid="uid://effects_sidebar"]
+
+[ext_resource type="Script" path="res://ui/effects_sidebar.gd" id="1"]
+
+[node name="EffectsSidebar" type="PanelContainer"]
+custom_minimum_size = Vector2(340, 0)
+script = ExtResource("1")
+
+[node name="Margin" type="MarginContainer" parent="."]
+layout_mode = 2
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 12
+
+[node name="Column" type="VBoxContainer" parent="Margin"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="Title" type="Label" parent="Margin/Column"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "Effects & Reactivity"
+
+[node name="AudioSection" type="VBoxContainer" parent="Margin/Column"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="ReactivityToggle" type="CheckButton" parent="Margin/Column/AudioSection"]
+layout_mode = 2
+button_pressed = true
+text = "Audio Reactivity"
+
+[node name="IntensityLabel" type="Label" parent="Margin/Column/AudioSection"]
+layout_mode = 2
+text = "Master Intensity"
+
+[node name="IntensitySlider" type="HSlider" parent="Margin/Column/AudioSection"]
+layout_mode = 2
+max_value = 3.0
+step = 0.05
+value = 1.0
+
+[node name="SensitivityLabel" type="Label" parent="Margin/Column/AudioSection"]
+layout_mode = 2
+text = "Band Sensitivity"
+
+[node name="SensitivitySlider" type="HSlider" parent="Margin/Column/AudioSection"]
+layout_mode = 2
+min_value = 0.1
+max_value = 5.0
+step = 0.1
+value = 1.0
+
+[node name="ScaleAmountLabel" type="Label" parent="Margin/Column/AudioSection"]
+layout_mode = 2
+text = "Scale Amount (number)"
+
+[node name="ScaleAmountSpin" type="SpinBox" parent="Margin/Column/AudioSection"]
+layout_mode = 2
+min_value = 0.0
+max_value = 50.0
+step = 0.25
+value = 5.0
+allow_greater = true
+
+[node name="EnergyBar" type="ProgressBar" parent="Margin/Column/AudioSection"]
+custom_minimum_size = Vector2(0, 16)
+layout_mode = 2
+max_value = 1.0
+show_percentage = false
+
+[node name="BassBar" type="ProgressBar" parent="Margin/Column/AudioSection"]
+custom_minimum_size = Vector2(0, 12)
+layout_mode = 2
+max_value = 1.0
+show_percentage = false
+
+[node name="Targets" type="VBoxContainer" parent="Margin/Column"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="TargetsLabel" type="Label" parent="Margin/Column/Targets"]
+layout_mode = 2
+text = "What reacts"
+
+[node name="TargetOption" type="OptionButton" parent="Margin/Column/Targets"]
+layout_mode = 2
+
+[node name="AffectScale" type="CheckButton" parent="Margin/Column/Targets"]
+layout_mode = 2
+button_pressed = true
+text = "Scale"
+
+[node name="AxisRow" type="HBoxContainer" parent="Margin/Column/Targets"]
+layout_mode = 2
+
+[node name="ScaleX" type="CheckButton" parent="Margin/Column/Targets/AxisRow"]
+layout_mode = 2
+button_pressed = true
+text = "X"
+
+[node name="ScaleY" type="CheckButton" parent="Margin/Column/Targets/AxisRow"]
+layout_mode = 2
+button_pressed = true
+text = "Y"
+
+[node name="ScaleZ" type="CheckButton" parent="Margin/Column/Targets/AxisRow"]
+layout_mode = 2
+button_pressed = true
+text = "Z"
+
+[node name="AffectLight" type="CheckButton" parent="Margin/Column/Targets"]
+layout_mode = 2
+button_pressed = true
+text = "Lights"
+
+[node name="AffectEmission" type="CheckButton" parent="Margin/Column/Targets"]
+layout_mode = 2
+button_pressed = true
+text = "Emission / Color"
+
+[node name="AffectRotation" type="CheckButton" parent="Margin/Column/Targets"]
+layout_mode = 2
+button_pressed = true
+text = "Rotation"
+
+[node name="FxSection" type="VBoxContainer" parent="Margin/Column"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 4
+
+[node name="FxLabel" type="Label" parent="Margin/Column/FxSection"]
+layout_mode = 2
+text = "Visual Effects"
+
+[node name="AsciiToggle" type="CheckButton" parent="Margin/Column/FxSection"]
+layout_mode = 2
+text = "ASCII Overlay"
+
+[node name="AsciiPresetLabel" type="Label" parent="Margin/Column/FxSection"]
+layout_mode = 2
+text = "ASCII Preset"
+
+[node name="AsciiPreset" type="OptionButton" parent="Margin/Column/FxSection"]
+layout_mode = 2
+
+[node name="AsciiDensityLabel" type="Label" parent="Margin/Column/FxSection"]
+layout_mode = 2
+text = "ASCII Density"
+
+[node name="AsciiDensitySlider" type="HSlider" parent="Margin/Column/FxSection"]
+layout_mode = 2
+min_value = 20.0
+max_value = 160.0
+step = 1.0
+value = 80.0
+
+[node name="ParticlesToggle" type="CheckButton" parent="Margin/Column/FxSection"]
+layout_mode = 2
+text = "Particles (break objects apart)"
+
+[node name="FeedbackToggle" type="CheckButton" parent="Margin/Column/FxSection"]
+layout_mode = 2
+text = "Feedback Trail"
+
+[node name="CueSection" type="VBoxContainer" parent="Margin/Column"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="CueLabel" type="Label" parent="Margin/Column/CueSection"]
+layout_mode = 2
+text = "Cues"
+
+[node name="CueContainer" type="HFlowContainer" parent="Margin/Column/CueSection"]
+layout_mode = 2

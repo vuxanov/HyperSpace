@@ -1,0 +1,60 @@
+{
+  "name": "HyperSpace Demo",
+  "params": {
+    "master_intensity": 1.0,
+    "band_sensitivity": 1.0
+  },
+  "items": [
+    {
+      "id": "flythrough",
+      "type": "scene3d",
+      "path": "",
+      "duration": 30.0,
+      "params": {
+        "style": "flythrough",
+        "speed": 2.0,
+        "environment": { "source": "primitive:box_corridor" },
+        "scatter": { "source": "primitive:cubes", "count": 36 },
+        "centerpiece": { "source": "primitive:torus" }
+      }
+    },
+    {
+      "id": "stage",
+      "type": "scene3d",
+      "path": "",
+      "duration": 8.0,
+      "params": { "style": "demo", "color": "#3366cc" }
+    },
+    {
+      "id": "logo",
+      "type": "image",
+      "path": "res://icon.svg",
+      "duration": 6.0
+    }
+  ],
+  "cues": [
+    {
+      "id": "start",
+      "trigger": "manual",
+      "actions": [{ "op": "play", "item": "flythrough" }]
+    },
+    {
+      "id": "fx_on",
+      "trigger": "manual",
+      "actions": [
+        { "op": "set_effect", "effect": "ascii", "enabled": true, "params": { "density": 80, "intensity": 0.85 } },
+        { "op": "set_effect", "effect": "feedback", "enabled": true, "params": { "mix_amount": 0.7 } }
+      ]
+    },
+    {
+      "id": "reset_fx",
+      "trigger": "manual",
+      "actions": [
+        { "op": "set_effect", "effect": "ascii", "enabled": false },
+        { "op": "set_effect", "effect": "particles", "enabled": false },
+        { "op": "set_effect", "effect": "feedback", "enabled": false }
+      ]
+    }
+  ],
+  "effects": ["ascii", "particles", "feedback"]
+}
