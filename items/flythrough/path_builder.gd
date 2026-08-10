@@ -18,20 +18,20 @@ static func overland(length: float = 80.0, height: float = 8.0, points: int = 10
 	return straight(length, height, points)
 
 
-static func from_aabb(aabb: AABB, margin: float = 0.15) -> Curve3D:
+static func from_aabb(aabb: AABB, margin: float = 0.12, min_half_span: float = 12.0) -> Curve3D:
 	## Straight path along the longest horizontal axis through the volume.
+	## Elevates slightly above center so ground-heavy scans stay in frame.
 	var size := aabb.size
 	var center := aabb.get_center()
 	var curve := Curve3D.new()
 	curve.bake_interval = 0.5
+	var y := center.y + size.y * 0.08
 	if size.x >= size.z:
-		var half := size.x * (0.5 - margin)
-		var y := center.y
+		var half := maxf(size.x * (0.5 - margin), min_half_span)
 		curve.add_point(Vector3(center.x - half, y, center.z))
 		curve.add_point(Vector3(center.x + half, y, center.z))
 	else:
-		var half := size.z * (0.5 - margin)
-		var y := center.y
+		var half := maxf(size.z * (0.5 - margin), min_half_span)
 		curve.add_point(Vector3(center.x, y, center.z + half))
 		curve.add_point(Vector3(center.x, y, center.z - half))
 	return curve

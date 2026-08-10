@@ -26,6 +26,9 @@ func _ready() -> void:
 	_sub_viewport = SubViewport.new()
 	_sub_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	_sub_viewport.size = Vector2i(1920, 1080)
+	# Isolated 3D world so WorldEnvironment / HDRI sky actually apply as background.
+	_sub_viewport.own_world_3d = true
+	_sub_viewport.transparent_bg = false
 	_texture_rect.texture = _sub_viewport.get_texture()
 	add_child(_sub_viewport)
 	if not _pending_path.is_empty() or _pending_params.size() > 0:
@@ -137,7 +140,10 @@ func set_cue_param(key: String, value: Variant) -> void:
 func start_item() -> void:
 	visible = true
 	modulate.a = _alpha
+	if _sub_viewport:
+		_sub_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	if _environment:
+		_environment.set_process(true)
 		_environment.on_item_started()
 
 

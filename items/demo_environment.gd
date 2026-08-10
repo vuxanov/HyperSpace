@@ -145,26 +145,28 @@ func apply_audio_state(state: AudioState) -> void:
 	if not RH.enabled():
 		_reset_non_reactive()
 		return
-	# Environment reacts lightly to energy (fog rings emission).
-	if RH.applies_to("environment"):
+	var lfo := float(RH.get_field("lfo_mod01", 0.0))
+	# Environment reacts lightly to emission driver.
+	if RH.applies_to("environment") and RH.property_active("emission"):
+		var ed := RH.drive_value("emission", state, lfo)
 		for ring in _env_rings:
 			if ring.material_override is StandardMaterial3D:
 				var mat: StandardMaterial3D = ring.material_override
-				mat.emission_energy_multiplier = 0.5 + state.energy * 3.0 * RH.scale_amount() * 0.15
-	if RH.affect_light() and _light:
-		_light.light_energy = 1.0 + state.bass * 4.0
-		_light.omni_range = 8.0 + state.energy * 10.0
-		_light.light_color = Color.from_hsv(fposmod(0.55 + state.mids * 0.4, 1.0), 0.5, 1.0)
+				mat.emission_energy_multiplier = 0.5 + ed * 5.0
+	if RH.property_active("light") and _light:
+		var ld := RH.drive_value("light", state, lfo)
+		_light.light_energy = 1.0 + ld * 4.0
+		_light.omni_range = 8.0 + ld * 12.0
+		_light.light_color = Color.from_hsv(fposmod(0.55 + ld * 0.4, 1.0), 0.5, 1.0)
 	if not RH.applies_to("foreground"):
 		return
 	var scale_amt := 1.0
-	if RH.affect_scale():
-		var reactive := state.bass * 2.0 + state.energy * 1.5
+	if RH.property_active("scale"):
+		var d := RH.drive_value("scale", state, lfo)
 		if state.beat:
-			reactive *= 1.6
-		scale_amt = 1.0 + reactive * maxf(RH.scale_amount(), 0.0)
-		scale_amt = clampf(scale_amt, 0.2, 40.0)
-	var scale_vec: Vector3 = RH.scale_vector(scale_amt) if RH.affect_scale() else _base_scale
+			d = minf(d * 1.4, 1.0)
+		scale_amt = RH.scale_multiplier(d)
+	var scale_vec: Vector3 = RH.scale_vector(scale_amt) if RH.property_active("scale") else _base_scale
 	if _particles_mode and _particles:
 		_particles.scale = scale_vec
 		_particles.amount = clampi(int(120 + state.bass * 500 * RH.scale_amount()), 80, 1200)
@@ -175,14 +177,17 @@ func apply_audio_state(state: AudioState) -> void:
 			_particles.restart()
 	elif _mesh:
 		_mesh.scale = scale_vec
-		if RH.affect_emission() and _mesh.material_override is StandardMaterial3D:
+		if RH.property_active("emission") and _mesh.material_override is StandardMaterial3D:
 			var mat: StandardMaterial3D = _mesh.material_override
-			var hue := fposmod(state.mids * 0.7, 1.0)
+			var ed2 := RH.drive_value("emission", state, lfo)
+			var hue := fposmod(ed2 * 0.9, 1.0)
 			mat.emission = Color.from_hsv(hue, 0.7, 1.0)
-			mat.emission_energy_multiplier = 1.0 + state.mids * 5.0
+			mat.emission_energy_multiplier = 1.0 + ed2 * 6.0
 			mat.albedo_color = base_color.lerp(mat.emission, 0.35)
-	if RH.affect_rotation():
-		_rotation_speed = 0.2 + state.highs * 1.5
+	if RH.property_active("rotation"):
+		_rotation_speed = 0.2 + RH.drive_value("rotation", state, lfo) * 2.0
+	else:
+		_rotation_speed = 0.2
 
 
 func _reset_non_reactive() -> void:

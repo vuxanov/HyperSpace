@@ -2,7 +2,7 @@ shader_type canvas_item;
 
 uniform sampler2D screen_texture : hint_screen_texture, filter_linear_mipmap;
 uniform sampler2D ascii_atlas : source_color, filter_nearest;
-uniform float density : hint_range(20.0, 200.0) = 80.0;
+uniform float density : hint_range(1.0, 200.0) = 80.0;
 uniform float intensity : hint_range(0.0, 1.0) = 0.9;
 uniform float audio_highs : hint_range(0.0, 5.0) = 0.0;
 uniform vec3 tint = vec3(1.0, 1.0, 1.0);
@@ -12,8 +12,8 @@ uniform float cell_aspect = 0.55; // width/height of a character cell on screen
 
 void fragment() {
 	vec2 uv = SCREEN_UV;
-	float cols = max(density, 8.0);
-	float rows = max(cols * cell_aspect, 8.0);
+	float cols = max(density, 1.0);
+	float rows = max(cols * cell_aspect, 1.0);
 	vec2 cell = vec2(1.0 / cols, 1.0 / rows);
 	vec2 cell_id = floor(uv / cell);
 	vec2 cell_uv = fract(uv / cell);

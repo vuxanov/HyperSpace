@@ -82,16 +82,19 @@ func apply_audio_state(state: AudioState) -> void:
 		scale = _base_scale
 		modulate = Color(1, 1, 1, _alpha)
 		return
-	if RH.affect_scale() and RH.applies_to("foreground"):
-		var reactive := state.bass * 1.5 + state.energy
+	var lfo := float(RH.get_field("lfo_mod01", 0.0))
+	if RH.property_active("scale") and RH.applies_to("foreground"):
+		var d := RH.drive_value("scale", state, lfo)
 		if state.beat:
-			reactive *= 1.4
-		var amt := 1.0 + reactive * RH.scale_amount() * 0.15
-		var sx := amt if RH.scale_x() else 1.0
-		var sy := amt if RH.scale_y() else 1.0
-		scale = Vector2(sx, sy)
-	if RH.affect_emission():
-		var glow := 1.0 + state.mids * 0.8
+			d = minf(d * 1.25, 1.0)
+		var amt := RH.scale_multiplier(d)
+		scale = _base_scale * Vector2(
+			amt if RH.scale_x() else 1.0,
+			amt if RH.scale_y() else 1.0
+		)
+	if RH.property_active("emission"):
+		var ed := RH.drive_value("emission", state, lfo)
+		var glow := 1.0 + ed * 1.2
 		modulate = Color(glow, glow, glow, _alpha)
 	if _particles_mode and _particles:
 		_particles.emitting = true

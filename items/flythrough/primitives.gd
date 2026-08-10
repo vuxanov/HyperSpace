@@ -19,6 +19,12 @@ static func spawn_environment(kind: String, parent: Node3D) -> void:
 	match kind:
 		"flat_plane", "primitive:flat_plane":
 			_spawn_flat_plane(parent)
+		"hterrain_hills", "primitive:hterrain_hills", "hills":
+			FlythroughHTerrainBuilder.spawn(parent, "hills")
+		"hterrain_mountains", "primitive:hterrain_mountains", "mountains":
+			FlythroughHTerrainBuilder.spawn(parent, "mountains")
+		"hterrain_canyon", "primitive:hterrain_canyon", "canyon":
+			FlythroughHTerrainBuilder.spawn(parent, "canyon")
 		"box_corridor", "primitive:box_corridor", _:
 			_spawn_box_corridor(parent)
 
@@ -33,7 +39,7 @@ static func spawn_centerpiece(kind: String, parent: Node3D) -> MeshInstance3D:
 			sphere.radial_segments = 16
 			sphere.rings = 8
 			mesh_inst.mesh = sphere
-			mesh_inst.material_override = make_material(Color(0.95, 0.55, 0.25), 0.35)
+			mesh_inst.material_override = make_material(Color(0.95, 0.55, 0.25), 0.0)
 		"torus", "primitive:torus", _:
 			var torus := TorusMesh.new()
 			torus.inner_radius = 0.35
@@ -41,7 +47,7 @@ static func spawn_centerpiece(kind: String, parent: Node3D) -> MeshInstance3D:
 			torus.rings = 24
 			torus.ring_segments = 16
 			mesh_inst.mesh = torus
-			mesh_inst.material_override = make_material(Color(0.45, 0.75, 1.0), 0.4)
+			mesh_inst.material_override = make_material(Color(0.45, 0.75, 1.0), 0.0)
 	parent.add_child(mesh_inst)
 	return mesh_inst
 
@@ -54,12 +60,12 @@ static func spawn_scatter_template(kind: String) -> MeshInstance3D:
 			sphere.radius = 0.12
 			sphere.height = 0.24
 			mesh_inst.mesh = sphere
-			mesh_inst.material_override = make_material(Color(0.7, 0.85, 0.95), 0.2)
+			mesh_inst.material_override = make_material(Color(0.7, 0.85, 0.95), 0.0)
 		"cubes", "primitive:cubes", _:
 			var box := BoxMesh.new()
 			box.size = Vector3(0.2, 0.2, 0.2)
 			mesh_inst.mesh = box
-			mesh_inst.material_override = make_material(Color(0.55, 0.7, 0.85), 0.15)
+			mesh_inst.material_override = make_material(Color(0.55, 0.7, 0.85), 0.0)
 	return mesh_inst
 
 

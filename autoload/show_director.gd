@@ -8,6 +8,9 @@ signal cue_triggered(cue_id: String)
 signal playback_error(message: String)
 signal playlist_changed()
 signal autoplay_changed(playing: bool)
+signal element_step_changed(step_index: int, step_count: int)
+signal effect_style_advanced(preset_name: String)
+signal effect_gate_changed(effect_id: String, open: bool)
 
 var show_data: Dictionary = {}
 var items: Array[PlaylistItem] = []
@@ -21,10 +24,25 @@ var effect_stack: Node = null
 var autoplay: bool = false
 var default_item_duration: float = 8.0
 var _item_elapsed: float = 0.0
+var _element_step_index: int = 0
+var _element_step_elapsed: float = 0.0
 
 var _transition := Transition.new()
 var _active_effects: Dictionary = {}  # effect_id -> EffectLayer
 var _item_nodes: Dictionary = {}  # item_id -> Control
+var _effect_user_enabled: Dictionary = {}  # effect_id -> bool
+var _effect_user_params: Dictionary = {}  # effect_id -> Dictionary
+var fx_automation := FxAutomation.new()
+var _play_all_active: bool = false
+
+
+func _ready() -> void:
+	var preset_names: PackedStringArray = PackedStringArray()
+	for k in AsciiEffect.PRESETS.keys():
+		preset_names.append(str(k))
+	fx_automation.configure_style_presets(preset_names)
+	fx_automation.style_advanced.connect(_on_fx_style_advanced)
+	fx_automation.gate_changed.connect(_on_fx_gate_changed)
 
 
 func load_show(show_path: String) -> bool:
@@ -136,10 +154,109 @@ func replace_item_at(index: int, data: Dictionary, play_now: bool = true) -> voi
 
 
 func get_effect_enabled(effect_id: String) -> bool:
+	## User intent (ignores schedule gates).
+	if _effect_user_enabled.has(effect_id):
+		return bool(_effect_user_enabled[effect_id])
 	if not _active_effects.has(effect_id):
 		return false
 	var effect: EffectLayer = _active_effects[effect_id] as EffectLayer
 	return effect != null and effect.enabled
+
+
+func is_effect_gate_open(effect_id: String) -> bool:
+	return fx_automation.is_gate_open(effect_id)
+
+
+func is_play_all_active() -> bool:
+	return _play_all_active
+
+
+func set_play_all_effects(on: bool, cycle_sec: float = 20.0, active_sec: float = 5.0) -> void:
+	_play_all_active = on
+	if on:
+		var ids: Array = []
+		for eid in _effect_user_enabled.keys():
+			if bool(_effect_user_enabled[eid]):
+				ids.append(eid)
+		if ids.is_empty():
+			ids = ["ascii", "glitch", "feedback", "particles", "chromatic", "pixel_sort"]
+		fx_automation.enable_play_all(ids, cycle_sec, active_sec)
+		for eid in ids:
+			_apply_effect_effective(str(eid))
+	else:
+		fx_automation.disable_play_all()
+		for eid in _effect_user_enabled.keys():
+			_apply_effect_effective(str(eid))
+
+
+func update_effect_params(effect_id: String, params: Dictionary) -> void:
+	var merged: Dictionary = (_effect_user_params.get(effect_id, {}) as Dictionary).duplicate(true)
+	for k in params.keys():
+		merged[k] = params[k]
+	_effect_user_params[effect_id] = merged
+	if bool(_effect_user_enabled.get(effect_id, false)):
+		_apply_effect_effective(effect_id)
+
+
+func refresh_effect(effect_id: String) -> void:
+	_apply_effect_effective(effect_id)
+
+
+func _apply_effect_effective(effect_id: String) -> void:
+	if effect_stack == null:
+		return
+	var user_on := bool(_effect_user_enabled.get(effect_id, false))
+	var gate_open := fx_automation.is_gate_open(effect_id)
+	var enabled := user_on and gate_open
+	var params: Dictionary = (_effect_user_params.get(effect_id, {}) as Dictionary).duplicate(true)
+	if enabled:
+		if not _active_effects.has(effect_id):
+			var layer: EffectLayer = null
+			if effect_stack is EffectStack:
+				layer = (effect_stack as EffectStack).create_effect(effect_id)
+			if layer != null:
+				_active_effects[effect_id] = layer
+				effect_stack.add_child(layer)
+		if _active_effects.has(effect_id):
+			var effect: EffectLayer = _active_effects[effect_id] as EffectLayer
+			effect.enabled = true
+			effect.apply_params(params)
+			if effect.has_method("set_active"):
+				effect.call("set_active", true)
+	else:
+		if _active_effects.has(effect_id):
+			var effect: EffectLayer = _active_effects[effect_id] as EffectLayer
+			if effect == null:
+				return
+			effect.enabled = false
+			if effect.has_method("set_active"):
+				effect.call("set_active", false)
+			else:
+				effect.visible = false
+
+
+func _on_fx_style_advanced(preset_name: String) -> void:
+	effect_style_advanced.emit(preset_name)
+	if bool(_effect_user_enabled.get("ascii", false)):
+		var params: Dictionary = AsciiEffect.PRESETS.get(preset_name, {}).duplicate()
+		var prev: Dictionary = _effect_user_params.get("ascii", {}) as Dictionary
+		if prev.has("invert"):
+			params["invert"] = prev["invert"]
+		if prev.has("density_min"):
+			params["density_min"] = prev["density_min"]
+		if prev.has("density_max"):
+			params["density_max"] = prev["density_max"]
+		elif prev.has("density"):
+			params["density"] = prev["density"]
+			params["density_min"] = float(prev["density"]) * 0.65
+			params["density_max"] = float(prev["density"])
+		_effect_user_params["ascii"] = params
+		_apply_effect_effective("ascii")
+
+
+func _on_fx_gate_changed(effect_id: String, open: bool) -> void:
+	effect_gate_changed.emit(effect_id, open)
+	_apply_effect_effective(effect_id)
 
 
 func _unique_id(prefix: String) -> String:
@@ -208,32 +325,15 @@ func trigger_cue(cue_id: String) -> void:
 
 
 func set_effect(effect_id: String, enabled: bool, params: Dictionary = {}) -> void:
-	if effect_stack == null:
-		return
-	if enabled:
-		if not _active_effects.has(effect_id):
-			var layer: EffectLayer = null
-			if effect_stack is EffectStack:
-				layer = (effect_stack as EffectStack).create_effect(effect_id)
-			if layer != null:
-				_active_effects[effect_id] = layer
-				effect_stack.add_child(layer)
-		if _active_effects.has(effect_id):
-			var effect: EffectLayer = _active_effects[effect_id] as EffectLayer
-			effect.enabled = true
-			effect.apply_params(params)
-			if effect.has_method("set_active"):
-				effect.call("set_active", true)
-	else:
-		if _active_effects.has(effect_id):
-			var effect: EffectLayer = _active_effects[effect_id] as EffectLayer
-			if effect == null:
-				return
-			effect.enabled = false
-			if effect.has_method("set_active"):
-				effect.call("set_active", false)
-			else:
-				effect.visible = false
+	_effect_user_enabled[effect_id] = enabled
+	if not params.is_empty():
+		var merged: Dictionary = (_effect_user_params.get(effect_id, {}) as Dictionary).duplicate(true)
+		for k in params.keys():
+			merged[k] = params[k]
+		_effect_user_params[effect_id] = merged
+	elif not _effect_user_params.has(effect_id):
+		_effect_user_params[effect_id] = {}
+	_apply_effect_effective(effect_id)
 
 
 
@@ -259,6 +359,15 @@ func _set_item_param(item_id: String, key: String, value: Variant) -> void:
 			node.call("set_cue_param", key, value)
 
 
+func set_active_cue_param(key: String, value: Variant) -> void:
+	## Persist on the current playlist item and push to the live node.
+	if current_index < 0 or current_index >= items.size():
+		return
+	var item: PlaylistItem = items[current_index]
+	item.params[key] = value
+	_set_item_param(item.id, key, value)
+
+
 func set_item_duration(index: int, seconds: float) -> void:
 	if index < 0 or index >= items.size():
 		return
@@ -269,7 +378,7 @@ func set_flythrough_layer(layer_id: String, config: Dictionary, index: int = -1)
 	var idx := index if index >= 0 else current_index
 	if idx < 0 or idx >= items.size():
 		return
-	if layer_id not in ["environment", "scatter", "centerpiece"]:
+	if layer_id not in ["environment", "scatter", "centerpiece", "lighting"]:
 		return
 	var item: PlaylistItem = items[idx]
 	if item.type != "scene3d":
@@ -291,9 +400,90 @@ func set_flythrough_layer(layer_id: String, config: Dictionary, index: int = -1)
 	playlist_changed.emit()
 
 
+func get_element_sequence(index: int = -1) -> Array:
+	var idx := index if index >= 0 else current_index
+	if idx < 0 or idx >= items.size():
+		return []
+	var item: PlaylistItem = items[idx]
+	var seq: Variant = item.params.get("element_sequence", [])
+	return seq if seq is Array else []
+
+
+func set_element_sequence(sequence: Array, index: int = -1, apply_now: bool = true) -> void:
+	var idx := index if index >= 0 else current_index
+	if idx < 0 or idx >= items.size():
+		return
+	var item: PlaylistItem = items[idx]
+	if item.type != "scene3d":
+		return
+	item.params["style"] = "flythrough"
+	var copied: Array = []
+	for step in sequence:
+		if step is Dictionary:
+			copied.append((step as Dictionary).duplicate(true))
+	item.params["element_sequence"] = copied
+	var total := FlythroughAssetCatalog.sequence_total_duration(copied)
+	if total > 0.0:
+		item.duration = total
+	elif copied.is_empty() and item.duration < 0.0:
+		item.duration = default_item_duration
+	if apply_now and idx == current_index:
+		if copied.is_empty():
+			_element_step_index = 0
+			_element_step_elapsed = 0.0
+			element_step_changed.emit(-1, 0)
+		else:
+			var keep := clampi(_element_step_index, 0, copied.size() - 1)
+			_element_step_elapsed = 0.0
+			_apply_element_step(keep)
+	playlist_changed.emit()
+	if not apply_now:
+		element_step_changed.emit(_element_step_index, copied.size())
+
+
+func get_element_step_index() -> int:
+	return _element_step_index
+
+
+func apply_element_step(step_index: int, index: int = -1) -> void:
+	var idx := index if index >= 0 else current_index
+	if idx < 0 or idx >= items.size():
+		return
+	if idx == current_index:
+		_element_step_index = step_index
+		_element_step_elapsed = 0.0
+	_apply_element_step(step_index, idx)
+
+
+func _apply_element_step(step_index: int, index: int = -1) -> void:
+	var idx := index if index >= 0 else current_index
+	var sequence := get_element_sequence(idx)
+	if sequence.is_empty():
+		element_step_changed.emit(-1, 0)
+		return
+	var clamped := clampi(step_index, 0, sequence.size() - 1)
+	var step: Dictionary = sequence[clamped] as Dictionary
+	if step.has("centerpiece") and step["centerpiece"] is Dictionary:
+		set_flythrough_layer("centerpiece", step["centerpiece"] as Dictionary, idx)
+	if step.has("scatter") and step["scatter"] is Dictionary:
+		set_flythrough_layer("scatter", step["scatter"] as Dictionary, idx)
+	if idx == current_index:
+		_element_step_index = clamped
+		element_step_changed.emit(clamped, sequence.size())
+
+
+func _current_element_step_duration() -> float:
+	var sequence := get_element_sequence(current_index)
+	if sequence.is_empty() or _element_step_index < 0 or _element_step_index >= sequence.size():
+		return get_current_item_duration()
+	var step: Dictionary = sequence[_element_step_index] as Dictionary
+	return maxf(float(step.get("duration", default_item_duration)), 0.5)
+
+
 func set_autoplay(playing: bool) -> void:
 	autoplay = playing
 	_item_elapsed = 0.0
+	_element_step_elapsed = 0.0
 	autoplay_changed.emit(autoplay)
 
 
@@ -305,6 +495,11 @@ func get_current_item_duration() -> float:
 	if current_index < 0 or current_index >= items.size():
 		return default_item_duration
 	var item: PlaylistItem = items[current_index]
+	var sequence := get_element_sequence(current_index)
+	if not sequence.is_empty():
+		var total := FlythroughAssetCatalog.sequence_total_duration(sequence)
+		if total > 0.0:
+			return total
 	if item.duration > 0.0:
 		return item.duration
 	return default_item_duration
@@ -339,6 +534,13 @@ func _play_item_at_index(index: int, transition_mode: Transition.Mode, duration:
 	current_item_node = new_node
 	current_index = index
 	_item_elapsed = 0.0
+	_element_step_index = 0
+	_element_step_elapsed = 0.0
+	# Apply first element-sequence step so main/scatter match the timeline start.
+	if not get_element_sequence(index).is_empty():
+		_apply_element_step(0, index)
+	else:
+		element_step_changed.emit(-1, 0)
 	item_changed.emit(item.id, index)
 
 
@@ -390,10 +592,24 @@ func _process(delta: float) -> void:
 			if _transition.from_node is CanvasItem:
 				(_transition.from_node as CanvasItem).visible = false
 	if autoplay and current_index >= 0 and not items.is_empty():
-		_item_elapsed += delta
-		if _item_elapsed >= get_current_item_duration():
-			_item_elapsed = 0.0
-			next_item(Transition.Mode.CUT, 0.0)
+		var sequence := get_element_sequence(current_index)
+		if not sequence.is_empty():
+			_element_step_elapsed += delta
+			_item_elapsed += delta
+			if _element_step_elapsed >= _current_element_step_duration():
+				_element_step_elapsed = 0.0
+				if _element_step_index + 1 < sequence.size():
+					_apply_element_step(_element_step_index + 1)
+				else:
+					_item_elapsed = 0.0
+					_element_step_index = 0
+					next_item(Transition.Mode.CUT, 0.0)
+		else:
+			_item_elapsed += delta
+			if _item_elapsed >= get_current_item_duration():
+				_item_elapsed = 0.0
+				next_item(Transition.Mode.CUT, 0.0)
+	fx_automation.tick(delta)
 	var audio_state: AudioState = AudioAnalyzer.get_state()
 	var kinect_state: KinectState = KinectManager.get_state()
 	if current_item_node:
@@ -401,10 +617,16 @@ func _process(delta: float) -> void:
 			current_item_node.call("apply_audio_state", audio_state)
 		if current_item_node.has_method("apply_kinect_state"):
 			current_item_node.call("apply_kinect_state", kinect_state)
+	var lfo01 := 0.0
+	var react := get_tree().root.get_node_or_null("ReactivitySettings")
+	if react:
+		lfo01 = float(react.get("lfo_mod01"))
 	for effect_id in _active_effects:
 		var effect: EffectLayer = _active_effects[effect_id] as EffectLayer
 		if effect != null and effect.enabled:
 			effect.apply_audio_state(audio_state)
+			if effect.has_method("apply_modulator"):
+				effect.call("apply_modulator", lfo01)
 	_check_kinect_gestures(kinect_state)
 
 

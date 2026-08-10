@@ -7,7 +7,7 @@ extends RefCounted
 static func detect_type(path: String) -> String:
 	var ext := path.get_extension().to_lower()
 	match ext:
-		"glb", "gltf", "tscn":
+		"glb", "gltf", "fbx", "tscn":
 			return "scene3d"
 		"webm", "mp4", "ogv", "avi", "mov":
 			return "video"

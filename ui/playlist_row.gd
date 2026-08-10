@@ -48,12 +48,12 @@ func setup(row_index: int, title: String, duration: float, selected: bool) -> vo
 	add_child(_play_btn)
 
 	_dur = SpinBox.new()
-	_dur.min_value = 0.5
+	_dur.min_value = 1.0
 	_dur.max_value = 600.0
-	_dur.step = 0.5
+	_dur.step = 1.0
 	_dur.custom_minimum_size = Vector2(72, 0)
 	_dur.suffix = "s"
-	_dur.value = duration
+	_dur.value = roundf(duration)
 	_dur.value_changed.connect(func(v: float) -> void: duration_changed.emit(index, v))
 	add_child(_dur)
 

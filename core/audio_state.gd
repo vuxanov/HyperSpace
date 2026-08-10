@@ -11,6 +11,7 @@ extends Resource
 @export var bass: float = 0.0
 @export var mids: float = 0.0
 @export var highs: float = 0.0
+@export var kick: float = 0.0  # short onset envelope (not sustained bass)
 
 
 func duplicate_state() -> AudioState:
@@ -23,4 +24,5 @@ func duplicate_state() -> AudioState:
 	copy.bass = bass
 	copy.mids = mids
 	copy.highs = highs
+	copy.kick = kick
 	return copy

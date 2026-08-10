@@ -1,9 +1,7 @@
 extends Control
 
-## Control surface: playlist | preview | effects.
+## Control surface: assets | preview | effects.
 ## Present Mode opens a separate fullscreen window for the projector.
-
-const DEFAULT_SHOW := "res://shows/demo/show.json"
 
 @onready var playlist_sidebar: PanelContainer = $Root/PlaylistSidebar
 @onready var effects_sidebar: PanelContainer = $Root/EffectsSidebar
@@ -23,18 +21,25 @@ func _ready() -> void:
 	present_button.pressed.connect(toggle_present_mode)
 	if playlist_sidebar.has_signal("present_requested"):
 		playlist_sidebar.present_requested.connect(toggle_present_mode)
-	_load_default_show()
+	_start_blank_stage()
 	var win := get_window()
 	win.size = Vector2i(1700, 950)
 	win.min_size = Vector2i(1200, 700)
 
 
-func _load_default_show() -> void:
-	if not FileAccess.file_exists(DEFAULT_SHOW):
-		push_error("Main: demo show not found at %s" % DEFAULT_SHOW)
-		return
-	if ShowDirector.load_show(DEFAULT_SHOW):
-		ShowDirector.play_index(0, Transition.Mode.CUT)
+func _start_blank_stage() -> void:
+	## Empty fly-through stage — pick assets from Env / Main / Scatter / Lighting tabs.
+	ShowDirector.clear_playlist()
+	ShowDirector.show_data = {"name": "HyperSpace", "items": [], "cues": [], "effects": ["ascii", "particles", "feedback", "glitch"]}
+	ShowDirector.cues = []
+	ShowDirector.add_item_from_dict({
+		"id": "stage",
+		"type": "scene3d",
+		"path": "",
+		"duration": ShowDirector.default_item_duration,
+		"params": FlythroughAssetCatalog.blank_stage_params(),
+	}, true)
+	ShowDirector.show_loaded.emit("HyperSpace")
 
 
 func toggle_present_mode() -> void:
@@ -88,11 +93,18 @@ func _input(event: InputEvent) -> void:
 				if _presenting:
 					_close_present_window()
 			KEY_RIGHT:
-				ShowDirector.next_item()
+				if playlist_sidebar.has_method("step_next"):
+					playlist_sidebar.step_next()
+				else:
+					ShowDirector.next_item()
 			KEY_LEFT:
-				ShowDirector.prev_item()
+				if playlist_sidebar.has_method("step_prev"):
+					playlist_sidebar.step_prev()
+				else:
+					ShowDirector.prev_item()
 			KEY_SPACE:
-				ShowDirector.next_item()
+				if playlist_sidebar.has_method("toggle_tab_play"):
+					playlist_sidebar.toggle_tab_play()
 			KEY_DELETE:
 				if ShowDirector.current_index >= 0:
 					ShowDirector.remove_item_at(ShowDirector.current_index)

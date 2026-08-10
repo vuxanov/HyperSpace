@@ -1,4 +1,4 @@
-[gd_scene load_steps=2 format=3 uid="uid://effects_sidebar"]
+﻿[gd_scene load_steps=2 format=3 uid="uid://effects_sidebar"]
 
 [ext_resource type="Script" path="res://ui/effects_sidebar.gd" id="1"]
 
@@ -11,173 +11,524 @@ layout_mode = 2
 theme_override_constants/margin_left = 12
 theme_override_constants/margin_top = 12
 theme_override_constants/margin_right = 12
-theme_override_constants/margin_bottom = 12
+theme_override_constants/margin_bottom = 28
 
-[node name="Column" type="VBoxContainer" parent="Margin"]
+[node name="Scroll" type="ScrollContainer" parent="Margin"]
 layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="Column" type="VBoxContainer" parent="Margin/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 0
 theme_override_constants/separation = 10
 
-[node name="Title" type="Label" parent="Margin/Column"]
+[node name="Title" type="Label" parent="Margin/Scroll/Column"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 18
 text = "Effects & Reactivity"
 
-[node name="AudioSection" type="VBoxContainer" parent="Margin/Column"]
+[node name="AudioSection" type="VBoxContainer" parent="Margin/Scroll/Column"]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="ReactivityToggle" type="CheckButton" parent="Margin/Column/AudioSection"]
+[node name="ReactivityToggle" type="CheckButton" parent="Margin/Scroll/Column/AudioSection"]
 layout_mode = 2
 button_pressed = true
 text = "Audio Reactivity"
 
-[node name="IntensityLabel" type="Label" parent="Margin/Column/AudioSection"]
+[node name="ReactivityBody" type="VBoxContainer" parent="Margin/Scroll/Column/AudioSection"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="IntensityLabel" type="Label" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
 layout_mode = 2
 text = "Master Intensity"
 
-[node name="IntensitySlider" type="HSlider" parent="Margin/Column/AudioSection"]
+[node name="IntensitySlider" type="HSlider" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
 layout_mode = 2
-max_value = 3.0
-step = 0.05
-value = 1.0
+max_value = 10.0
+step = 1.0
+value = 2.0
 
-[node name="SensitivityLabel" type="Label" parent="Margin/Column/AudioSection"]
+[node name="SensitivityLabel" type="Label" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
 layout_mode = 2
 text = "Band Sensitivity"
 
-[node name="SensitivitySlider" type="HSlider" parent="Margin/Column/AudioSection"]
+[node name="SensitivitySlider" type="HSlider" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
 layout_mode = 2
-min_value = 0.1
-max_value = 5.0
-step = 0.1
-value = 1.0
+min_value = 1.0
+max_value = 20.0
+step = 1.0
+value = 3.0
 
-[node name="ScaleAmountLabel" type="Label" parent="Margin/Column/AudioSection"]
+[node name="ScaleAmountLabel" type="Label" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
 layout_mode = 2
 text = "Scale Amount (number)"
 
-[node name="ScaleAmountSpin" type="SpinBox" parent="Margin/Column/AudioSection"]
+[node name="ScaleAmountSpin" type="SpinBox" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
 layout_mode = 2
 min_value = 0.0
-max_value = 50.0
-step = 0.25
-value = 5.0
+max_value = 200.0
+step = 1.0
+value = 25.0
 allow_greater = true
 
-[node name="EnergyBar" type="ProgressBar" parent="Margin/Column/AudioSection"]
+[node name="EnergyBar" type="ProgressBar" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
 custom_minimum_size = Vector2(0, 16)
 layout_mode = 2
 max_value = 1.0
 show_percentage = false
 
-[node name="BassBar" type="ProgressBar" parent="Margin/Column/AudioSection"]
+[node name="BassBar" type="ProgressBar" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
 custom_minimum_size = Vector2(0, 12)
 layout_mode = 2
 max_value = 1.0
 show_percentage = false
 
-[node name="Targets" type="VBoxContainer" parent="Margin/Column"]
+[node name="Targets" type="VBoxContainer" parent="Margin/Scroll/Column"]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="TargetsLabel" type="Label" parent="Margin/Column/Targets"]
+[node name="TargetsLabel" type="Label" parent="Margin/Scroll/Column/Targets"]
 layout_mode = 2
 text = "What reacts"
 
-[node name="TargetOption" type="OptionButton" parent="Margin/Column/Targets"]
+[node name="TargetOption" type="OptionButton" parent="Margin/Scroll/Column/Targets"]
 layout_mode = 2
 
-[node name="AffectScale" type="CheckButton" parent="Margin/Column/Targets"]
+[node name="AffectScale" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
 layout_mode = 2
 button_pressed = true
 text = "Scale"
 
-[node name="AxisRow" type="HBoxContainer" parent="Margin/Column/Targets"]
+[node name="ScaleSource" type="OptionButton" parent="Margin/Scroll/Column/Targets"]
 layout_mode = 2
 
-[node name="ScaleX" type="CheckButton" parent="Margin/Column/Targets/AxisRow"]
+[node name="AxisRow" type="HBoxContainer" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+
+[node name="ScaleX" type="CheckButton" parent="Margin/Scroll/Column/Targets/AxisRow"]
 layout_mode = 2
 button_pressed = true
 text = "X"
 
-[node name="ScaleY" type="CheckButton" parent="Margin/Column/Targets/AxisRow"]
+[node name="ScaleY" type="CheckButton" parent="Margin/Scroll/Column/Targets/AxisRow"]
 layout_mode = 2
 button_pressed = true
 text = "Y"
 
-[node name="ScaleZ" type="CheckButton" parent="Margin/Column/Targets/AxisRow"]
+[node name="ScaleZ" type="CheckButton" parent="Margin/Scroll/Column/Targets/AxisRow"]
 layout_mode = 2
 button_pressed = true
 text = "Z"
 
-[node name="AffectLight" type="CheckButton" parent="Margin/Column/Targets"]
+[node name="AffectLight" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
 layout_mode = 2
 button_pressed = true
 text = "Lights"
 
-[node name="AffectEmission" type="CheckButton" parent="Margin/Column/Targets"]
+[node name="LightSource" type="OptionButton" parent="Margin/Scroll/Column/Targets"]
 layout_mode = 2
-button_pressed = true
+
+[node name="AffectEmission" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+button_pressed = false
 text = "Emission / Color"
 
-[node name="AffectRotation" type="CheckButton" parent="Margin/Column/Targets"]
+[node name="EmissionSource" type="OptionButton" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+
+[node name="AffectRotation" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
 layout_mode = 2
 button_pressed = true
 text = "Rotation"
 
-[node name="FxSection" type="VBoxContainer" parent="Margin/Column"]
+[node name="RotationSource" type="OptionButton" parent="Margin/Scroll/Column/Targets"]
 layout_mode = 2
-size_flags_vertical = 3
-theme_override_constants/separation = 4
 
-[node name="FxLabel" type="Label" parent="Margin/Column/FxSection"]
+[node name="AffectNoise" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+button_pressed = false
+text = "Noise Distort"
+
+[node name="NoiseSource" type="OptionButton" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+
+[node name="NoiseTargetLabel" type="Label" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+text = "Noise affects"
+
+[node name="NoiseTarget" type="OptionButton" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+
+[node name="NoiseAmountLabel" type="Label" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+text = "Noise Amount"
+
+[node name="NoiseAmount" type="HSlider" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+min_value = 0.0
+max_value = 100.0
+step = 1.0
+value = 18.0
+
+[node name="NoiseScaleLabel" type="Label" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+text = "Noise Scale"
+
+[node name="NoiseScale" type="HSlider" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+min_value = 1.0
+max_value = 40.0
+step = 1.0
+value = 4.0
+tooltip_text = "Spatial feature size of the deform noise (larger = bigger blobs)"
+
+[node name="CameraLabel" type="Label" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+text = "Camera motion (LFO)"
+
+[node name="CameraPreset" type="OptionButton" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+
+[node name="CameraRateLabel" type="Label" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+text = "LFO Rate"
+
+[node name="CameraRate" type="HSlider" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+min_value = 1.0
+max_value = 100.0
+step = 1.0
+value = 20.0
+
+[node name="CameraDepthLabel" type="Label" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+text = "LFO Depth"
+
+[node name="CameraDepth" type="HSlider" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+min_value = 0.0
+max_value = 100.0
+step = 1.0
+value = 55.0
+
+[node name="FxSection" type="VBoxContainer" parent="Margin/Scroll/Column"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="FxLabel" type="Label" parent="Margin/Scroll/Column/FxSection"]
 layout_mode = 2
 text = "Visual Effects"
 
-[node name="AsciiToggle" type="CheckButton" parent="Margin/Column/FxSection"]
+[node name="PlayAllToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection"]
 layout_mode = 2
-text = "ASCII Overlay"
+text = "Play All (style + schedules)"
 
-[node name="AsciiPresetLabel" type="Label" parent="Margin/Column/FxSection"]
-layout_mode = 2
-text = "ASCII Preset"
-
-[node name="AsciiPreset" type="OptionButton" parent="Margin/Column/FxSection"]
-layout_mode = 2
-
-[node name="AsciiDensityLabel" type="Label" parent="Margin/Column/FxSection"]
-layout_mode = 2
-text = "ASCII Density"
-
-[node name="AsciiDensitySlider" type="HSlider" parent="Margin/Column/FxSection"]
-layout_mode = 2
-min_value = 20.0
-max_value = 160.0
-step = 1.0
-value = 80.0
-
-[node name="ParticlesToggle" type="CheckButton" parent="Margin/Column/FxSection"]
-layout_mode = 2
-text = "Particles (break objects apart)"
-
-[node name="ParticlesTargetLabel" type="Label" parent="Margin/Column/FxSection"]
-layout_mode = 2
-text = "Particles affect"
-
-[node name="ParticlesTarget" type="OptionButton" parent="Margin/Column/FxSection"]
-layout_mode = 2
-
-[node name="FeedbackToggle" type="CheckButton" parent="Margin/Column/FxSection"]
-layout_mode = 2
-text = "Feedback Trail"
-
-[node name="CueSection" type="VBoxContainer" parent="Margin/Column"]
+[node name="PlayAllBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection"]
+visible = false
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="CueLabel" type="Label" parent="Margin/Column/CueSection"]
+[node name="PlayCycleLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+layout_mode = 2
+text = "Schedule cycle (sec)"
+
+[node name="PlayCycleSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+layout_mode = 2
+min_value = 4.0
+max_value = 60.0
+step = 1.0
+value = 12.0
+
+[node name="PlayActiveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+layout_mode = 2
+text = "Active window (sec)"
+
+[node name="PlayActiveSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+layout_mode = 2
+min_value = 1.0
+max_value = 30.0
+step = 1.0
+value = 6.0
+
+[node name="AsciiToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection"]
+layout_mode = 2
+text = "ASCII Preset"
+
+[node name="AsciiBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection"]
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="AsciiPresetLabel" type="Label" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+layout_mode = 2
+text = "Style"
+
+[node name="AsciiPreset" type="OptionButton" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+layout_mode = 2
+
+[node name="AsciiDensityMinLabel" type="Label" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+layout_mode = 2
+text = "Density min (smallest)"
+
+[node name="AsciiDensityMin" type="HSlider" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+layout_mode = 2
+min_value = 1.0
+max_value = 200.0
+step = 1.0
+value = 8.0
+
+[node name="AsciiDensityMaxLabel" type="Label" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+layout_mode = 2
+text = "Density max (biggest)"
+
+[node name="AsciiDensityMax" type="HSlider" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+layout_mode = 2
+min_value = 1.0
+max_value = 200.0
+step = 1.0
+value = 80.0
+
+[node name="AsciiInvert" type="CheckButton" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+layout_mode = 2
+text = "Invert Density"
+
+[node name="StyleSwitchToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+layout_mode = 2
+text = "Style Switch (cycle presets)"
+
+[node name="StyleSwitchBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="StyleIntervalLabel" type="Label" parent="Margin/Scroll/Column/FxSection/AsciiBody/StyleSwitchBody"]
+layout_mode = 2
+text = "Interval (sec)"
+
+[node name="StyleIntervalSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/AsciiBody/StyleSwitchBody"]
+layout_mode = 2
+min_value = 1.0
+max_value = 30.0
+step = 1.0
+value = 5.0
+
+[node name="StyleJitterToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection/AsciiBody/StyleSwitchBody"]
+layout_mode = 2
+text = "RND interval"
+
+[node name="AsciiSchedule" type="CheckButton" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+layout_mode = 2
+text = "ASCII schedule"
+
+[node name="ParticlesToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection"]
+layout_mode = 2
+text = "Particles (break objects apart)"
+
+[node name="ParticlesBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection"]
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="ParticlesTargetLabel" type="Label" parent="Margin/Scroll/Column/FxSection/ParticlesBody"]
+layout_mode = 2
+text = "Particles affect"
+
+[node name="ParticlesTarget" type="OptionButton" parent="Margin/Scroll/Column/FxSection/ParticlesBody"]
+layout_mode = 2
+
+[node name="ParticlesSchedule" type="CheckButton" parent="Margin/Scroll/Column/FxSection/ParticlesBody"]
+layout_mode = 2
+text = "Particles schedule"
+
+[node name="FeedbackToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection"]
+layout_mode = 2
+text = "Feedback Trail"
+
+[node name="FeedbackBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection"]
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="FeedbackMixLabel" type="Label" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
+layout_mode = 2
+text = "Mix"
+
+[node name="FeedbackMixSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
+layout_mode = 2
+min_value = 1.0
+max_value = 100.0
+step = 1.0
+value = 70.0
+
+[node name="FeedbackPersistLabel" type="Label" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
+layout_mode = 2
+text = "Persistence"
+
+[node name="FeedbackPersistSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
+layout_mode = 2
+min_value = 50.0
+max_value = 98.0
+step = 1.0
+value = 85.0
+
+[node name="FeedbackSchedule" type="CheckButton" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
+layout_mode = 2
+text = "Feedback schedule"
+
+[node name="GlitchToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection"]
+layout_mode = 2
+text = "Glitch"
+
+[node name="GlitchBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection"]
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="GlitchAmountLabel" type="Label" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+layout_mode = 2
+text = "Amount"
+
+[node name="GlitchAmountSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+layout_mode = 2
+min_value = 1.0
+max_value = 100.0
+step = 1.0
+value = 70.0
+
+[node name="GlitchSpeedLabel" type="Label" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+layout_mode = 2
+text = "Speed"
+
+[node name="GlitchSpeedSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+layout_mode = 2
+min_value = 1.0
+max_value = 20.0
+step = 1.0
+value = 4.0
+
+[node name="GlitchHSizeLabel" type="Label" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+layout_mode = 2
+text = "H size"
+
+[node name="GlitchHSizeSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+layout_mode = 2
+min_value = 1.0
+max_value = 100.0
+step = 1.0
+value = 70.0
+
+[node name="GlitchRgbLabel" type="Label" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+layout_mode = 2
+text = "RGB split"
+
+[node name="GlitchRgbSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+layout_mode = 2
+min_value = 0.0
+max_value = 100.0
+step = 1.0
+value = 80.0
+
+[node name="GlitchChaosLabel" type="Label" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+layout_mode = 2
+text = "Slice chaos"
+
+[node name="GlitchChaosSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+layout_mode = 2
+min_value = 0.0
+max_value = 100.0
+step = 1.0
+value = 70.0
+
+[node name="GlitchSchedule" type="CheckButton" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+layout_mode = 2
+text = "Glitch schedule"
+
+[node name="ChromaticToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection"]
+layout_mode = 2
+text = "Chromatic Aberration"
+
+[node name="ChromaticBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection"]
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="ChromaticAmountLabel" type="Label" parent="Margin/Scroll/Column/FxSection/ChromaticBody"]
+layout_mode = 2
+text = "Amount"
+
+[node name="ChromaticAmountSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/ChromaticBody"]
+layout_mode = 2
+min_value = 1.0
+max_value = 100.0
+step = 1.0
+value = 75.0
+
+[node name="ChromaticSchedule" type="CheckButton" parent="Margin/Scroll/Column/FxSection/ChromaticBody"]
+layout_mode = 2
+text = "Chromatic schedule"
+
+[node name="PixelSortToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection"]
+layout_mode = 2
+text = "Pixel Sort"
+
+[node name="PixelSortBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection"]
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="PixelSortAmountLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PixelSortBody"]
+layout_mode = 2
+text = "Amount"
+
+[node name="PixelSortAmountSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/PixelSortBody"]
+layout_mode = 2
+min_value = 1.0
+max_value = 100.0
+step = 1.0
+value = 80.0
+
+[node name="PixelSortThresholdLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PixelSortBody"]
+layout_mode = 2
+text = "Threshold"
+
+[node name="PixelSortThresholdSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/PixelSortBody"]
+layout_mode = 2
+min_value = 0.0
+max_value = 100.0
+step = 1.0
+value = 35.0
+
+[node name="PixelSortStretchLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PixelSortBody"]
+layout_mode = 2
+text = "Stretch"
+
+[node name="PixelSortStretchSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/PixelSortBody"]
+layout_mode = 2
+min_value = 1.0
+max_value = 100.0
+step = 1.0
+value = 60.0
+
+[node name="PixelSortSchedule" type="CheckButton" parent="Margin/Scroll/Column/FxSection/PixelSortBody"]
+layout_mode = 2
+text = "Pixel sort schedule"
+
+[node name="CueSection" type="VBoxContainer" parent="Margin/Scroll/Column"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="CueLabel" type="Label" parent="Margin/Scroll/Column/CueSection"]
 layout_mode = 2
 text = "Cues"
 
-[node name="CueContainer" type="HFlowContainer" parent="Margin/Column/CueSection"]
+[node name="CueContainer" type="HFlowContainer" parent="Margin/Scroll/Column/CueSection"]
 layout_mode = 2
+
+[node name="BottomPad" type="Control" parent="Margin/Scroll/Column"]
+custom_minimum_size = Vector2(0, 72)
+layout_mode = 2
+mouse_filter = 2

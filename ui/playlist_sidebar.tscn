@@ -1,4 +1,4 @@
-[gd_scene load_steps=2 format=3 uid="uid://playlist_sidebar"]
+﻿[gd_scene load_steps=2 format=3 uid="uid://playlist_sidebar"]
 
 [ext_resource type="Script" path="res://ui/playlist_sidebar.gd" id="1"]
 
@@ -25,160 +25,257 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 20
 text = "HyperSpace"
 
-[node name="ItemLabel" type="Label" parent="Margin/Column/Header"]
-layout_mode = 2
-text = "No item playing"
-
-[node name="Transport" type="HBoxContainer" parent="Margin/Column"]
-layout_mode = 2
-theme_override_constants/separation = 6
-
-[node name="PrevButton" type="Button" parent="Margin/Column/Transport"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "◀"
-
-[node name="PlayButton" type="Button" parent="Margin/Column/Transport"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "▶ Play"
-
-[node name="NextButton" type="Button" parent="Margin/Column/Transport"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "▶"
-
-[node name="PresentButton" type="Button" parent="Margin/Column/Transport"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Present"
-
-[node name="AutoplayRow" type="HBoxContainer" parent="Margin/Column"]
-layout_mode = 2
-theme_override_constants/separation = 6
-
-[node name="DefaultDurLabel" type="Label" parent="Margin/Column/AutoplayRow"]
-layout_mode = 2
-text = "Default sec"
-
-[node name="DefaultDuration" type="SpinBox" parent="Margin/Column/AutoplayRow"]
-layout_mode = 2
-size_flags_horizontal = 3
-min_value = 0.5
-max_value = 600.0
-step = 0.5
-value = 8.0
-suffix = "s"
-
-[node name="PlaylistTitle" type="Label" parent="Margin/Column"]
-layout_mode = 2
-theme_override_font_sizes/font_size = 16
-text = "Playlist  (click name = replace · ▶ play · drag ⋮⋮ reorder)"
-
-[node name="AddRow" type="HBoxContainer" parent="Margin/Column"]
-layout_mode = 2
-theme_override_constants/separation = 4
-
-[node name="AddMediaButton" type="Button" parent="Margin/Column/AddRow"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "+ Add Media"
-
-[node name="AddEnvButton" type="MenuButton" parent="Margin/Column/AddRow"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "+ 3D Env ▾"
-
-[node name="FlythroughSection" type="VBoxContainer" parent="Margin/Column"]
-layout_mode = 2
-theme_override_constants/separation = 4
-
-[node name="FlyTitle" type="Label" parent="Margin/Column/FlythroughSection"]
-layout_mode = 2
-theme_override_font_sizes/font_size = 14
-text = "Fly-through layers (swap independently)"
-
-[node name="FlyHint" type="Label" parent="Margin/Column/FlythroughSection"]
+[node name="StatusLabel" type="Label" parent="Margin/Column/Header"]
 layout_mode = 2
 autowrap_mode = 3
-text = "Background / scatter / main character — File or Test on each. Main stays centered on screen."
+text = "Pick an asset to apply"
 
-[node name="EnvLayerRow" type="HBoxContainer" parent="Margin/Column/FlythroughSection"]
+[node name="FlyRow" type="HBoxContainer" parent="Margin/Column/Header"]
 layout_mode = 2
-theme_override_constants/separation = 4
+theme_override_constants/separation = 8
 
-[node name="EnvLabel" type="Label" parent="Margin/Column/FlythroughSection/EnvLayerRow"]
+[node name="FlyLabel" type="Label" parent="Margin/Column/Header/FlyRow"]
 layout_mode = 2
-size_flags_horizontal = 3
-text = "Background"
+text = "Fly speed"
 
-[node name="EnvFileBtn" type="Button" parent="Margin/Column/FlythroughSection/EnvLayerRow"]
-layout_mode = 2
-text = "File"
-
-[node name="EnvPrimBtn" type="MenuButton" parent="Margin/Column/FlythroughSection/EnvLayerRow"]
-layout_mode = 2
-text = "Test ▾"
-
-[node name="ScatterLayerRow" type="HBoxContainer" parent="Margin/Column/FlythroughSection"]
-layout_mode = 2
-theme_override_constants/separation = 4
-
-[node name="ScatterLabel" type="Label" parent="Margin/Column/FlythroughSection/ScatterLayerRow"]
+[node name="FlySpeed" type="SpinBox" parent="Margin/Column/Header/FlyRow"]
 layout_mode = 2
 size_flags_horizontal = 3
-text = "Scatter"
+min_value = 1.0
+max_value = 100.0
+step = 1.0
+value = 12.0
+suffix = "u/s"
+tooltip_text = "Camera fly-through speed along the path"
 
-[node name="ScatterFileBtn" type="Button" parent="Margin/Column/FlythroughSection/ScatterLayerRow"]
-layout_mode = 2
-text = "File"
-
-[node name="ScatterPrimBtn" type="MenuButton" parent="Margin/Column/FlythroughSection/ScatterLayerRow"]
-layout_mode = 2
-text = "Test ▾"
-
-[node name="CenterLayerRow" type="HBoxContainer" parent="Margin/Column/FlythroughSection"]
-layout_mode = 2
-theme_override_constants/separation = 4
-
-[node name="CenterLabel" type="Label" parent="Margin/Column/FlythroughSection/CenterLayerRow"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Main character"
-
-[node name="CenterFileBtn" type="Button" parent="Margin/Column/FlythroughSection/CenterLayerRow"]
-layout_mode = 2
-text = "File"
-
-[node name="CenterPrimBtn" type="MenuButton" parent="Margin/Column/FlythroughSection/CenterLayerRow"]
-layout_mode = 2
-text = "Test ▾"
-
-[node name="Scroll" type="ScrollContainer" parent="Margin/Column"]
+[node name="AssetTabs" type="TabContainer" parent="Margin/Column"]
 layout_mode = 2
 size_flags_vertical = 3
 
-[node name="PlaylistList" type="VBoxContainer" parent="Margin/Column/Scroll"]
+[node name="Environments" type="VBoxContainer" parent="Margin/Column/AssetTabs"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="EnvControls" type="HBoxContainer" parent="Margin/Column/AssetTabs/Environments"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="EnvPlayBtn" type="Button" parent="Margin/Column/AssetTabs/Environments/EnvControls"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "â–¶ Play"
+
+[node name="EnvDurLabel" type="Label" parent="Margin/Column/AssetTabs/Environments/EnvControls"]
+layout_mode = 2
+text = "Sec"
+
+[node name="EnvDuration" type="SpinBox" parent="Margin/Column/AssetTabs/Environments/EnvControls"]
+layout_mode = 2
+custom_minimum_size = Vector2(88, 0)
+min_value = 1.0
+max_value = 600.0
+step = 1.0
+value = 8.0
+suffix = "s"
+
+[node name="EnvScaleRow" type="HBoxContainer" parent="Margin/Column/AssetTabs/Environments"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="EnvScaleLabel" type="Label" parent="Margin/Column/AssetTabs/Environments/EnvScaleRow"]
+layout_mode = 2
+text = "Env scale"
+
+[node name="EnvScale" type="SpinBox" parent="Margin/Column/AssetTabs/Environments/EnvScaleRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 1.0
+max_value = 20.0
+step = 1.0
+value = 1.0
+allow_greater = true
+allow_lesser = true
+tooltip_text = "Per-environment scale after auto-fit (keeps path/framing updated)"
+
+[node name="EnvHint" type="Label" parent="Margin/Column/AssetTabs/Environments"]
+layout_mode = 2
+autowrap_mode = 3
+text = "Background / world. Click a row to apply. Play cycles with this timer. Scale keeps the flythrough readable."
+
+[node name="EnvAddRow" type="HBoxContainer" parent="Margin/Column/AssetTabs/Environments"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="EnvFileBtn" type="Button" parent="Margin/Column/AssetTabs/Environments/EnvAddRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "+ File"
+
+[node name="EnvScroll" type="ScrollContainer" parent="Margin/Column/AssetTabs/Environments"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="EnvList" type="VBoxContainer" parent="Margin/Column/AssetTabs/Environments/EnvScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 4
+
+[node name="Main character" type="VBoxContainer" parent="Margin/Column/AssetTabs"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="MainControls" type="HBoxContainer" parent="Margin/Column/AssetTabs/Main character"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="MainPlayBtn" type="Button" parent="Margin/Column/AssetTabs/Main character/MainControls"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "â–¶ Play"
+
+[node name="MainDurLabel" type="Label" parent="Margin/Column/AssetTabs/Main character/MainControls"]
+layout_mode = 2
+text = "Sec"
+
+[node name="MainDuration" type="SpinBox" parent="Margin/Column/AssetTabs/Main character/MainControls"]
+layout_mode = 2
+custom_minimum_size = Vector2(88, 0)
+min_value = 1.0
+max_value = 600.0
+step = 1.0
+value = 8.0
+suffix = "s"
+
+[node name="MainHint" type="Label" parent="Margin/Column/AssetTabs/Main character"]
+layout_mode = 2
+autowrap_mode = 3
+text = "Focal prop. Click to apply (keeps env / scatter / lights)."
+
+[node name="MainAddRow" type="HBoxContainer" parent="Margin/Column/AssetTabs/Main character"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="MainFileBtn" type="Button" parent="Margin/Column/AssetTabs/Main character/MainAddRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "+ File"
+
+[node name="MainScroll" type="ScrollContainer" parent="Margin/Column/AssetTabs/Main character"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="MainList" type="VBoxContainer" parent="Margin/Column/AssetTabs/Main character/MainScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 4
+
+[node name="Scattering" type="VBoxContainer" parent="Margin/Column/AssetTabs"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="ScatterControls" type="HBoxContainer" parent="Margin/Column/AssetTabs/Scattering"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="ScatterPlayBtn" type="Button" parent="Margin/Column/AssetTabs/Scattering/ScatterControls"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "â–¶ Play"
+
+[node name="ScatterDurLabel" type="Label" parent="Margin/Column/AssetTabs/Scattering/ScatterControls"]
+layout_mode = 2
+text = "Sec"
+
+[node name="ScatterDuration" type="SpinBox" parent="Margin/Column/AssetTabs/Scattering/ScatterControls"]
+layout_mode = 2
+custom_minimum_size = Vector2(88, 0)
+min_value = 1.0
+max_value = 600.0
+step = 1.0
+value = 8.0
+suffix = "s"
+
+[node name="ScatterHint" type="Label" parent="Margin/Column/AssetTabs/Scattering"]
+layout_mode = 2
+autowrap_mode = 3
+text = "Props along the path. Click to apply; Play cycles on this timer."
+
+[node name="ScatterAddRow" type="HBoxContainer" parent="Margin/Column/AssetTabs/Scattering"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="ScatterFileBtn" type="Button" parent="Margin/Column/AssetTabs/Scattering/ScatterAddRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "+ File"
+
+[node name="ScatterScroll" type="ScrollContainer" parent="Margin/Column/AssetTabs/Scattering"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="ScatterList" type="VBoxContainer" parent="Margin/Column/AssetTabs/Scattering/ScatterScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 4
+
+[node name="Lighting" type="VBoxContainer" parent="Margin/Column/AssetTabs"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="LightControls" type="HBoxContainer" parent="Margin/Column/AssetTabs/Lighting"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="LightPlayBtn" type="Button" parent="Margin/Column/AssetTabs/Lighting/LightControls"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "â–¶ Play"
+
+[node name="LightDurLabel" type="Label" parent="Margin/Column/AssetTabs/Lighting/LightControls"]
+layout_mode = 2
+text = "Sec"
+
+[node name="LightDuration" type="SpinBox" parent="Margin/Column/AssetTabs/Lighting/LightControls"]
+layout_mode = 2
+custom_minimum_size = Vector2(88, 0)
+min_value = 1.0
+max_value = 600.0
+step = 1.0
+value = 8.0
+suffix = "s"
+
+[node name="LightHint" type="Label" parent="Margin/Column/AssetTabs/Lighting"]
+layout_mode = 2
+autowrap_mode = 3
+text = "HDRI / sun / sky looks. Click to apply; Play cycles lighting."
+
+[node name="LightAddRow" type="HBoxContainer" parent="Margin/Column/AssetTabs/Lighting"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="LightFileBtn" type="Button" parent="Margin/Column/AssetTabs/Lighting/LightAddRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "+ File (HDRI)"
+tooltip_text = "Add an HDR / EXR panorama for IBL lighting"
+
+[node name="LightScroll" type="ScrollContainer" parent="Margin/Column/AssetTabs/Lighting"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="LightList" type="VBoxContainer" parent="Margin/Column/AssetTabs/Lighting/LightScroll"]
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 4
 
 [node name="ClearButton" type="Button" parent="Margin/Column"]
 layout_mode = 2
-text = "Clear Playlist"
-
-[node name="FileDialog" type="FileDialog" parent="."]
-title = "Add Media"
-size = Vector2i(900, 600)
-access = 2
-file_mode = 0
-use_native_dialog = true
-filters = PackedStringArray("*.gif,*.webm,*.mp4,*.ogv,*.png,*.jpg,*.jpeg,*.svg,*.webp,*.glb,*.gltf,*.tscn ; Media Files")
+text = "Clear stage"
 
 [node name="LayerFileDialog" type="FileDialog" parent="."]
-title = "Choose layer model"
+title = "Choose asset"
 size = Vector2i(900, 600)
 access = 2
 file_mode = 0
 use_native_dialog = true
-filters = PackedStringArray("*.glb,*.gltf,*.tscn ; 3D Models")
+filters = PackedStringArray("*.glb,*.gltf,*.fbx,*.tscn ; 3D Models")

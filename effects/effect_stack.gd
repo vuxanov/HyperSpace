@@ -12,6 +12,12 @@ func create_effect(effect_id: String) -> EffectLayer:
 			return ParticleAudioEffect.new()
 		"feedback":
 			return FeedbackEffect.new()
+		"glitch":
+			return GlitchEffect.new()
+		"chromatic":
+			return ChromaticEffect.new()
+		"pixel_sort":
+			return PixelSortEffect.new()
 		_:
 			push_warning("EffectStack: unknown effect '%s'" % effect_id)
 			return null

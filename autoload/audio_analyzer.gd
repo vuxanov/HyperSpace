@@ -18,6 +18,7 @@ var _mic_player: AudioStreamPlayer
 var _energy_history: float = 0.0
 var _last_beat_time: float = 0.0
 var _beat_intervals: Array[float] = []
+var _kick_env: float = 0.0
 
 
 func _ready() -> void:
@@ -62,15 +63,14 @@ func set_input_bus(bus_name: String) -> void:
 		_mic_player.bus = bus_name
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	_kick_env = maxf(_kick_env - delta * 4.0, 0.0)
 	_analyze()
 
 
 func _analyze() -> void:
 	if _spectrum == null:
 		return
-	# get_magnitude_for_frequency_range returns one Vector2 (L/R) for a frequency span —
-	# query each band separately across a log-ish range from 20 Hz to 20 kHz.
 	var bands := PackedFloat32Array()
 	bands.resize(BAND_COUNT)
 	var total_energy := 0.0
@@ -92,6 +92,8 @@ func _analyze() -> void:
 	var mids := _average_range(bands, 4, 9)
 	var highs := _average_range(bands, 10, BAND_COUNT - 1)
 	var beat := _detect_beat(total_energy)
+	if beat:
+		_kick_env = maxf(_kick_env, clampf(bass * 1.8 + total_energy, 0.35, 1.0))
 	current_state.bands = bands
 	current_state.energy = total_energy
 	current_state.peak = peak
@@ -99,6 +101,7 @@ func _analyze() -> void:
 	current_state.bass = bass
 	current_state.mids = mids
 	current_state.highs = highs
+	current_state.kick = _kick_env
 	current_state.bpm_estimate = _estimate_bpm()
 	state_updated.emit(current_state)
 

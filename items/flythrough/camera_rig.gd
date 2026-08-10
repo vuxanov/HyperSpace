@@ -1,10 +1,10 @@
 extends RefCounted
 class_name FlythroughCameraRig
 
-## Follows a Curve3D at a calm speed; yaw/pitch look offsets on top.
+## Follows a Curve3D; mouse/gamepad look + shared ModulatorBus rotation offsets.
 
 
-var fly_speed: float = 2.0
+var fly_speed: float = 12.0
 var look_sensitivity: float = 0.0035
 var gamepad_look_sensitivity: float = 1.6
 var max_pitch_deg: float = 65.0
@@ -15,6 +15,7 @@ var _curve: Curve3D
 var _distance: float = 0.0
 var _yaw: float = 0.0
 var _pitch: float = 0.0
+var _mod: ModulatorBus
 
 
 func setup(camera: Camera3D, curve: Curve3D) -> void:
@@ -23,13 +24,43 @@ func setup(camera: Camera3D, curve: Curve3D) -> void:
 	_distance = 0.0
 	_yaw = 0.0
 	_pitch = 0.0
+	_bind_shared_modulator()
 	_apply_transform()
 
 
+func set_modulator(mod: ModulatorBus) -> void:
+	_mod = mod
+
+
+func get_modulator() -> ModulatorBus:
+	_bind_shared_modulator()
+	return _mod
+
+
+func _bind_shared_modulator() -> void:
+	if _mod != null:
+		return
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree and tree.root:
+		var rs := tree.root.get_node_or_null("ReactivitySettings")
+		if rs and rs.has_method("get_modulator"):
+			_mod = rs.call("get_modulator") as ModulatorBus
+	if _mod == null:
+		_mod = ModulatorBus.new()
+
+
 func set_curve(curve: Curve3D, reset_progress: bool = false) -> void:
+	var frac := 0.0
+	if _curve != null and not reset_progress:
+		var old_len := _curve.get_baked_length()
+		if old_len > 0.01:
+			frac = _distance / old_len
 	_curve = curve
-	if reset_progress:
+	if reset_progress or _curve == null:
 		_distance = 0.0
+	else:
+		var new_len := _curve.get_baked_length()
+		_distance = frac * new_len if new_len > 0.01 else 0.0
 	_apply_transform()
 
 
@@ -44,14 +75,20 @@ func handle_look_input(event: InputEvent) -> void:
 			_pitch = clampf(_pitch, deg_to_rad(-max_pitch_deg), deg_to_rad(max_pitch_deg))
 
 
-func advance(delta: float) -> void:
+func advance(delta: float, _kick: float = 0.0) -> void:
 	_apply_gamepad_look(delta)
+	_bind_shared_modulator()
+	# ModulatorBus is advanced by ReactivitySettings; only apply look here.
 	if _curve == null or _camera == null:
 		return
+	if not _camera.current:
+		_camera.current = true
 	var length := _curve.get_baked_length()
 	if length <= 0.01:
 		return
-	_distance += fly_speed * delta
+	# fly_speed is world-units/sec scaled by path length so large envs still feel snappy.
+	var speed_scale := maxf(length / 35.0, 1.0)
+	_distance += fly_speed * speed_scale * delta
 	if loop:
 		_distance = fposmod(_distance, length)
 	else:
@@ -94,6 +131,13 @@ func _apply_transform() -> void:
 	if length <= 0.01:
 		return
 	var path_xf := _curve.sample_baked_with_rotation(_distance, false)
-	# Path forward in Godot baked rotation; apply look offsets in camera local space.
-	var look := Basis.from_euler(Vector3(_pitch, _yaw, 0.0))
+	var yaw := _yaw
+	var pitch := _pitch
+	var roll := 0.0
+	if _mod and _mod.preset != ModulatorBus.Preset.OFF:
+		yaw += _mod.yaw_offset
+		pitch += _mod.pitch_offset
+		roll += _mod.roll_offset
+		pitch = clampf(pitch, deg_to_rad(-max_pitch_deg), deg_to_rad(max_pitch_deg))
+	var look := Basis.from_euler(Vector3(pitch, yaw, roll))
 	_camera.global_transform = Transform3D(path_xf.basis * look, path_xf.origin)

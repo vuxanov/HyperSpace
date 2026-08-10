@@ -1,365 +1,781 @@
 extends PanelContainer
 
-## Left sidebar — playlist, replace/reorder, fly-through layer slots.
+## Left sidebar — icon tabs for Env / Main / Scatter / Lighting with independent timers.
 
 signal present_requested
 
-@onready var show_label: Label = $Margin/Column/Header/ShowLabel
-@onready var item_label: Label = $Margin/Column/Header/ItemLabel
-@onready var prev_button: Button = $Margin/Column/Transport/PrevButton
-@onready var play_button: Button = $Margin/Column/Transport/PlayButton
-@onready var next_button: Button = $Margin/Column/Transport/NextButton
-@onready var present_button: Button = $Margin/Column/Transport/PresentButton
-@onready var default_duration: SpinBox = $Margin/Column/AutoplayRow/DefaultDuration
-@onready var playlist_list: VBoxContainer = $Margin/Column/Scroll/PlaylistList
-@onready var add_media_button: Button = $Margin/Column/AddRow/AddMediaButton
-@onready var add_env_button: MenuButton = $Margin/Column/AddRow/AddEnvButton
-@onready var clear_button: Button = $Margin/Column/ClearButton
-@onready var file_dialog: FileDialog = $FileDialog
-@onready var layer_file_dialog: FileDialog = $LayerFileDialog
-@onready var fly_section: VBoxContainer = $Margin/Column/FlythroughSection
-@onready var fly_hint: Label = $Margin/Column/FlythroughSection/FlyHint
-@onready var env_label: Label = $Margin/Column/FlythroughSection/EnvLayerRow/EnvLabel
-@onready var scatter_label: Label = $Margin/Column/FlythroughSection/ScatterLayerRow/ScatterLabel
-@onready var center_label: Label = $Margin/Column/FlythroughSection/CenterLayerRow/CenterLabel
-@onready var env_file_btn: Button = $Margin/Column/FlythroughSection/EnvLayerRow/EnvFileBtn
-@onready var scatter_file_btn: Button = $Margin/Column/FlythroughSection/ScatterLayerRow/ScatterFileBtn
-@onready var center_file_btn: Button = $Margin/Column/FlythroughSection/CenterLayerRow/CenterFileBtn
-@onready var env_prim_btn: MenuButton = $Margin/Column/FlythroughSection/EnvLayerRow/EnvPrimBtn
-@onready var scatter_prim_btn: MenuButton = $Margin/Column/FlythroughSection/ScatterLayerRow/ScatterPrimBtn
-@onready var center_prim_btn: MenuButton = $Margin/Column/FlythroughSection/CenterLayerRow/CenterPrimBtn
+const TAB_ENV := 0
+const TAB_MAIN := 1
+const TAB_SCATTER := 2
+const TAB_LIGHT := 3
 
-var _selected_index: int = -1
+@onready var show_label: Label = $Margin/Column/Header/ShowLabel
+@onready var status_label: Label = $Margin/Column/Header/StatusLabel
+@onready var fly_speed: SpinBox = $Margin/Column/Header/FlyRow/FlySpeed
+@onready var asset_tabs: TabContainer = $Margin/Column/AssetTabs
+
+@onready var env_list: VBoxContainer = $Margin/Column/AssetTabs/Environments/EnvScroll/EnvList
+@onready var main_list: VBoxContainer = $"Margin/Column/AssetTabs/Main character/MainScroll/MainList"
+@onready var scatter_list: VBoxContainer = $Margin/Column/AssetTabs/Scattering/ScatterScroll/ScatterList
+@onready var light_list: VBoxContainer = $Margin/Column/AssetTabs/Lighting/LightScroll/LightList
+
+@onready var env_file_btn: Button = $Margin/Column/AssetTabs/Environments/EnvAddRow/EnvFileBtn
+@onready var main_file_btn: Button = $"Margin/Column/AssetTabs/Main character/MainAddRow/MainFileBtn"
+@onready var scatter_file_btn: Button = $Margin/Column/AssetTabs/Scattering/ScatterAddRow/ScatterFileBtn
+
+@onready var env_play_btn: Button = $Margin/Column/AssetTabs/Environments/EnvControls/EnvPlayBtn
+@onready var main_play_btn: Button = $"Margin/Column/AssetTabs/Main character/MainControls/MainPlayBtn"
+@onready var scatter_play_btn: Button = $Margin/Column/AssetTabs/Scattering/ScatterControls/ScatterPlayBtn
+@onready var light_play_btn: Button = $Margin/Column/AssetTabs/Lighting/LightControls/LightPlayBtn
+
+@onready var env_duration: SpinBox = $Margin/Column/AssetTabs/Environments/EnvControls/EnvDuration
+@onready var env_scale: SpinBox = $Margin/Column/AssetTabs/Environments/EnvScaleRow/EnvScale
+@onready var main_duration: SpinBox = $"Margin/Column/AssetTabs/Main character/MainControls/MainDuration"
+@onready var scatter_duration: SpinBox = $Margin/Column/AssetTabs/Scattering/ScatterControls/ScatterDuration
+@onready var light_duration: SpinBox = $Margin/Column/AssetTabs/Lighting/LightControls/LightDuration
+
+@onready var clear_button: Button = $Margin/Column/ClearButton
+@onready var layer_file_dialog: FileDialog = $LayerFileDialog
+
+## Working asset lists per category (catalog + user File adds).
+var _env_entries: Array[Dictionary] = []
+var _main_entries: Array[Dictionary] = []
+var _scatter_entries: Array[Dictionary] = []
+var _light_entries: Array[Dictionary] = []
+## Selected index per category (-1 = none).
+var _sel_env: int = -1
+var _sel_main: int = -1
+var _sel_scatter: int = -1
+var _sel_light: int = -1
+## Independent autoplay per category.
+var _autoplay: Array[bool] = [false, false, false, false]
+var _elapsed: Array[float] = [0.0, 0.0, 0.0, 0.0]
+var _layer_pick: String = ""  # environment | scatter | centerpiece | replace_*
+var _replace_tab: int = -1
+var _replace_index: int = -1
 var _rebuilding: bool = false
-var _layer_pick: String = ""  # environment | scatter | centerpiece
-var _replace_index: int = -1  # >=0 means file dialog replaces that playlist slot
+## Avoid full list rebuild storms while applying a layer (playlist_changed fires from ShowDirector).
+var _suppress_playlist_ui: bool = false
 
 
 func _ready() -> void:
-	prev_button.pressed.connect(func() -> void: ShowDirector.prev_item(Transition.Mode.CUT, 0.0))
-	next_button.pressed.connect(func() -> void: ShowDirector.next_item(Transition.Mode.CUT, 0.0))
-	play_button.pressed.connect(_on_play_pressed)
-	present_button.pressed.connect(func() -> void: present_requested.emit())
-	add_media_button.pressed.connect(_on_add_media)
-	var env_popup := add_env_button.get_popup()
-	env_popup.clear()
-	env_popup.add_item("Fly-through (3 layers)", 0)
-	env_popup.add_item("Stage (rings + cube)", 1)
-	env_popup.id_pressed.connect(_on_add_env_id)
 	clear_button.pressed.connect(_on_clear)
-	default_duration.value_changed.connect(_on_default_duration)
-	file_dialog.file_selected.connect(_on_file_selected)
-	layer_file_dialog.file_selected.connect(_on_layer_file_selected)
 	env_file_btn.pressed.connect(func() -> void: _pick_layer_file("environment"))
+	main_file_btn.pressed.connect(func() -> void: _pick_layer_file("centerpiece"))
 	scatter_file_btn.pressed.connect(func() -> void: _pick_layer_file("scatter"))
-	center_file_btn.pressed.connect(func() -> void: _pick_layer_file("centerpiece"))
-	_setup_primitive_menus()
+	var light_file_btn: Button = $Margin/Column/AssetTabs/Lighting/LightAddRow/LightFileBtn
+	if light_file_btn:
+		light_file_btn.disabled = false
+		light_file_btn.tooltip_text = "Add an HDR / EXR panorama for IBL lighting"
+		light_file_btn.pressed.connect(func() -> void: _pick_layer_file("lighting"))
+	env_play_btn.pressed.connect(func() -> void: _toggle_tab_autoplay(TAB_ENV))
+	main_play_btn.pressed.connect(func() -> void: _toggle_tab_autoplay(TAB_MAIN))
+	scatter_play_btn.pressed.connect(func() -> void: _toggle_tab_autoplay(TAB_SCATTER))
+	light_play_btn.pressed.connect(func() -> void: _toggle_tab_autoplay(TAB_LIGHT))
+	fly_speed.value_changed.connect(_on_fly_speed_changed)
+	env_scale.value_changed.connect(_on_env_scale_changed)
+	layer_file_dialog.file_selected.connect(_on_layer_file_selected)
 	ShowDirector.show_loaded.connect(_on_show_loaded)
 	ShowDirector.item_changed.connect(_on_item_changed)
-	ShowDirector.playlist_changed.connect(_rebuild_playlist)
-	ShowDirector.autoplay_changed.connect(_on_autoplay_changed)
-	default_duration.value = ShowDirector.default_item_duration
-	# OS file drops onto the window → add or replace depending on hover target.
-	get_window().files_dropped.connect(_on_os_files_dropped)
-	fly_hint.text = "Playing a fly-through? Swap each layer separately below (File or Test). Centerpiece stays on-screen."
-	_rebuild_playlist()
-	_refresh_flythrough_section()
+	ShowDirector.playlist_changed.connect(_on_playlist_changed)
+	_setup_tab_icons()
+	_load_catalog_entries()
+	_rebuild_all_lists()
+	_refresh_status()
+	_sync_fly_speed_from_stage()
+	_sync_env_scale_from_stage()
+	_update_all_play_buttons()
+	set_process(true)
 
 
-func _setup_primitive_menus() -> void:
-	var env_pop := env_prim_btn.get_popup()
-	env_pop.clear()
-	env_pop.add_item("Box corridor", 0)
-	env_pop.add_item("Flat plane", 1)
-	env_pop.id_pressed.connect(_on_env_primitive)
-	var sc_pop := scatter_prim_btn.get_popup()
-	sc_pop.clear()
-	sc_pop.add_item("Cubes", 0)
-	sc_pop.add_item("Spheres", 1)
-	sc_pop.id_pressed.connect(_on_scatter_primitive)
-	var c_pop := center_prim_btn.get_popup()
-	c_pop.clear()
-	c_pop.add_item("Torus", 0)
-	c_pop.add_item("Icosphere", 1)
-	c_pop.id_pressed.connect(_on_center_primitive)
+func _process(delta: float) -> void:
+	for tab in [TAB_ENV, TAB_MAIN, TAB_SCATTER, TAB_LIGHT]:
+		if not _autoplay[tab]:
+			continue
+		_elapsed[tab] += delta
+		var step := _duration_for_tab(tab)
+		if _elapsed[tab] < step:
+			continue
+		_elapsed[tab] = 0.0
+		_step_tab(tab, 1)
+
+
+func _setup_tab_icons() -> void:
+	## Icon-only tabs so Env / Main / Scatter / Lighting all fit.
+	var specs := [
+		{"title": "", "tip": "Environments", "color": Color(0.35, 0.75, 0.45), "shape": "terrain"},
+		{"title": "", "tip": "Main character", "color": Color(0.95, 0.7, 0.25), "shape": "diamond"},
+		{"title": "", "tip": "Scattering", "color": Color(0.45, 0.7, 1.0), "shape": "dots"},
+		{"title": "", "tip": "Lighting", "color": Color(1.0, 0.85, 0.35), "shape": "sun"},
+	]
+	for i in specs.size():
+		var spec: Dictionary = specs[i]
+		asset_tabs.set_tab_title(i, str(spec["title"]))
+		asset_tabs.set_tab_icon(i, _make_tab_icon(spec["color"] as Color, str(spec["shape"])))
+		asset_tabs.set_tab_tooltip(i, str(spec["tip"]))
+
+
+func _make_tab_icon(color: Color, shape: String) -> Texture2D:
+	var size := 18
+	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	match shape:
+		"terrain":
+			for x in size:
+				var h := int(4.0 + 6.0 * abs(sin(x * 0.55)) + (x % 3))
+				for y in range(size - h, size):
+					img.set_pixel(x, y, color)
+		"diamond":
+			var c := size / 2
+			for y in size:
+				for x in size:
+					if abs(x - c) + abs(y - c) <= 7:
+						img.set_pixel(x, y, color)
+		"dots":
+			for p: Vector2i in [Vector2i(4, 5), Vector2i(13, 4), Vector2i(8, 10), Vector2i(3, 13), Vector2i(14, 13)]:
+				for oy in range(-1, 2):
+					for ox in range(-1, 2):
+						var px: int = p.x + ox
+						var py: int = p.y + oy
+						if px >= 0 and py >= 0 and px < size and py < size:
+							img.set_pixel(px, py, color)
+		"sun":
+			var c2: float = size / 2.0
+			for y in size:
+				for x in size:
+					var dx: float = float(x) - c2
+					var dy: float = float(y) - c2
+					var d: float = sqrt(dx * dx + dy * dy)
+					if d <= 4.5 or (d >= 6.5 and d <= 8.0 and int(atan2(dy, dx) * 4.0 + 8.0) % 2 == 0):
+						img.set_pixel(x, y, color)
+		_:
+			for y in range(3, size - 3):
+				for x in range(3, size - 3):
+					img.set_pixel(x, y, color)
+	return ImageTexture.create_from_image(img)
+
+
+func _load_catalog_entries() -> void:
+	_env_entries.clear()
+	for entry in FlythroughAssetCatalog.environment_chooser_entries():
+		_env_entries.append((entry as Dictionary).duplicate(true))
+	_main_entries.clear()
+	_scatter_entries.clear()
+	for entry in FlythroughAssetCatalog.prop_chooser_entries():
+		var e: Dictionary = (entry as Dictionary).duplicate(true)
+		var roles: Array = e.get("roles", []) as Array
+		if "centerpiece" in roles:
+			_main_entries.append(e.duplicate(true))
+		if "scatter" in roles:
+			_scatter_entries.append(e.duplicate(true))
+	_light_entries.clear()
+	for entry in FlythroughAssetCatalog.lighting_chooser_entries():
+		_light_entries.append((entry as Dictionary).duplicate(true))
 
 
 func _on_show_loaded(show_name: String) -> void:
 	show_label.text = show_name
-	_rebuild_playlist()
-	_refresh_flythrough_section()
+	_sync_selection_from_stage()
+	_rebuild_all_lists()
+	_refresh_status()
+	_sync_fly_speed_from_stage()
+	_sync_env_scale_from_stage()
 
 
-func _on_item_changed(item_id: String, index: int) -> void:
-	_selected_index = index
-	var dur := ShowDirector.get_current_item_duration()
-	item_label.text = "Playing: %s  (%.1fs)" % [item_id, dur]
-	_rebuild_playlist()
-	_refresh_flythrough_section()
+func _on_item_changed(_item_id: String, _index: int) -> void:
+	_sync_selection_from_stage()
+	_rebuild_all_lists()
+	_refresh_status()
+	_sync_fly_speed_from_stage()
+	_sync_env_scale_from_stage()
 
 
-func _on_autoplay_changed(playing: bool) -> void:
-	play_button.text = "■ Stop" if playing else "▶ Play"
-
-
-func _on_play_pressed() -> void:
-	if ShowDirector.items.is_empty():
+func _on_playlist_changed() -> void:
+	if _suppress_playlist_ui:
 		return
-	if ShowDirector.current_index < 0:
-		ShowDirector.play_index(0, Transition.Mode.CUT, 0.0)
-	ShowDirector.toggle_autoplay()
+	_sync_selection_from_stage()
+	_rebuild_all_lists()
+	_refresh_status()
+	_sync_fly_speed_from_stage()
+	_sync_env_scale_from_stage()
 
 
-func _on_default_duration(value: float) -> void:
-	ShowDirector.default_item_duration = value
+func _on_fly_speed_changed(value: float) -> void:
+	var idx := _ensure_stage()
+	if idx < 0:
+		return
+	ShowDirector.set_active_cue_param("fly_speed", value)
+	# Also keep the playlist alias used by configure_from_params.
+	if idx < ShowDirector.items.size():
+		ShowDirector.items[idx].params["speed"] = value
 
 
-func _rebuild_playlist() -> void:
-	_rebuilding = true
-	for child in playlist_list.get_children():
-		child.queue_free()
+func _on_env_scale_changed(value: float) -> void:
+	var idx := _ensure_stage()
+	if idx < 0:
+		return
+	var scale_val := clampf(roundf(value), 1.0, 50.0)
+	if idx < ShowDirector.items.size():
+		var params: Dictionary = ShowDirector.items[idx].params
+		var env_cfg: Dictionary = (params.get("environment", {}) as Dictionary).duplicate(true)
+		env_cfg["user_scale"] = scale_val
+		params["environment"] = env_cfg
+	# Live scale only — avoid full env reload.
+	ShowDirector.set_active_cue_param("env_scale", scale_val)
+
+
+func _sync_fly_speed_from_stage() -> void:
+	if fly_speed == null:
+		return
+	var idx := _stage_index()
+	var speed_val := 12.0
+	if idx >= 0 and idx < ShowDirector.items.size():
+		var params: Dictionary = ShowDirector.items[idx].params
+		if params.has("fly_speed"):
+			speed_val = float(params["fly_speed"])
+		elif params.has("speed"):
+			speed_val = float(params["speed"])
+	fly_speed.set_value_no_signal(roundf(speed_val))
+
+
+func _sync_env_scale_from_stage() -> void:
+	if env_scale == null:
+		return
+	var idx := _stage_index()
+	var scale_val := 1.0
+	if idx >= 0 and idx < ShowDirector.items.size():
+		var params: Dictionary = ShowDirector.items[idx].params
+		var env_cfg: Dictionary = params.get("environment", {}) as Dictionary
+		if env_cfg.has("user_scale"):
+			scale_val = float(env_cfg["user_scale"])
+		elif env_cfg.has("scale"):
+			scale_val = float(env_cfg["scale"])
+		elif params.has("env_scale"):
+			scale_val = float(params["env_scale"])
+	env_scale.set_value_no_signal(roundf(scale_val))
+
+
+func _apply_environment(entry: Dictionary) -> void:
+	var idx := _ensure_stage()
+	if idx < 0:
+		return
+	var cfg: Dictionary = FlythroughAssetCatalog.layer_config_from_entry(entry, "environment")
+	if env_scale:
+		cfg["user_scale"] = float(env_scale.value)
+	_suppress_playlist_ui = true
+	ShowDirector.set_flythrough_layer("environment", cfg, idx)
+	_suppress_playlist_ui = false
+	_sel_env = _index_of_config(_env_entries, cfg, "environment")
+	_rebuild_all_lists()
+	_refresh_status()
+	status_label.text = "Env: %s" % str(entry.get("label", "?"))
+
+
+func _apply_main(entry: Dictionary) -> void:
+	var idx := _ensure_stage()
+	if idx < 0:
+		return
+	var cfg: Dictionary = FlythroughAssetCatalog.layer_config_from_entry(entry, "centerpiece")
+	_suppress_playlist_ui = true
+	ShowDirector.set_flythrough_layer("centerpiece", cfg, idx)
+	_suppress_playlist_ui = false
+	_sel_main = _index_of_config(_main_entries, cfg, "centerpiece")
+	_rebuild_all_lists()
+	_refresh_status()
+	status_label.text = "Main: %s" % str(entry.get("label", "?"))
+
+
+func _apply_scatter(entry: Dictionary) -> void:
+	var idx := _ensure_stage()
+	if idx < 0:
+		return
+	var cfg: Dictionary = FlythroughAssetCatalog.layer_config_from_entry(entry, "scatter", 18)
+	_suppress_playlist_ui = true
+	ShowDirector.set_flythrough_layer("scatter", cfg, idx)
+	_suppress_playlist_ui = false
+	_sel_scatter = _index_of_config(_scatter_entries, cfg, "scatter")
+	_rebuild_all_lists()
+	_refresh_status()
+	status_label.text = "Scatter: %s" % str(entry.get("label", "?"))
+
+
+func _apply_lighting(entry: Dictionary) -> void:
+	var idx := _ensure_stage()
+	if idx < 0:
+		return
+	var cfg: Dictionary = (entry.get("config", {}) as Dictionary).duplicate(true)
+	_suppress_playlist_ui = true
+	ShowDirector.set_flythrough_layer("lighting", cfg, idx)
+	_suppress_playlist_ui = false
+	_sel_light = _index_of_lighting(_light_entries, cfg)
+	_rebuild_all_lists()
+	_refresh_status()
+	status_label.text = "Light: %s" % str(entry.get("label", "?"))
+
+
+func _duration_for_tab(tab: int) -> float:
+	match tab:
+		TAB_ENV:
+			return float(env_duration.value)
+		TAB_MAIN:
+			return float(main_duration.value)
+		TAB_SCATTER:
+			return float(scatter_duration.value)
+		TAB_LIGHT:
+			return float(light_duration.value)
+	return 8.0
+
+
+func _toggle_tab_autoplay(tab: int) -> void:
+	_ensure_stage()
+	if _autoplay[tab]:
+		_set_tab_autoplay(tab, false)
+		return
+	var entries := _entries_for_tab(tab)
+	if entries.is_empty():
+		return
+	var sel := _selection_for_tab(tab)
+	if sel < 0:
+		sel = 0
+		_set_selection_for_tab(tab, sel)
+	_play_entry_at(tab, sel)
+	_set_tab_autoplay(tab, true)
+
+
+func _set_tab_autoplay(tab: int, playing: bool) -> void:
+	_autoplay[tab] = playing
+	_elapsed[tab] = 0.0
+	# Category cycling is local — keep ShowDirector playlist autoplay off.
+	if ShowDirector.autoplay:
+		ShowDirector.set_autoplay(false)
+	_update_play_button(tab)
+
+
+func _update_all_play_buttons() -> void:
+	for tab in [TAB_ENV, TAB_MAIN, TAB_SCATTER, TAB_LIGHT]:
+		_update_play_button(tab)
+
+
+func _update_play_button(tab: int) -> void:
+	var btn := _play_btn_for_tab(tab)
+	if btn == null:
+		return
+	btn.text = "■ Stop" if _autoplay[tab] else "▶ Play"
+
+
+func _play_btn_for_tab(tab: int) -> Button:
+	match tab:
+		TAB_ENV:
+			return env_play_btn
+		TAB_MAIN:
+			return main_play_btn
+		TAB_SCATTER:
+			return scatter_play_btn
+		TAB_LIGHT:
+			return light_play_btn
+	return null
+
+
+func _step_tab(tab: int, delta_i: int) -> void:
+	var entries := _entries_for_tab(tab)
+	if entries.is_empty():
+		return
+	var sel := _selection_for_tab(tab)
+	if sel < 0:
+		sel = 0 if delta_i >= 0 else entries.size() - 1
+	else:
+		sel = (sel + delta_i) % entries.size()
+		if sel < 0:
+			sel += entries.size()
+	_set_selection_for_tab(tab, sel)
+	_play_entry_at(tab, sel)
+
+
+func _play_entry_at(tab: int, index: int) -> void:
+	var entries := _entries_for_tab(tab)
+	if index < 0 or index >= entries.size():
+		return
+	var entry: Dictionary = entries[index]
+	match tab:
+		TAB_ENV:
+			_apply_environment(entry)
+		TAB_MAIN:
+			_apply_main(entry)
+		TAB_SCATTER:
+			_apply_scatter(entry)
+		TAB_LIGHT:
+			_apply_lighting(entry)
+
+
+func _ensure_stage() -> int:
 	for i in ShowDirector.items.size():
 		var item: PlaylistItem = ShowDirector.items[i]
-		var src := str(item.params.get("source_type", item.type))
-		if str(item.params.get("style", "")) == "flythrough":
-			src = "flythrough"
-		var title := "%d. [%s] %s" % [i + 1, src, item.id]
-		var selected := (i == _selected_index) or (i == ShowDirector.current_index)
-		var dur := item.duration if item.duration > 0.0 else ShowDirector.default_item_duration
-		var row := PlaylistRow.new()
-		row.setup(i, title, dur, selected)
-		row.play_pressed.connect(_on_row_play)
-		row.replace_pressed.connect(_on_row_replace)
-		row.delete_pressed.connect(_on_row_delete)
-		row.duration_changed.connect(_on_row_duration)
-		row.reorder_drop.connect(_on_row_reorder)
-		row.files_dropped_on_row.connect(_on_row_files_dropped)
-		playlist_list.add_child(row)
-	_rebuilding = false
-	_refresh_flythrough_section()
-
-
-func _flythrough_index() -> int:
-	var idx := _selected_index if _selected_index >= 0 else ShowDirector.current_index
-	if idx < 0 or idx >= ShowDirector.items.size():
-		return -1
-	var item: PlaylistItem = ShowDirector.items[idx]
-	if item.type == "scene3d" and str(item.params.get("style", "flythrough")) == "flythrough":
-		return idx
-	if item.type == "scene3d" and str(item.params.get("style", "")) in ["corridor", "tunnel", "city", ""]:
-		if str(item.params.get("style", "")) != "demo":
-			return idx
-	return -1
-
-
-func _refresh_flythrough_section() -> void:
-	var idx := _flythrough_index()
-	var enabled := idx >= 0
-	fly_section.modulate.a = 1.0 if enabled else 0.45
-	env_file_btn.disabled = not enabled
-	scatter_file_btn.disabled = not enabled
-	center_file_btn.disabled = not enabled
-	env_prim_btn.disabled = not enabled
-	scatter_prim_btn.disabled = not enabled
-	center_prim_btn.disabled = not enabled
-	if not enabled:
-		env_label.text = "Background"
-		scatter_label.text = "Scatter"
-		center_label.text = "Main character"
-		return
-	var item: PlaylistItem = ShowDirector.items[idx]
-	env_label.text = "Background: " + _short_layer(item.params.get("environment", {"source": "primitive:box_corridor"}))
-	scatter_label.text = "Scatter: " + _short_layer(item.params.get("scatter", {"source": "primitive:cubes"}))
-	center_label.text = "Main: " + _short_layer(item.params.get("centerpiece", {"source": "primitive:torus"}))
-
-
-func _short_layer(config: Variant) -> String:
-	if config is Dictionary:
-		var d: Dictionary = config
-		if d.has("path") and str(d["path"]).strip_edges() != "":
-			return str(d["path"]).get_file()
-		if d.has("source"):
-			return str(d["source"]).replace("primitive:", "")
-	return "?"
-
-
-func _on_row_play(index: int) -> void:
-	_selected_index = index
-	ShowDirector.play_index(index, Transition.Mode.CUT, 0.0)
-
-
-func _on_row_replace(index: int) -> void:
-	_selected_index = index
-	_replace_index = index
-	file_dialog.title = "Replace playlist item #%d" % [index + 1]
-	file_dialog.popup_centered()
-	_refresh_flythrough_section()
-
-
-func _on_row_duration(index: int, value: float) -> void:
-	if _rebuilding:
-		return
-	ShowDirector.set_item_duration(index, value)
-
-
-func _on_row_delete(index: int) -> void:
-	ShowDirector.remove_item_at(index)
-	_selected_index = ShowDirector.current_index
-	if ShowDirector.items.is_empty():
-		item_label.text = "No item playing"
-		ShowDirector.set_autoplay(false)
-	_refresh_flythrough_section()
-
-
-func _on_row_reorder(from_index: int, to_index: int) -> void:
-	ShowDirector.move_item(from_index, to_index)
-	_selected_index = to_index
-
-
-func _on_row_files_dropped(index: int, paths: PackedStringArray) -> void:
-	if paths.is_empty():
-		return
-	_replace_with_path(index, paths[0])
-
-
-func _on_os_files_dropped(files: PackedStringArray) -> void:
-	if files.is_empty():
-		return
-	# Prefer dropping onto a specific row under the mouse.
-	var mouse := get_global_mouse_position()
-	for child in playlist_list.get_children():
-		if child is Control and (child as Control).get_global_rect().has_point(mouse):
-			if child is PlaylistRow:
-				_replace_with_path((child as PlaylistRow).index, files[0])
-				return
-	# Otherwise append as new playlist items.
-	for path in files:
-		var data := MediaImport.build_item_dict(path, ShowDirector.default_item_duration)
-		if data.is_empty():
-			continue
-		ShowDirector.add_item_from_dict(data, false)
-	if not ShowDirector.items.is_empty() and ShowDirector.current_index < 0:
-		ShowDirector.play_index(ShowDirector.items.size() - 1, Transition.Mode.CUT, 0.0)
-
-
-func _replace_with_path(index: int, path: String) -> void:
-	var data := MediaImport.build_item_dict(path, ShowDirector.default_item_duration)
-	if data.is_empty():
-		push_warning("Unsupported media: %s" % path)
-		return
-	_selected_index = index
-	ShowDirector.replace_item_at(index, data, true)
-	_refresh_flythrough_section()
-
-
-func _on_add_media() -> void:
-	_replace_index = -1
-	file_dialog.title = "Add Media (GIF / video / image / 3D)"
-	file_dialog.popup_centered()
-
-
-func _default_flythrough_params() -> Dictionary:
-	return {
-		"style": "flythrough",
-		"speed": 2.0,
-		"centerpiece_locked": true,
-		"environment": {"source": "primitive:box_corridor"},
-		"scatter": {"source": "primitive:cubes", "count": 36},
-		"centerpiece": {"source": "primitive:torus"},
-	}
-
-
-func _on_add_env_id(id: int) -> void:
-	if id == 1:
-		ShowDirector.add_item_from_dict({
-			"id": "stage",
-			"type": "scene3d",
-			"path": "",
-			"duration": ShowDirector.default_item_duration,
-			"params": {"style": "demo", "color": "#3366cc"},
-		}, true)
-		return
+		if item.type == "scene3d" and str(item.params.get("style", "")) != "demo":
+			if ShowDirector.current_index != i:
+				ShowDirector.play_index(i, Transition.Mode.CUT, 0.0)
+			return i
+	var params := FlythroughAssetCatalog.blank_stage_params()
 	ShowDirector.add_item_from_dict({
-		"id": "flythrough",
+		"id": "stage",
 		"type": "scene3d",
 		"path": "",
 		"duration": ShowDirector.default_item_duration,
-		"params": _default_flythrough_params(),
+		"params": params,
 	}, true)
-	_selected_index = ShowDirector.current_index
-	_refresh_flythrough_section()
+	return ShowDirector.current_index
+
+
+func _stage_index() -> int:
+	if ShowDirector.current_index >= 0 and ShowDirector.current_index < ShowDirector.items.size():
+		var cur: PlaylistItem = ShowDirector.items[ShowDirector.current_index]
+		if cur.type == "scene3d" and str(cur.params.get("style", "")) != "demo":
+			return ShowDirector.current_index
+	for i in ShowDirector.items.size():
+		var item: PlaylistItem = ShowDirector.items[i]
+		if item.type == "scene3d" and str(item.params.get("style", "")) != "demo":
+			return i
+	return -1
+
+
+func _sync_selection_from_stage() -> void:
+	var idx := _stage_index()
+	if idx < 0:
+		_sel_env = -1
+		_sel_main = -1
+		_sel_scatter = -1
+		_sel_light = -1
+		return
+	var item: PlaylistItem = ShowDirector.items[idx]
+	_sel_env = _index_of_config(_env_entries, item.params.get("environment", {}), "environment")
+	_sel_main = _index_of_config(_main_entries, item.params.get("centerpiece", {}), "centerpiece")
+	_sel_scatter = _index_of_config(_scatter_entries, item.params.get("scatter", {}), "scatter")
+	_sel_light = _index_of_lighting(_light_entries, item.params.get("lighting", {}))
+
+
+func _index_of_lighting(entries: Array[Dictionary], config: Variant) -> int:
+	if not (config is Dictionary):
+		return -1
+	var cfg: Dictionary = config
+	var preset := str(cfg.get("preset", ""))
+	if preset.is_empty():
+		return -1
+	for i in entries.size():
+		var entry: Dictionary = entries[i]
+		if str(entry.get("id", "")) == preset:
+			return i
+		var ecfg: Dictionary = entry.get("config", {}) as Dictionary
+		if str(ecfg.get("preset", "")) == preset:
+			return i
+	return -1
+
+
+func _index_of_config(entries: Array[Dictionary], config: Variant, role: String) -> int:
+	if not (config is Dictionary):
+		return -1
+	var cfg: Dictionary = config
+	if FlythroughAssetCatalog.is_empty_layer_config(cfg):
+		return -1
+	var cfg_label := FlythroughAssetCatalog.short_label_for_config(cfg)
+	for i in entries.size():
+		var entry: Dictionary = entries[i]
+		var use_role := role
+		if role.is_empty():
+			use_role = "environment"
+			if "roles" in entry:
+				var roles: Array = entry.get("roles", []) as Array
+				if "centerpiece" in roles and "scatter" not in roles:
+					use_role = "centerpiece"
+				elif "scatter" in roles and "centerpiece" not in roles:
+					use_role = "scatter"
+				elif "centerpiece" in roles:
+					use_role = "centerpiece"
+		var entry_cfg: Dictionary = FlythroughAssetCatalog.layer_config_from_entry(entry, use_role)
+		if FlythroughAssetCatalog.short_label_for_config(entry_cfg) == cfg_label:
+			if _configs_match_asset(entry_cfg, cfg):
+				return i
+	return -1
+
+
+func _configs_match_asset(a: Dictionary, b: Dictionary) -> bool:
+	var ap := str(a.get("path", ""))
+	var bp := str(b.get("path", ""))
+	if ap != "" and ap == bp:
+		return true
+	var asrc := str(a.get("source", ""))
+	var bsrc := str(b.get("source", ""))
+	if asrc != "" and asrc == bsrc:
+		return true
+	return FlythroughAssetCatalog.short_label_for_config(a) == FlythroughAssetCatalog.short_label_for_config(b) \
+		and FlythroughAssetCatalog.short_label_for_config(a) != "?"
+
+
+func _rebuild_all_lists() -> void:
+	_rebuilding = true
+	_rebuild_list(env_list, _env_entries, TAB_ENV, _sel_env)
+	_rebuild_list(main_list, _main_entries, TAB_MAIN, _sel_main)
+	_rebuild_list(scatter_list, _scatter_entries, TAB_SCATTER, _sel_scatter)
+	_rebuild_list(light_list, _light_entries, TAB_LIGHT, _sel_light)
+	_rebuilding = false
+	_update_all_play_buttons()
+
+
+func _rebuild_list(container: VBoxContainer, entries: Array[Dictionary], tab: int, selected: int) -> void:
+	for child in container.get_children():
+		child.queue_free()
+	for i in entries.size():
+		var entry: Dictionary = entries[i]
+		var row := HBoxContainer.new()
+		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var title := Button.new()
+		title.text = str(entry.get("label", "Asset"))
+		title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		title.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		title.toggle_mode = true
+		title.button_pressed = (i == selected)
+		title.tooltip_text = "Apply this asset"
+		var idx := i
+		title.pressed.connect(func() -> void:
+			if _rebuilding:
+				return
+			_set_selection_for_tab(tab, idx)
+			_play_entry_at(tab, idx)
+		)
+		row.add_child(title)
+		var replace := Button.new()
+		replace.text = "↻"
+		replace.custom_minimum_size = Vector2(36, 0)
+		replace.tooltip_text = "Replace this item with another file"
+		replace.disabled = (tab == TAB_LIGHT)
+		replace.pressed.connect(func() -> void: _pick_replace(tab, idx))
+		row.add_child(replace)
+		var del := Button.new()
+		del.text = "✕"
+		del.custom_minimum_size = Vector2(32, 0)
+		del.tooltip_text = "Remove from this list"
+		del.pressed.connect(func() -> void: _remove_entry(tab, idx))
+		row.add_child(del)
+		container.add_child(row)
+
+
+func _pick_replace(tab: int, index: int) -> void:
+	if tab == TAB_LIGHT:
+		return
+	_replace_tab = tab
+	_replace_index = index
+	_layer_pick = "replace"
+	_set_layer_dialog_filters(false)
+	layer_file_dialog.title = "Replace asset"
+	layer_file_dialog.popup_centered()
+
+
+func _remove_entry(tab: int, index: int) -> void:
+	var entries := _entries_for_tab(tab)
+	if index < 0 or index >= entries.size():
+		return
+	var was_selected := _selection_for_tab(tab) == index
+	entries.remove_at(index)
+	if was_selected:
+		_set_selection_for_tab(tab, -1)
+		_clear_stage_layer(tab)
+	elif _selection_for_tab(tab) > index:
+		_set_selection_for_tab(tab, _selection_for_tab(tab) - 1)
+	_rebuild_all_lists()
+	_refresh_status()
+
+
+func _clear_stage_layer(tab: int) -> void:
+	var idx := _stage_index()
+	if idx < 0:
+		return
+	_suppress_playlist_ui = true
+	match tab:
+		TAB_ENV:
+			ShowDirector.set_flythrough_layer("environment", {"source": "primitive:box_corridor"}, idx)
+		TAB_MAIN:
+			ShowDirector.set_flythrough_layer("centerpiece", FlythroughAssetCatalog.empty_centerpiece_config(), idx)
+		TAB_SCATTER:
+			ShowDirector.set_flythrough_layer("scatter", FlythroughAssetCatalog.empty_scatter_config(), idx)
+		TAB_LIGHT:
+			ShowDirector.set_flythrough_layer("lighting", FlythroughAssetCatalog.default_lighting_config(), idx)
+	_suppress_playlist_ui = false
+
+
+func _entries_for_tab(tab: int) -> Array[Dictionary]:
+	match tab:
+		TAB_ENV:
+			return _env_entries
+		TAB_MAIN:
+			return _main_entries
+		TAB_SCATTER:
+			return _scatter_entries
+		TAB_LIGHT:
+			return _light_entries
+	return _env_entries
+
+
+func _selection_for_tab(tab: int) -> int:
+	match tab:
+		TAB_ENV:
+			return _sel_env
+		TAB_MAIN:
+			return _sel_main
+		TAB_SCATTER:
+			return _sel_scatter
+		TAB_LIGHT:
+			return _sel_light
+	return -1
+
+
+func _set_selection_for_tab(tab: int, index: int) -> void:
+	match tab:
+		TAB_ENV:
+			_sel_env = index
+		TAB_MAIN:
+			_sel_main = index
+		TAB_SCATTER:
+			_sel_scatter = index
+		TAB_LIGHT:
+			_sel_light = index
+
+
+func _refresh_status() -> void:
+	var idx := _stage_index()
+	if idx < 0:
+		status_label.text = "No stage loaded"
+		return
+	var item: PlaylistItem = ShowDirector.items[idx]
+	var env_s := FlythroughAssetCatalog.short_label_for_config(item.params.get("environment", {}))
+	var main_s := FlythroughAssetCatalog.short_label_for_config(item.params.get("centerpiece", {}))
+	var sc_s := FlythroughAssetCatalog.short_label_for_config(item.params.get("scatter", {}))
+	var lt_s := FlythroughAssetCatalog.short_label_for_config(item.params.get("lighting", {}))
+	if FlythroughAssetCatalog.is_empty_layer_config(item.params.get("centerpiece", {})):
+		main_s = "—"
+	if FlythroughAssetCatalog.is_empty_layer_config(item.params.get("scatter", {})):
+		sc_s = "—"
+	if lt_s == "?":
+		lt_s = "—"
+	status_label.text = "Env %s · Main %s · Scatter %s · Light %s" % [env_s, main_s, sc_s, lt_s]
+
+
+func _set_layer_dialog_filters(for_hdri: bool) -> void:
+	if for_hdri:
+		layer_file_dialog.filters = PackedStringArray([
+			"*.hdr,*.exr,*.png,*.jpg,*.jpeg ; HDR / panorama sky",
+		])
+	else:
+		layer_file_dialog.filters = PackedStringArray([
+			"*.glb,*.gltf,*.fbx,*.tscn ; 3D Models",
+		])
 
 
 func _pick_layer_file(layer_id: String) -> void:
-	if _flythrough_index() < 0:
-		return
 	_layer_pick = layer_id
+	_replace_tab = -1
+	_replace_index = -1
 	var titles := {
-		"environment": "Choose background / environment model",
-		"scatter": "Choose scatter prop model",
-		"centerpiece": "Choose main character / centerpiece model",
+		"environment": "Add environment model",
+		"scatter": "Add scatter prop model",
+		"centerpiece": "Add main character model",
+		"lighting": "Add HDRI / panorama sky",
 	}
-	layer_file_dialog.title = str(titles.get(layer_id, "Choose layer model"))
+	_set_layer_dialog_filters(layer_id == "lighting")
+	layer_file_dialog.title = str(titles.get(layer_id, "Choose asset"))
 	layer_file_dialog.popup_centered()
 
 
 func _on_layer_file_selected(path: String) -> void:
-	var idx := _flythrough_index()
-	if idx < 0 or _layer_pick.is_empty():
+	if _layer_pick.is_empty():
 		return
 	var resolved := MediaImport.to_project_or_absolute(path)
-	var config: Dictionary = {"path": resolved}
-	if _layer_pick == "scatter":
-		config["count"] = 36
-	ShowDirector.set_flythrough_layer(_layer_pick, config, idx)
-	_layer_pick = ""
-	_refresh_flythrough_section()
-
-
-func _on_env_primitive(id: int) -> void:
-	var src := "primitive:box_corridor" if id == 0 else "primitive:flat_plane"
-	_apply_primitive("environment", {"source": src})
-
-
-func _on_scatter_primitive(id: int) -> void:
-	var src := "primitive:cubes" if id == 0 else "primitive:spheres"
-	_apply_primitive("scatter", {"source": src, "count": 36})
-
-
-func _on_center_primitive(id: int) -> void:
-	var src := "primitive:torus" if id == 0 else "primitive:icosphere"
-	_apply_primitive("centerpiece", {"source": src})
-
-
-func _apply_primitive(layer_id: String, config: Dictionary) -> void:
-	var idx := _flythrough_index()
-	if idx < 0:
-		return
-	var item: PlaylistItem = ShowDirector.items[idx]
-	item.params["style"] = "flythrough"
-	ShowDirector.set_flythrough_layer(layer_id, config, idx)
-	_refresh_flythrough_section()
-
-
-func _on_file_selected(path: String) -> void:
-	var data := MediaImport.build_item_dict(path, ShowDirector.default_item_duration)
-	if data.is_empty():
-		push_warning("Unsupported media: %s" % path)
-		return
-	if _replace_index >= 0:
-		var idx := _replace_index
+	var label := path.get_file().get_basename()
+	if _layer_pick == "replace" and _replace_tab >= 0 and _replace_index >= 0:
+		_replace_entry_with_file(_replace_tab, _replace_index, resolved, label)
+		_layer_pick = ""
+		_replace_tab = -1
 		_replace_index = -1
-		ShowDirector.replace_item_at(idx, data, true)
-		_selected_index = idx
-		_refresh_flythrough_section()
 		return
-	ShowDirector.add_item_from_dict(data, true)
+	if _layer_pick == "lighting":
+		var light_entry := {
+			"id": "user_hdri_%s" % label,
+			"label": label,
+			"user_added": true,
+			"config": FlythroughAssetCatalog.hdri_lighting_config(
+				"user_hdri_%s" % label,
+				resolved
+			),
+		}
+		_light_entries.append(light_entry)
+		_sel_light = _light_entries.size() - 1
+		_rebuild_all_lists()
+		_apply_lighting(light_entry)
+		_layer_pick = ""
+		return
+	var entry := {
+		"id": "user_%s" % label,
+		"label": label,
+		"user_added": true,
+		"config": {"path": resolved},
+	}
+	match _layer_pick:
+		"environment":
+			entry["roles"] = ["environment"]
+			_env_entries.append(entry)
+			_sel_env = _env_entries.size() - 1
+			_rebuild_all_lists()
+			_apply_environment(entry)
+		"centerpiece":
+			entry["roles"] = ["centerpiece", "scatter"]
+			_main_entries.append(entry)
+			_sel_main = _main_entries.size() - 1
+			_rebuild_all_lists()
+			_apply_main(entry)
+		"scatter":
+			entry["roles"] = ["scatter", "centerpiece"]
+			_scatter_entries.append(entry)
+			_sel_scatter = _scatter_entries.size() - 1
+			_rebuild_all_lists()
+			_apply_scatter(entry)
+	_layer_pick = ""
+
+
+func _replace_entry_with_file(tab: int, index: int, resolved: String, label: String) -> void:
+	var entries := _entries_for_tab(tab)
+	if index < 0 or index >= entries.size():
+		return
+	var entry: Dictionary = entries[index]
+	entry["label"] = label
+	entry["config"] = {"path": resolved}
+	entry["user_added"] = true
+	entry["id"] = "user_%s" % label
+	_set_selection_for_tab(tab, index)
+	_rebuild_all_lists()
+	_play_entry_at(tab, index)
+
+
+func step_prev() -> void:
+	_ensure_stage()
+	_step_tab(asset_tabs.current_tab, -1)
+
+
+func step_next() -> void:
+	_ensure_stage()
+	_step_tab(asset_tabs.current_tab, 1)
+
+
+func toggle_tab_play() -> void:
+	_toggle_tab_autoplay(asset_tabs.current_tab)
 
 
 func _on_clear() -> void:
+	for i in _autoplay.size():
+		_autoplay[i] = false
+		_elapsed[i] = 0.0
 	ShowDirector.set_autoplay(false)
 	ShowDirector.clear_playlist()
-	_selected_index = -1
-	_replace_index = -1
-	item_label.text = "No item playing"
-	_refresh_flythrough_section()
+	_sel_env = -1
+	_sel_main = -1
+	_sel_scatter = -1
+	_sel_light = -1
+	status_label.text = "No stage loaded"
+	_rebuild_all_lists()
+	_refresh_status()
