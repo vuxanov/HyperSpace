@@ -1,5 +1,19 @@
 # HyperSpace Issue Log
 
+## 2026-08-11 ? Present Mode gray / replace with stage pop-out
+
+**Issue:** Present Mode opens a secondary window that is solid gray (no live scene). User needs the stage/preview undocked as a real OS window that can be dragged to a second monitor while left playlist + right effects sidebars stay on the main screen.
+
+**Root cause:** Present created a borderless fullscreen `Window` with a `TextureRect` mirroring `OutputViewport.get_texture()`. In Godot 4 Forward+, a SubViewport texture already owned/displayed by `SubViewportContainer` often fails to composite correctly when also assigned to a TextureRect in another Window ? clear color / empty feed reads as gray. Forced fullscreen compounded the failure.
+
+**Plan:**
+1. Remove broken Present texture-mirror approach.
+2. Pop out by reparenting the live `SubViewportContainer` (same SubViewport / EffectStack / stage) into a normal resizable OS `Window` (`embed_subwindows=false` already set).
+3. Main window keeps playlist + effects sidebars and shows a dock placeholder in the center.
+4. Esc / window close / Dock button reparents the stage back; F11 toggles pop-out.
+
+**Resolution:** Replaced Present texture-mirror with Pop Out Stage: reparents `OutputViewportContainer` into a resizable OS `Window` ("HyperSpace ? Stage"). Main keeps playlists + effects and a Dock placeholder. Esc / F11 / close / Dock Stage reparents back. Trigger: **Pop Out Stage** button (preview header) or F11.
+
 ## 2026-08-11 ? Asset switch hitch / multi-second freezes
 
 **Issues:** Every Env / Main / Scatter / Lighting change (manual apply or Play cycling) freezes the app for seconds. Transitions are not continuous.

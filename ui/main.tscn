@@ -42,11 +42,11 @@ layout_mode = 2
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 13
-text = "  Preview  —  Present = projector window (Esc/F11 exits; editor stays)"
+text = "  Preview  —  Pop Out Stage = detach live scene window (Esc/F11 docks)"
 
 [node name="PresentButton" type="Button" parent="Root/OutputPane/OutputColumn/OutputHeader"]
 layout_mode = 2
-text = "Present Mode"
+text = "Pop Out Stage"
 
 [node name="OutputViewportContainer" type="SubViewportContainer" parent="Root/OutputPane/OutputColumn"]
 layout_mode = 2

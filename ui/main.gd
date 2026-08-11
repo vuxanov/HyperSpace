@@ -1,28 +1,33 @@
 extends Control
 
 ## Control surface: assets | preview | effects.
-## Present Mode opens a separate fullscreen OS window (projector feed, no UI).
+## Pop Out Stage undocks the live SubViewport into a real OS window (second monitor).
 
 @onready var playlist_sidebar: PanelContainer = $Root/PlaylistSidebar
 @onready var effects_sidebar: PanelContainer = $Root/EffectsSidebar
 @onready var output_pane: PanelContainer = $Root/OutputPane
+@onready var output_column: VBoxContainer = $Root/OutputPane/OutputColumn
 @onready var present_button: Button = $Root/OutputPane/OutputColumn/OutputHeader/PresentButton
+@onready var output_title: Label = $Root/OutputPane/OutputColumn/OutputHeader/OutputTitle
+@onready var output_viewport_container: SubViewportContainer = $Root/OutputPane/OutputColumn/OutputViewportContainer
 @onready var output_viewport: SubViewport = $Root/OutputPane/OutputColumn/OutputViewportContainer/OutputViewport
 @onready var output_stack: Control = $Root/OutputPane/OutputColumn/OutputViewportContainer/OutputViewport/OutputStack
 @onready var effect_stack: EffectStack = $Root/OutputPane/OutputColumn/OutputViewportContainer/OutputViewport/EffectStack
 
-var _present_window: Window
-var _present_rect: TextureRect
-var _presenting: bool = false
+var _stage_window: Window
+var _undock_placeholder: Control
+var _stage_undocked: bool = false
 ## Edge-trigger latch for joypad playlist buttons (device_id:button -> held).
 var _joy_held: Dictionary = {}
 
 
 func _ready() -> void:
+	# Ensure pop-out uses a real OS window that can leave the main monitor.
+	get_tree().root.gui_embed_subwindows = false
 	ShowDirector.bind_output(output_stack, effect_stack)
-	present_button.pressed.connect(toggle_present_mode)
+	present_button.pressed.connect(toggle_stage_undock)
 	if playlist_sidebar.has_signal("present_requested"):
-		playlist_sidebar.present_requested.connect(toggle_present_mode)
+		playlist_sidebar.present_requested.connect(toggle_stage_undock)
 	# Last session overrides blank defaults (demo show.json stays untouched).
 	if not _restore_last_session():
 		_start_blank_stage()
@@ -117,78 +122,167 @@ func _start_blank_stage() -> void:
 	ShowDirector.show_loaded.emit("HyperSpace")
 
 
-func toggle_present_mode() -> void:
-	if _presenting:
-		_close_present_window()
+func toggle_stage_undock() -> void:
+	if _stage_undocked:
+		_dock_stage_window()
 	else:
-		_open_present_window()
+		_undock_stage_window()
 
 
-func _open_present_window() -> void:
-	if _present_window != null:
+## Backward-compatible alias (playlist signal / older callers).
+func toggle_present_mode() -> void:
+	toggle_stage_undock()
+
+
+func _undock_stage_window() -> void:
+	if _stage_undocked or _stage_window != null:
 		return
-	_present_window = Window.new()
-	_present_window.title = "HyperSpace — Present"
-	_present_window.exclusive = false
-	_present_window.transient = false
-	_present_window.always_on_top = false
-	_present_window.unresizable = true
-	_present_window.borderless = true
-	# Prefer second monitor when available (projector / dual-display).
+	get_tree().root.gui_embed_subwindows = false
+
+	_stage_window = Window.new()
+	_stage_window.title = "HyperSpace — Stage"
+	_stage_window.exclusive = false
+	_stage_window.transient = false
+	_stage_window.always_on_top = false
+	_stage_window.unresizable = false
+	_stage_window.borderless = false
+	_stage_window.min_size = Vector2i(640, 360)
+
 	var screen_idx := 1 if DisplayServer.get_screen_count() > 1 else 0
-	_present_window.current_screen = screen_idx
-	_present_window.position = DisplayServer.screen_get_position(screen_idx)
-	_present_window.size = DisplayServer.screen_get_size(screen_idx)
-	_present_rect = TextureRect.new()
-	_present_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_present_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_present_rect.stretch_mode = TextureRect.STRETCH_SCALE
-	_present_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_present_rect.texture = output_viewport.get_texture()
-	_present_window.add_child(_present_rect)
-	get_tree().root.add_child(_present_window)
-	_present_window.close_requested.connect(_close_present_window)
-	_present_window.window_input.connect(_on_present_window_input)
-	# Window defaults to hidden — must show for a real projector feed.
-	_present_window.visible = true
-	_present_window.mode = Window.MODE_FULLSCREEN
-	_present_window.grab_focus()
-	_presenting = true
-	present_button.text = "Close Present"
+	var screen_pos := DisplayServer.screen_get_position(screen_idx)
+	var screen_size := DisplayServer.screen_get_size(screen_idx)
+	var win_size := Vector2i(
+		clampi(1280, 640, maxi(640, screen_size.x - 80)),
+		clampi(720, 360, maxi(360, screen_size.y - 80))
+	)
+	_stage_window.size = win_size
+	if DisplayServer.get_screen_count() > 1:
+		_stage_window.current_screen = screen_idx
+		_stage_window.position = screen_pos + Vector2i(40, 40)
+	else:
+		var main_win := get_window()
+		_stage_window.position = main_win.position + Vector2i(100, 60)
+
+	get_tree().root.add_child(_stage_window)
+
+	# Reparent the live stage (same SubViewport / effects / 3D world) into the OS window.
+	# Do NOT TextureRect-mirror — that produced the gray Present feed.
+	output_viewport_container.reparent(_stage_window)
+	output_viewport_container.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	output_viewport_container.offset_left = 0.0
+	output_viewport_container.offset_top = 0.0
+	output_viewport_container.offset_right = 0.0
+	output_viewport_container.offset_bottom = 0.0
+	output_viewport_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	output_viewport_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	output_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+
+	_show_undock_placeholder()
+
+	_stage_window.close_requested.connect(_dock_stage_window)
+	_stage_window.window_input.connect(_on_stage_window_input)
+	_stage_window.visible = true
+	_stage_window.grab_focus()
+	_stage_undocked = true
+	present_button.text = "Dock Stage"
+	if output_title:
+		output_title.text = "  Stage undocked — drag the Stage window to your projector / 2nd monitor"
 
 
-func _close_present_window() -> void:
-	if not _presenting and _present_window == null:
+func _dock_stage_window() -> void:
+	if not _stage_undocked and _stage_window == null:
 		return
-	var win := _present_window
-	_present_window = null
-	_present_rect = null
-	_presenting = false
-	present_button.text = "Present Mode"
+	var win := _stage_window
+	_stage_window = null
+	_stage_undocked = false
+	present_button.text = "Pop Out Stage"
+	if output_title:
+		output_title.text = "  Preview  —  Pop Out Stage = detach live scene window (Esc/F11 docks)"
+
+	# Bring the live viewport back before freeing the window.
+	if is_instance_valid(output_viewport_container):
+		if output_viewport_container.get_parent() != output_column:
+			output_viewport_container.reparent(output_column)
+		# Restore VBox layout (clear full-rect window anchors).
+		output_viewport_container.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+		output_viewport_container.anchor_right = 0.0
+		output_viewport_container.anchor_bottom = 0.0
+		output_viewport_container.offset_left = 0.0
+		output_viewport_container.offset_top = 0.0
+		output_viewport_container.offset_right = 0.0
+		output_viewport_container.offset_bottom = 0.0
+		output_viewport_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		output_viewport_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		# Header is index 0; viewport should sit under it (placeholder removed next).
+		if output_column.get_child_count() > 1:
+			output_column.move_child(output_viewport_container, 1)
+		output_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+
+	_hide_undock_placeholder()
+
 	if win != null and is_instance_valid(win):
-		if win.window_input.is_connected(_on_present_window_input):
-			win.window_input.disconnect(_on_present_window_input)
-		if win.close_requested.is_connected(_close_present_window):
-			win.close_requested.disconnect(_close_present_window)
+		if win.window_input.is_connected(_on_stage_window_input):
+			win.window_input.disconnect(_on_stage_window_input)
+		if win.close_requested.is_connected(_dock_stage_window):
+			win.close_requested.disconnect(_dock_stage_window)
 		win.hide()
 		win.queue_free()
-	# Return keyboard focus to the editor window.
+
 	var main_win := get_window()
 	if main_win:
 		main_win.grab_focus()
 
 
-func _on_present_window_input(event: InputEvent) -> void:
-	## Present window has OS focus — Escape / F11 must be handled here (main `_input` won't see them).
+func _show_undock_placeholder() -> void:
+	_hide_undock_placeholder()
+	_undock_placeholder = PanelContainer.new()
+	_undock_placeholder.name = "UndockPlaceholder"
+	_undock_placeholder.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_undock_placeholder.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var center := CenterContainer.new()
+	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	center.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var col := VBoxContainer.new()
+	col.alignment = BoxContainer.ALIGNMENT_CENTER
+	var title := Label.new()
+	title.text = "Stage window is popped out"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var hint := Label.new()
+	hint.text = "Drag HyperSpace — Stage onto your second monitor.\nPlaylists (left) and effects (right) stay here."
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.custom_minimum_size = Vector2(320, 0)
+	var dock_btn := Button.new()
+	dock_btn.text = "Dock Stage"
+	dock_btn.pressed.connect(_dock_stage_window)
+	col.add_child(title)
+	col.add_child(hint)
+	col.add_child(dock_btn)
+	center.add_child(col)
+	_undock_placeholder.add_child(center)
+	output_column.add_child(_undock_placeholder)
+	# Keep placeholder under header; viewport already left the column.
+	if output_column.get_child_count() > 1:
+		output_column.move_child(_undock_placeholder, 1)
+
+
+func _hide_undock_placeholder() -> void:
+	if _undock_placeholder != null and is_instance_valid(_undock_placeholder):
+		_undock_placeholder.queue_free()
+	_undock_placeholder = null
+
+
+func _on_stage_window_input(event: InputEvent) -> void:
+	## Stage window has OS focus — Escape / F11 must dock from here.
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_ESCAPE or event.keycode == KEY_F11:
-			if _present_window != null:
-				_present_window.set_input_as_handled()
-			_close_present_window()
+			if _stage_window != null:
+				_stage_window.set_input_as_handled()
+			_dock_stage_window()
 
 
 func _process(_delta: float) -> void:
-	## Joypad edge poll so layer switching works even when Present has OS focus.
+	## Joypad edge poll so layer switching works even when Stage has OS focus.
 	_poll_joypad_playlist_edges()
 
 
@@ -234,11 +328,11 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		match event.keycode:
 			KEY_F11:
-				toggle_present_mode()
+				toggle_stage_undock()
 				get_viewport().set_input_as_handled()
 			KEY_ESCAPE:
-				if _presenting:
-					_close_present_window()
+				if _stage_undocked:
+					_dock_stage_window()
 					get_viewport().set_input_as_handled()
 			KEY_RIGHT:
 				if playlist_sidebar.has_method("step_next"):
