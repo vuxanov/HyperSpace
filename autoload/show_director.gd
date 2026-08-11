@@ -109,6 +109,15 @@ func clear_playlist() -> void:
 	playlist_changed.emit()
 
 
+func items_to_dicts() -> Array:
+	## Serialize playlist for session / export.
+	var out: Array = []
+	for item in items:
+		if item is PlaylistItem:
+			out.append((item as PlaylistItem).to_dict())
+	return out
+
+
 func move_item(from_index: int, to_index: int) -> void:
 	if from_index < 0 or from_index >= items.size():
 		return
@@ -178,8 +187,7 @@ func set_play_all_effects(on: bool, cycle_sec: float = 20.0, active_sec: float =
 		for eid in _effect_user_enabled.keys():
 			if bool(_effect_user_enabled[eid]):
 				ids.append(eid)
-		if ids.is_empty():
-			ids = ["ascii", "glitch", "feedback", "particles", "chromatic", "pixel_sort"]
+		# Prefer currently-enabled effects; do not invent effects the user never turned on.
 		fx_automation.enable_play_all(ids, cycle_sec, active_sec)
 		for eid in ids:
 			_apply_effect_effective(str(eid))
@@ -240,14 +248,21 @@ func _on_fx_style_advanced(preset_name: String) -> void:
 	if bool(_effect_user_enabled.get("ascii", false)):
 		var params: Dictionary = AsciiEffect.PRESETS.get(preset_name, {}).duplicate()
 		var prev: Dictionary = _effect_user_params.get("ascii", {}) as Dictionary
+		# Style cycle changes charset/tint only — never density min/max.
+		params.erase("density")
 		if prev.has("invert"):
 			params["invert"] = prev["invert"]
+		if prev.has("drive_mode"):
+			params["drive_mode"] = prev["drive_mode"]
+		if prev.has("lfo_wave"):
+			params["lfo_wave"] = prev["lfo_wave"]
+		if prev.has("lfo_rate"):
+			params["lfo_rate"] = prev["lfo_rate"]
 		if prev.has("density_min"):
 			params["density_min"] = prev["density_min"]
 		if prev.has("density_max"):
 			params["density_max"] = prev["density_max"]
 		elif prev.has("density"):
-			params["density"] = prev["density"]
 			params["density_min"] = float(prev["density"]) * 0.65
 			params["density_max"] = float(prev["density"])
 		_effect_user_params["ascii"] = params
@@ -256,6 +271,9 @@ func _on_fx_style_advanced(preset_name: String) -> void:
 
 func _on_fx_gate_changed(effect_id: String, open: bool) -> void:
 	effect_gate_changed.emit(effect_id, open)
+	# Reactivity schedules (react_*) gate audio drives via ReactivityHub — not EffectStack layers.
+	if str(effect_id).begins_with("react_"):
+		return
 	_apply_effect_effective(effect_id)
 
 
@@ -601,14 +619,22 @@ func _process(delta: float) -> void:
 				if _element_step_index + 1 < sequence.size():
 					_apply_element_step(_element_step_index + 1)
 				else:
+					# End of sequence: soft-loop on a lone stage item; otherwise advance playlist.
 					_item_elapsed = 0.0
 					_element_step_index = 0
-					next_item(Transition.Mode.CUT, 0.0)
+					if items.size() <= 1:
+						_apply_element_step(0)
+					else:
+						next_item(Transition.Mode.CUT, 0.0)
 		else:
 			_item_elapsed += delta
 			if _item_elapsed >= get_current_item_duration():
 				_item_elapsed = 0.0
-				next_item(Transition.Mode.CUT, 0.0)
+				if items.size() <= 1:
+					# Soft loop — avoid rebuild/restart of the only stage item.
+					pass
+				else:
+					next_item(Transition.Mode.CUT, 0.0)
 	fx_automation.tick(delta)
 	var audio_state: AudioState = AudioAnalyzer.get_state()
 	var kinect_state: KinectState = KinectManager.get_state()

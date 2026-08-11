@@ -1,13 +1,10 @@
 shader_type canvas_item;
 
-// Real-ish pixel sorting: thresholded horizontal spans sorted by luminance rank.
-// Each fragment finds its contiguous in-threshold span, counts how many pixels in
-// the span are darker (rank), then samples the pixel at start+rank — classic
-// Kim Asendorf / datamosh look without a full GPU sort network.
+// Lightweight threshold streak / sort. No early `return` in fragment (Godot 4.7 rejects it).
 
-uniform sampler2D screen_texture : hint_screen_texture, filter_nearest;
-uniform float intensity : hint_range(0.0, 3.0) = 0.85;
-uniform float threshold : hint_range(0.0, 1.0) = 0.35;
+uniform sampler2D screen_texture : hint_screen_texture, filter_linear_mipmap;
+uniform float intensity : hint_range(0.0, 3.0) = 0.75;
+uniform float threshold : hint_range(0.0, 1.0) = 0.45;
 uniform float stretch : hint_range(0.05, 1.0) = 0.55;
 uniform float audio_drive : hint_range(0.0, 2.0) = 0.0;
 uniform float time_sec = 0.0;
@@ -16,81 +13,42 @@ float luma(vec3 c) {
 	return dot(c, vec3(0.299, 0.587, 0.114));
 }
 
-bool sortable(float lum, float thr) {
-	return lum >= thr;
+vec3 sample_screen(vec2 uv) {
+	return textureLod(screen_texture, clamp(uv, vec2(0.001), vec2(0.999)), 0.0).rgb;
 }
 
 void fragment() {
 	vec2 uv = SCREEN_UV;
-	vec2 px = vec2(1.0) / vec2(textureSize(screen_texture, 0));
-	vec3 src = textureLod(screen_texture, uv, 0.0).rgb;
+	vec3 src = sample_screen(uv);
+
+	float drive = clamp(intensity + audio_drive * 0.7, 0.0, 2.5);
 	float lum = luma(src);
+	float thr = clamp(threshold - audio_drive * 0.08, 0.05, 0.95);
+	float active = step(0.02, drive) * step(thr, lum);
 
-	float drive = clamp(intensity + audio_drive * 0.55, 0.0, 3.0);
-	float thr = clamp(threshold - audio_drive * 0.08, 0.0, 0.95);
-	int max_span = int(clamp(12.0 + stretch * 96.0 + drive * 24.0, 16.0, 128.0));
+	vec2 px = max(SCREEN_PIXEL_SIZE, vec2(0.0005));
+	float span = (8.0 + stretch * 28.0 + drive * 10.0);
+	float dir = (fract(sin(dot(floor(uv * vec2(1.0 / px.x, 1.0)), vec2(12.9898, 78.233)) + time_sec) * 43758.5453) > 0.5) ? 1.0 : -1.0;
 
-	if (!sortable(lum, thr) || drive < 0.02) {
-		COLOR = vec4(src, 1.0);
-		return;
+	vec3 a = sample_screen(uv + vec2(px.x * span * 0.25 * dir, 0.0));
+	vec3 b = sample_screen(uv + vec2(px.x * span * 0.55 * dir, 0.0));
+	vec3 c = sample_screen(uv + vec2(px.x * span * dir, 0.0));
+
+	vec3 sorted = src;
+	if (luma(a) > lum) {
+		sorted = a;
+	}
+	if (luma(b) > luma(sorted)) {
+		sorted = b;
+	}
+	if (luma(c) < thr) {
+		sorted = mix(sorted, src, 0.35);
 	}
 
-	// Walk left/right while above threshold to find span bounds (in pixels).
-	int left = 0;
-	for (int i = 1; i <= 128; i++) {
-		if (i > max_span) {
-			break;
-		}
-		vec2 suv = uv - vec2(px.x * float(i), 0.0);
-		if (suv.x < 0.0) {
-			break;
-		}
-		float sl = luma(textureLod(screen_texture, suv, 0.0).rgb);
-		if (!sortable(sl, thr)) {
-			break;
-		}
-		left = i;
-	}
-	int right = 0;
-	for (int i = 1; i <= 128; i++) {
-		if (i > max_span) {
-			break;
-		}
-		vec2 suv = uv + vec2(px.x * float(i), 0.0);
-		if (suv.x > 1.0) {
-			break;
-		}
-		float sl = luma(textureLod(screen_texture, suv, 0.0).rgb);
-		if (!sortable(sl, thr)) {
-			break;
-		}
-		right = i;
-	}
+	float streak = stretch * drive * 0.4;
+	vec3 pull = sample_screen(uv - vec2(px.x * streak * 14.0, 0.0));
+	sorted = mix(sorted, pull, clamp(streak * 0.45, 0.0, 0.5));
 
-	int span = left + right + 1;
-	if (span < 3) {
-		COLOR = vec4(src, 1.0);
-		return;
-	}
-
-	// Rank = how many pixels in the span are darker than this one (brightness sort).
-	int rank = 0;
-	for (int i = -left; i <= right; i++) {
-		vec2 suv = uv + vec2(px.x * float(i), 0.0);
-		float sl = luma(textureLod(screen_texture, suv, 0.0).rgb);
-		if (sl < lum - 0.0001) {
-			rank += 1;
-		} else if (abs(sl - lum) <= 0.0001 && i < 0) {
-			// Stable tie-break: earlier pixels with equal luma keep lower rank.
-			rank += 1;
-		}
-	}
-
-	int dest_offset = rank - left;
-	vec2 sorted_uv = uv + vec2(px.x * float(dest_offset), 0.0);
-	sorted_uv = clamp(sorted_uv, vec2(0.001), vec2(0.999));
-	vec3 sorted = textureLod(screen_texture, sorted_uv, 0.0).rgb;
-
-	float mix_amt = clamp(drive * 0.85, 0.0, 1.0);
+	float mix_amt = clamp(0.3 + drive * 0.4, 0.0, 0.9) * active;
 	COLOR = vec4(mix(src, sorted, mix_amt), 1.0);
 }

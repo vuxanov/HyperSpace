@@ -45,9 +45,14 @@ static func scale_amount() -> float:
 	return float(n.get("scale_amount")) if n else 25.0
 
 
+static func rotation_amount() -> float:
+	var n := node()
+	return float(n.get("rotation_amount")) if n else 20.0
+
+
 static func noise_amount() -> float:
 	var n := node()
-	return float(n.get("noise_amount")) if n else 18.0
+	return float(n.get("noise_amount")) if n else 28.0
 
 
 static func noise_scale() -> float:
@@ -88,6 +93,52 @@ static func scale_z() -> bool:
 	return bool(n.get("scale_z")) if n else true
 
 
+static func rotation_x() -> bool:
+	var n := node()
+	return bool(n.get("rotation_x")) if n else true
+
+
+static func rotation_y() -> bool:
+	var n := node()
+	return bool(n.get("rotation_y")) if n else true
+
+
+static func rotation_z() -> bool:
+	var n := node()
+	return bool(n.get("rotation_z")) if n else true
+
+
+static func rotation_axis_mask() -> Vector3:
+	return Vector3(
+		1.0 if rotation_x() else 0.0,
+		1.0 if rotation_y() else 0.0,
+		1.0 if rotation_z() else 0.0
+	)
+
+
+static func noise_x() -> bool:
+	var n := node()
+	return bool(n.get("noise_x")) if n else true
+
+
+static func noise_y() -> bool:
+	var n := node()
+	return bool(n.get("noise_y")) if n else true
+
+
+static func noise_z() -> bool:
+	var n := node()
+	return bool(n.get("noise_z")) if n else true
+
+
+static func noise_axis_mask() -> Vector3:
+	return Vector3(
+		1.0 if noise_x() else 0.0,
+		1.0 if noise_y() else 0.0,
+		1.0 if noise_z() else 0.0
+	)
+
+
 static func set_enabled(value: bool) -> void:
 	var n := node()
 	if n and n.has_method("set_enabled"):
@@ -98,6 +149,15 @@ static func set_scale_amount(value: float) -> void:
 	var n := node()
 	if n and n.has_method("set_scale_amount"):
 		n.call("set_scale_amount", value)
+
+
+static func set_rotation_amount(value: float) -> void:
+	var n := node()
+	if n and n.has_method("set_rotation_amount"):
+		n.call("set_rotation_amount", value)
+	elif n:
+		n.set("rotation_amount", maxf(value, 0.0))
+		notify_changed()
 
 
 static func set_lfo_mod01(value: float) -> void:
@@ -193,6 +253,40 @@ static func scale_vector(base: float) -> Vector3:
 	)
 
 
+## Gate id used by FxAutomation for reactivity Active/Inactive schedules.
+static func schedule_gate_id(property: String) -> String:
+	return "react_" + property
+
+
+## True when schedule is off (always active) or currently in the Active window.
+static func schedule_open(property: String) -> bool:
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree == null or tree.root == null:
+		return true
+	var director := tree.root.get_node_or_null("ShowDirector")
+	if director == null:
+		return true
+	var fx = director.get("fx_automation")
+	if fx == null or not fx.has_method("is_gate_open"):
+		return true
+	var gate_id := schedule_gate_id(property)
+	# Disabled gate ⇒ always open. Enabled + timer outside Active ⇒ muted.
+	return bool(fx.call("is_gate_open", gate_id))
+
+
+static func schedule_enabled(property: String) -> bool:
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree == null or tree.root == null:
+		return false
+	var director := tree.root.get_node_or_null("ShowDirector")
+	if director == null:
+		return false
+	var fx = director.get("fx_automation")
+	if fx == null or not fx.has_method("is_gate_enabled"):
+		return false
+	return bool(fx.call("is_gate_enabled", schedule_gate_id(property)))
+
+
 static func source_for(property: String) -> String:
 	match property:
 		"scale":
@@ -220,19 +314,22 @@ static func drive_value(property: String, state: AudioState, lfo_mod01: float = 
 		return clampf(float(get_field("lfo_mod01", 0.0)), 0.0, 1.0)
 	if state == null:
 		return 0.0
+	var raw := 0.0
 	match src:
 		"bass":
-			return clampf(state.bass, 0.0, 1.0)
+			raw = state.bass
 		"mids":
-			return clampf(state.mids, 0.0, 1.0)
+			raw = state.mids
 		"highs":
-			return clampf(state.highs, 0.0, 1.0)
+			raw = state.highs
 		"kick":
-			return clampf(state.kick, 0.0, 1.0)
+			raw = state.kick
 		"energy":
-			return clampf(state.energy, 0.0, 1.0)
+			raw = state.energy
 		_:
 			return 0.0
+	# Mid Sensitivity should leave headroom — avoid slamming to 1.0 on quiet mics.
+	return clampf(pow(clampf(raw, 0.0, 1.0), 0.55) * 1.15, 0.0, 1.0)
 
 
 ## Lift quiet mic levels so Scale Amount feels usable; amount = peak multiplier above 1.
@@ -244,7 +341,17 @@ static func scale_multiplier(drive01: float, amount: float = -1.0) -> float:
 	return clampf(1.0 + d * amt, 0.15, 60.0)
 
 
+## Peak rad/step at amount=20, drive=1 ≈ 0.07; amount scales linearly.
+static func rotation_rate(drive01: float, amount: float = -1.0) -> float:
+	var amt := amount if amount >= 0.0 else rotation_amount()
+	var d := clampf(drive01, 0.0, 1.0)
+	d = clampf(pow(d, 0.4) * 1.2, 0.0, 1.0)
+	return d * (amt / 20.0) * 0.07
+
+
 static func property_active(property: String) -> bool:
+	if not schedule_open(property):
+		return false
 	match property:
 		"scale":
 			return affect_scale() and source_for("scale") != "off"

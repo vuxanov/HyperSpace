@@ -61,11 +61,11 @@ layout_mode = 2
 min_value = 1.0
 max_value = 20.0
 step = 1.0
-value = 3.0
+value = 5.0
 
 [node name="ScaleAmountLabel" type="Label" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
 layout_mode = 2
-text = "Scale Amount (number)"
+text = "Scale Amount"
 
 [node name="ScaleAmountSpin" type="SpinBox" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
 layout_mode = 2
@@ -124,12 +124,28 @@ layout_mode = 2
 button_pressed = true
 text = "Z"
 
+[node name="ScaleSchedule" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+text = "Scale schedule"
+
+[node name="ScaleScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/Targets"]
+visible = false
+layout_mode = 2
+
 [node name="AffectLight" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
 layout_mode = 2
 button_pressed = true
-text = "Lights"
+text = "HDRI / Lights energy"
 
 [node name="LightSource" type="OptionButton" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+
+[node name="LightSchedule" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+text = "Lights schedule"
+
+[node name="LightScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/Targets"]
+visible = false
 layout_mode = 2
 
 [node name="AffectEmission" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
@@ -140,6 +156,14 @@ text = "Emission / Color"
 [node name="EmissionSource" type="OptionButton" parent="Margin/Scroll/Column/Targets"]
 layout_mode = 2
 
+[node name="EmissionSchedule" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+text = "Emission schedule"
+
+[node name="EmissionScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/Targets"]
+visible = false
+layout_mode = 2
+
 [node name="AffectRotation" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
 layout_mode = 2
 button_pressed = true
@@ -148,10 +172,48 @@ text = "Rotation"
 [node name="RotationSource" type="OptionButton" parent="Margin/Scroll/Column/Targets"]
 layout_mode = 2
 
+[node name="RotationAmountLabel" type="Label" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+text = "Rotation Amount"
+
+[node name="RotationAmountSpin" type="SpinBox" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+min_value = 0.0
+max_value = 200.0
+step = 1.0
+value = 20.0
+allow_greater = true
+
+[node name="RotationAxisRow" type="HBoxContainer" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+
+[node name="RotationX" type="CheckButton" parent="Margin/Scroll/Column/Targets/RotationAxisRow"]
+layout_mode = 2
+button_pressed = true
+text = "X"
+
+[node name="RotationY" type="CheckButton" parent="Margin/Scroll/Column/Targets/RotationAxisRow"]
+layout_mode = 2
+button_pressed = true
+text = "Y"
+
+[node name="RotationZ" type="CheckButton" parent="Margin/Scroll/Column/Targets/RotationAxisRow"]
+layout_mode = 2
+button_pressed = true
+text = "Z"
+
+[node name="RotationSchedule" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+text = "Rotation schedule"
+
+[node name="RotationScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/Targets"]
+visible = false
+layout_mode = 2
+
 [node name="AffectNoise" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
 layout_mode = 2
 button_pressed = false
-text = "Noise Distort"
+text = "Noise Displace"
 
 [node name="NoiseSource" type="OptionButton" parent="Margin/Scroll/Column/Targets"]
 layout_mode = 2
@@ -165,14 +227,14 @@ layout_mode = 2
 
 [node name="NoiseAmountLabel" type="Label" parent="Margin/Scroll/Column/Targets"]
 layout_mode = 2
-text = "Noise Amount"
+text = "Displace Strength (how much)"
 
 [node name="NoiseAmount" type="HSlider" parent="Margin/Scroll/Column/Targets"]
 layout_mode = 2
 min_value = 0.0
 max_value = 100.0
 step = 1.0
-value = 18.0
+value = 28.0
 
 [node name="NoiseScaleLabel" type="Label" parent="Margin/Scroll/Column/Targets"]
 layout_mode = 2
@@ -185,6 +247,32 @@ max_value = 40.0
 step = 1.0
 value = 4.0
 tooltip_text = "Spatial feature size of the deform noise (larger = bigger blobs)"
+
+[node name="NoiseAxisRow" type="HBoxContainer" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+
+[node name="NoiseX" type="CheckButton" parent="Margin/Scroll/Column/Targets/NoiseAxisRow"]
+layout_mode = 2
+button_pressed = true
+text = "X"
+
+[node name="NoiseY" type="CheckButton" parent="Margin/Scroll/Column/Targets/NoiseAxisRow"]
+layout_mode = 2
+button_pressed = true
+text = "Y"
+
+[node name="NoiseZ" type="CheckButton" parent="Margin/Scroll/Column/Targets/NoiseAxisRow"]
+layout_mode = 2
+button_pressed = true
+text = "Z"
+
+[node name="NoiseSchedule" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+text = "Noise schedule"
+
+[node name="NoiseScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/Targets"]
+visible = false
+layout_mode = 2
 
 [node name="CameraLabel" type="Label" parent="Margin/Scroll/Column/Targets"]
 layout_mode = 2
@@ -233,10 +321,12 @@ layout_mode = 2
 theme_override_constants/separation = 4
 
 [node name="PlayCycleLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+visible = false
 layout_mode = 2
-text = "Schedule cycle (sec)"
+text = "Default Active / Inactive (sec)"
 
 [node name="PlayCycleSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+visible = false
 layout_mode = 2
 min_value = 4.0
 max_value = 60.0
@@ -244,10 +334,12 @@ step = 1.0
 value = 12.0
 
 [node name="PlayActiveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+visible = false
 layout_mode = 2
 text = "Active window (sec)"
 
 [node name="PlayActiveSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+visible = false
 layout_mode = 2
 min_value = 1.0
 max_value = 30.0
@@ -263,6 +355,13 @@ visible = false
 layout_mode = 2
 theme_override_constants/separation = 4
 
+[node name="AsciiDriveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+layout_mode = 2
+text = "Mode"
+
+[node name="AsciiDrive" type="OptionButton" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+layout_mode = 2
+
 [node name="AsciiPresetLabel" type="Label" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
 layout_mode = 2
 text = "Style"
@@ -271,10 +370,12 @@ text = "Style"
 layout_mode = 2
 
 [node name="AsciiDensityMinLabel" type="Label" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+visible = false
 layout_mode = 2
 text = "Density min (smallest)"
 
 [node name="AsciiDensityMin" type="HSlider" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+visible = false
 layout_mode = 2
 min_value = 1.0
 max_value = 200.0
@@ -282,15 +383,28 @@ step = 1.0
 value = 8.0
 
 [node name="AsciiDensityMaxLabel" type="Label" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+visible = false
 layout_mode = 2
 text = "Density max (biggest)"
 
 [node name="AsciiDensityMax" type="HSlider" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+visible = false
 layout_mode = 2
 min_value = 1.0
 max_value = 200.0
 step = 1.0
 value = 80.0
+
+[node name="AsciiDensityLabel" type="Label" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+layout_mode = 2
+text = "Density min — max"
+
+[node name="AsciiDensityRangeHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+layout_mode = 2
+
+[node name="AsciiDensityRandom" type="CheckButton" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+layout_mode = 2
+text = "Random density"
 
 [node name="AsciiInvert" type="CheckButton" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
 layout_mode = 2
@@ -324,6 +438,10 @@ text = "RND interval"
 layout_mode = 2
 text = "ASCII schedule"
 
+[node name="AsciiScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+visible = false
+layout_mode = 2
+
 [node name="ParticlesToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection"]
 layout_mode = 2
 text = "Particles (break objects apart)"
@@ -332,6 +450,13 @@ text = "Particles (break objects apart)"
 visible = false
 layout_mode = 2
 theme_override_constants/separation = 4
+
+[node name="ParticlesDriveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/ParticlesBody"]
+layout_mode = 2
+text = "Mode"
+
+[node name="ParticlesDrive" type="OptionButton" parent="Margin/Scroll/Column/FxSection/ParticlesBody"]
+layout_mode = 2
 
 [node name="ParticlesTargetLabel" type="Label" parent="Margin/Scroll/Column/FxSection/ParticlesBody"]
 layout_mode = 2
@@ -344,6 +469,10 @@ layout_mode = 2
 layout_mode = 2
 text = "Particles schedule"
 
+[node name="ParticlesScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/ParticlesBody"]
+visible = false
+layout_mode = 2
+
 [node name="FeedbackToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection"]
 layout_mode = 2
 text = "Feedback Trail"
@@ -352,6 +481,13 @@ text = "Feedback Trail"
 visible = false
 layout_mode = 2
 theme_override_constants/separation = 4
+
+[node name="FeedbackDriveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
+layout_mode = 2
+text = "Mode"
+
+[node name="FeedbackDrive" type="OptionButton" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
+layout_mode = 2
 
 [node name="FeedbackMixLabel" type="Label" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
 layout_mode = 2
@@ -375,9 +511,35 @@ max_value = 98.0
 step = 1.0
 value = 85.0
 
+[node name="FeedbackSensLabel" type="Label" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
+layout_mode = 2
+text = "Audio sensitivity"
+
+[node name="FeedbackSensSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
+layout_mode = 2
+min_value = 1.0
+max_value = 100.0
+step = 1.0
+value = 35.0
+
+[node name="FeedbackLfoRateLabel" type="Label" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
+layout_mode = 2
+text = "LFO rate (when Mode=LFO)"
+
+[node name="FeedbackLfoRate" type="HSlider" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
+layout_mode = 2
+min_value = 1.0
+max_value = 40.0
+step = 1.0
+value = 8.0
+
 [node name="FeedbackSchedule" type="CheckButton" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
 layout_mode = 2
 text = "Feedback schedule"
+
+[node name="FeedbackScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
+visible = false
+layout_mode = 2
 
 [node name="GlitchToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection"]
 layout_mode = 2
@@ -388,6 +550,13 @@ visible = false
 layout_mode = 2
 theme_override_constants/separation = 4
 
+[node name="GlitchDriveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+layout_mode = 2
+text = "Mode"
+
+[node name="GlitchDrive" type="OptionButton" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+layout_mode = 2
+
 [node name="GlitchAmountLabel" type="Label" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
 layout_mode = 2
 text = "Amount"
@@ -397,7 +566,7 @@ layout_mode = 2
 min_value = 1.0
 max_value = 100.0
 step = 1.0
-value = 70.0
+value = 85.0
 
 [node name="GlitchSpeedLabel" type="Label" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
 layout_mode = 2
@@ -408,7 +577,7 @@ layout_mode = 2
 min_value = 1.0
 max_value = 20.0
 step = 1.0
-value = 4.0
+value = 6.0
 
 [node name="GlitchHSizeLabel" type="Label" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
 layout_mode = 2
@@ -419,7 +588,7 @@ layout_mode = 2
 min_value = 1.0
 max_value = 100.0
 step = 1.0
-value = 70.0
+value = 80.0
 
 [node name="GlitchRgbLabel" type="Label" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
 layout_mode = 2
@@ -430,7 +599,7 @@ layout_mode = 2
 min_value = 0.0
 max_value = 100.0
 step = 1.0
-value = 80.0
+value = 90.0
 
 [node name="GlitchChaosLabel" type="Label" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
 layout_mode = 2
@@ -441,11 +610,15 @@ layout_mode = 2
 min_value = 0.0
 max_value = 100.0
 step = 1.0
-value = 70.0
+value = 80.0
 
 [node name="GlitchSchedule" type="CheckButton" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
 layout_mode = 2
 text = "Glitch schedule"
+
+[node name="GlitchScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+visible = false
+layout_mode = 2
 
 [node name="ChromaticToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection"]
 layout_mode = 2
@@ -456,6 +629,13 @@ visible = false
 layout_mode = 2
 theme_override_constants/separation = 4
 
+[node name="ChromaticDriveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/ChromaticBody"]
+layout_mode = 2
+text = "Mode"
+
+[node name="ChromaticDrive" type="OptionButton" parent="Margin/Scroll/Column/FxSection/ChromaticBody"]
+layout_mode = 2
+
 [node name="ChromaticAmountLabel" type="Label" parent="Margin/Scroll/Column/FxSection/ChromaticBody"]
 layout_mode = 2
 text = "Amount"
@@ -465,11 +645,15 @@ layout_mode = 2
 min_value = 1.0
 max_value = 100.0
 step = 1.0
-value = 75.0
+value = 85.0
 
 [node name="ChromaticSchedule" type="CheckButton" parent="Margin/Scroll/Column/FxSection/ChromaticBody"]
 layout_mode = 2
 text = "Chromatic schedule"
+
+[node name="ChromaticScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/ChromaticBody"]
+visible = false
+layout_mode = 2
 
 [node name="PixelSortToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection"]
 layout_mode = 2
@@ -479,6 +663,13 @@ text = "Pixel Sort"
 visible = false
 layout_mode = 2
 theme_override_constants/separation = 4
+
+[node name="PixelSortDriveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PixelSortBody"]
+layout_mode = 2
+text = "Mode"
+
+[node name="PixelSortDrive" type="OptionButton" parent="Margin/Scroll/Column/FxSection/PixelSortBody"]
+layout_mode = 2
 
 [node name="PixelSortAmountLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PixelSortBody"]
 layout_mode = 2
@@ -516,6 +707,34 @@ value = 60.0
 [node name="PixelSortSchedule" type="CheckButton" parent="Margin/Scroll/Column/FxSection/PixelSortBody"]
 layout_mode = 2
 text = "Pixel sort schedule"
+
+[node name="PixelSortScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/PixelSortBody"]
+visible = false
+layout_mode = 2
+
+[node name="WireframeToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection"]
+layout_mode = 2
+text = "Wireframe"
+
+[node name="WireframeBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection"]
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="WireframeDriveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/WireframeBody"]
+layout_mode = 2
+text = "Mode"
+
+[node name="WireframeDrive" type="OptionButton" parent="Margin/Scroll/Column/FxSection/WireframeBody"]
+layout_mode = 2
+
+[node name="WireframeSchedule" type="CheckButton" parent="Margin/Scroll/Column/FxSection/WireframeBody"]
+layout_mode = 2
+text = "Wireframe schedule"
+
+[node name="WireframeScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/WireframeBody"]
+visible = false
+layout_mode = 2
 
 [node name="CueSection" type="VBoxContainer" parent="Margin/Scroll/Column"]
 layout_mode = 2

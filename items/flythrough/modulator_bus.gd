@@ -65,12 +65,14 @@ func advance(delta: float, kick: float = 0.0) -> void:
 	yaw_offset = 0.0
 	pitch_offset = 0.0
 	roll_offset = 0.0
-	mod01 = 0.0
+	# Always produce a usable LFO for effect Drive=LFO, even when camera preset is Off.
+	var lfo_rate := maxf(rate, 0.15)
+	var w := _t * lfo_rate * TAU
+	mod01 = sin(w) * 0.5 + 0.5
 
 	if preset == Preset.OFF or depth <= 0.001:
 		return
 
-	var w := _t * rate * TAU
 	var d := depth
 	match preset:
 		Preset.PITCH_ROCK:

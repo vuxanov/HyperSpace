@@ -70,20 +70,38 @@ var _invert: bool = false
 var _base_charset: String = " .:-=+*#%@"
 var _density_min: float = 40.0
 var _density_max: float = 80.0
+## sine | triangle | saw | square — density LFO shape when Mode=LFO
+var _lfo_wave: String = "sine"
+var _lfo_rate: float = 0.45  # Hz
+var _lfo_phase: float = 0.0
 
 
 func _ready() -> void:
 	effect_id = "ascii"
 	layer = 10
+	# Same BackBufferCopy → ColorRect path as other screen LFX.
+	var bbc := BackBufferCopy.new()
+	bbc.copy_mode = BackBufferCopy.COPY_MODE_VIEWPORT
+	add_child(bbc)
 	_rect = ColorRect.new()
 	_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_rect.color = Color(1, 1, 1, 0)
 	var mat := ShaderMaterial.new()
 	mat.shader = load("res://effects/ascii_effect.gdshader")
 	_rect.material = mat
 	add_child(_rect)
 	visible = false
+	set_process(true)
 	apply_preset("Standard")
+
+
+func _process(delta: float) -> void:
+	if not enabled:
+		return
+	_lfo_phase = fposmod(_lfo_phase + delta * maxf(_lfo_rate, 0.05), 1.0)
+	if normalize_drive_mode(drive_mode) == "lfo":
+		_apply_density_from_lfo()
 
 
 func apply_preset(preset_name: String) -> void:
@@ -112,20 +130,49 @@ func apply_audio_state(state: AudioState) -> void:
 		return
 	_sync_visibility()
 	var mat := _shader_mat()
-	if mat:
-		mat.set_shader_parameter("audio_highs", state.highs * _intensity)
-		var dens := lerpf(_density_min, _density_max, clampf(state.energy, 0.0, 1.0))
-		mat.set_shader_parameter("density", dens)
+	if mat == null:
+		return
+	var mode := normalize_drive_mode(drive_mode)
+	if mode == "lfo":
+		_apply_density_from_lfo()
+		return
+	var drive := resolve_drive(state.energy)
+	mat.set_shader_parameter("audio_highs", drive)
+	var dens: float
+	if mode == "auto":
+		dens = lerpf(_density_min, _density_max, 0.5)
+	else:
+		dens = lerpf(_density_min, _density_max, clampf(drive / maxf(_intensity, 0.001), 0.0, 1.0))
+	mat.set_shader_parameter("density", dens)
 
 
 func apply_modulator(mod01: float) -> void:
-	if not enabled:
-		return
+	super.apply_modulator(mod01)
+	# Density LFO uses internal waveform oscillator; shared mod01 kept for resolve_drive.
+
+
+func _apply_density_from_lfo() -> void:
 	var mat := _shader_mat()
-	if mat:
-		mat.set_shader_parameter("audio_highs", maxf(float(mat.get_shader_parameter("audio_highs")), mod01 * _intensity))
-		var dens := lerpf(_density_min, _density_max, clampf(mod01, 0.0, 1.0))
-		mat.set_shader_parameter("density", dens)
+	if mat == null:
+		return
+	var wave01 := _wave01(_lfo_phase, _lfo_wave)
+	mat.set_shader_parameter("audio_highs", resolve_drive(0.0))
+	mat.set_shader_parameter("density", lerpf(_density_min, _density_max, wave01))
+
+
+static func _wave01(phase01: float, wave: String) -> float:
+	## Map phase 0..1 → waveform 0..1.
+	var p := fposmod(phase01, 1.0)
+	match wave:
+		"triangle":
+			return 1.0 - absf(2.0 * p - 1.0)
+		"saw":
+			return p
+		"square":
+			return 1.0 if p < 0.5 else 0.0
+		_:
+			# sine
+			return sin(p * TAU) * 0.5 + 0.5
 
 
 func _on_params_changed(params: Dictionary) -> void:
@@ -143,17 +190,27 @@ func _apply_shader_params(params: Dictionary) -> void:
 	var mat := _shader_mat()
 	if mat == null:
 		return
-	if params.has("density_min") or params.has("density_max") or params.has("density"):
-		var d_single := float(params.get("density", 80.0))
-		_density_min = float(params.get("density_min", maxf(1.0, d_single * 0.65)))
-		_density_max = float(params.get("density_max", d_single))
+	if params.has("lfo_wave"):
+		_lfo_wave = str(params["lfo_wave"]).to_lower()
+	if params.has("lfo_rate"):
+		_lfo_rate = clampf(float(params["lfo_rate"]), 0.05, 8.0)
+	if params.has("density_min") or params.has("density_max"):
+		_density_min = float(params.get("density_min", _density_min))
+		_density_max = float(params.get("density_max", _density_max))
 		if _density_min > _density_max:
 			var tmp := _density_min
 			_density_min = _density_max
 			_density_max = tmp
 		_density_min = clampf(_density_min, 1.0, 200.0)
 		_density_max = clampf(_density_max, 1.0, 200.0)
-		mat.set_shader_parameter("density", lerpf(_density_min, _density_max, 0.5))
+		if normalize_drive_mode(drive_mode) != "lfo":
+			mat.set_shader_parameter("density", lerpf(_density_min, _density_max, 0.5))
+	elif params.has("density"):
+		var d_single := float(params.get("density", 80.0))
+		_density_min = maxf(1.0, d_single * 0.65)
+		_density_max = d_single
+		if normalize_drive_mode(drive_mode) != "lfo":
+			mat.set_shader_parameter("density", lerpf(_density_min, _density_max, 0.5))
 	if params.has("intensity"):
 		mat.set_shader_parameter("intensity", float(params["intensity"]))
 	if params.has("contrast"):

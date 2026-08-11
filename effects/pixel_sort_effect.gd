@@ -13,8 +13,8 @@ func _ready() -> void:
 	_rect = _make_screen_color_rect("res://effects/pixel_sort_effect.gdshader")
 	var mat := _mat()
 	if mat:
-		mat.set_shader_parameter("intensity", 0.85)
-		mat.set_shader_parameter("threshold", 0.35)
+		mat.set_shader_parameter("intensity", 0.75)
+		mat.set_shader_parameter("threshold", 0.45)
 		mat.set_shader_parameter("stretch", 0.55)
 	visible = false
 	set_process(true)
@@ -49,15 +49,18 @@ func apply_audio_state(state: AudioState) -> void:
 	visible = true
 	var mat := _mat()
 	if mat:
-		mat.set_shader_parameter("audio_drive", state.mids * _intensity)
+		mat.set_shader_parameter("audio_drive", resolve_drive(state.mids))
 
 
 func apply_modulator(mod01: float) -> void:
+	super.apply_modulator(mod01)
 	if not enabled:
 		return
-	var mat := _mat()
-	if mat:
-		mat.set_shader_parameter("stretch", clampf(0.2 + mod01 * 0.7, 0.05, 1.0))
+	if normalize_drive_mode(drive_mode) == "lfo":
+		var mat := _mat()
+		if mat:
+			mat.set_shader_parameter("audio_drive", resolve_drive(0.0))
+			mat.set_shader_parameter("stretch", clampf(0.25 + mod01 * 0.75, 0.05, 1.0))
 
 
 func _on_params_changed(params: Dictionary) -> void:

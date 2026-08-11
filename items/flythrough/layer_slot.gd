@@ -6,6 +6,7 @@ class_name FlythroughLayerSlot
 const LAYER_ENVIRONMENT := "environment"
 const LAYER_SCATTER := "scatter"
 const LAYER_CENTERPIECE := "centerpiece"
+const _MEDIA_PROP := preload("res://items/flythrough/media_prop.gd")
 
 
 static func clear_root(root: Node3D) -> void:
@@ -15,10 +16,19 @@ static func clear_root(root: Node3D) -> void:
 		child.queue_free()
 
 
-static func load_asset_into(parent: Node3D, path: String) -> Node3D:
+static func load_asset_into(parent: Node3D, path: String, opts: Dictionary = {}) -> Node3D:
 	if path.is_empty() or parent == null:
 		return null
 	var resolved := _resolve_res_path(path)
+	if is_media_path(resolved):
+		var role := str(opts.get("role", ""))
+		var billboard := bool(opts.get("billboard", role != "environment"))
+		var media_opts := {
+			"billboard": billboard,
+			"loop": bool(opts.get("loop", true)),
+			"height": float(opts.get("height", 1.0)),
+		}
+		return _MEDIA_PROP.spawn(parent, resolved, media_opts)
 	# Prefer Godot-imported PackedScene (glb/gltf/fbx).
 	if ResourceLoader.exists(resolved):
 		var res: Resource = load(resolved)
@@ -64,10 +74,19 @@ static func resolve_source_string(config: Dictionary) -> String:
 	return ""
 
 
-static func is_file_path(source: String) -> bool:
+static func is_model_path(source: String) -> bool:
 	var lower := source.to_lower()
 	return lower.ends_with(".glb") or lower.ends_with(".gltf") or lower.ends_with(".fbx") \
 		or lower.ends_with(".tscn")
+
+
+static func is_media_path(source: String) -> bool:
+	return MediaImport.is_media_extension(source)
+
+
+static func is_file_path(source: String) -> bool:
+	## Model or media file that can be spawned into a layer root.
+	return is_model_path(source) or is_media_path(source)
 
 
 static func is_primitive_source(source: String) -> bool:

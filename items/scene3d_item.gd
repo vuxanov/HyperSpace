@@ -137,6 +137,14 @@ func set_cue_param(key: String, value: Variant) -> void:
 		_environment.set_cue_param(key, value)
 
 
+func set_wireframe(on: bool) -> void:
+	if _sub_viewport == null:
+		return
+	_sub_viewport.debug_draw = (
+		SubViewport.DEBUG_DRAW_WIREFRAME if on else SubViewport.DEBUG_DRAW_DISABLED
+	)
+
+
 func start_item() -> void:
 	visible = true
 	modulate.a = _alpha

@@ -30,6 +30,7 @@ extends Control
 
 var _selected_index: int = -1
 var _pending_add_type: String = ""
+var _file_pick_handled: bool = false
 var _env_color_index: int = 0
 
 const ENV_COLORS: Array[String] = [
@@ -53,6 +54,7 @@ func _ready() -> void:
 	particles_toggle.toggled.connect(_on_particles_toggled)
 	feedback_toggle.toggled.connect(_on_feedback_toggled)
 	file_dialog.file_selected.connect(_on_file_selected)
+	file_dialog.files_selected.connect(_on_files_selected)
 	ShowDirector.show_loaded.connect(_on_show_loaded)
 	ShowDirector.item_changed.connect(_on_item_changed)
 	ShowDirector.playlist_changed.connect(_rebuild_playlist)
@@ -142,34 +144,52 @@ func _on_add_env() -> void:
 
 func _on_add_video() -> void:
 	_pending_add_type = "video"
-	file_dialog.title = "Add Video"
-	file_dialog.filters = PackedStringArray(["*.webm ; WebM", "*.mp4 ; MP4", "*.ogv ; Ogg Theora"])
+	_file_pick_handled = false
+	file_dialog.title = "Add Video / GIF"
+	file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILES
+	file_dialog.filters = PackedStringArray([
+		"*.webm,*.mp4,*.ogv,*.mov,*.avi,*.gif ; Video & GIF",
+		"*.gif ; GIF",
+	])
 	file_dialog.popup_centered()
 
 
 func _on_add_image() -> void:
 	_pending_add_type = "image"
-	file_dialog.title = "Add Image"
-	file_dialog.filters = PackedStringArray(["*.png ; PNG", "*.jpg,*.jpeg ; JPEG", "*.svg ; SVG", "*.webp ; WebP"])
+	_file_pick_handled = false
+	file_dialog.title = "Add Image / GIF"
+	file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILES
+	file_dialog.filters = PackedStringArray([
+		"*.png,*.jpg,*.jpeg,*.svg,*.webp,*.bmp,*.gif ; Images & GIF",
+	])
 	file_dialog.popup_centered()
 
 
 func _on_file_selected(path: String) -> void:
-	if _pending_add_type.is_empty():
+	_on_files_selected(PackedStringArray([path]))
+
+
+func _on_files_selected(paths: PackedStringArray) -> void:
+	if _file_pick_handled or _pending_add_type.is_empty() or paths.is_empty():
 		return
-	var res_path := path
-	# Prefer res:// if the file lives inside the project.
-	var project_root := ProjectSettings.globalize_path("res://").replace("\\", "/")
-	var normalized := path.replace("\\", "/")
-	if normalized.begins_with(project_root):
-		res_path = "res://" + normalized.substr(project_root.length()).lstrip("/")
-	ShowDirector.add_item_from_dict({
-		"id": path.get_file().get_basename(),
-		"type": _pending_add_type,
-		"path": res_path,
-		"loop": _pending_add_type == "video",
-	}, true)
+	_file_pick_handled = true
+	var add_type := _pending_add_type
 	_pending_add_type = ""
+	for path in paths:
+		var item := MediaImport.build_item_dict(path)
+		if item.is_empty():
+			# Fallback for forced type from button.
+			var res_path := MediaImport.to_project_or_absolute(path)
+			item = {
+				"id": path.get_file().get_basename(),
+				"type": add_type,
+				"path": res_path,
+				"loop": add_type == "video",
+			}
+		elif add_type == "image" and str(item.get("type", "")) == "video":
+			# Keep GIF→video when adding from image button if converted.
+			pass
+		ShowDirector.add_item_from_dict(item, path == paths[paths.size() - 1])
 
 
 func _on_remove() -> void:

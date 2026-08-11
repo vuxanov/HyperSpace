@@ -4,6 +4,7 @@ class_name FlythroughEnvironment
 ## Shared fly-through: path + camera + layers (environment, scatter, centerpiece, lighting).
 
 const RH = preload("res://core/reactivity_hub.gd")
+const _MEDIA_PROP := preload("res://items/flythrough/media_prop.gd")
 ## Target longest AABB axis (meters) for imported environment models.
 const ENV_TARGET_LONGEST := 48.0
 const ENV_MIN_LONGEST := 10.0
@@ -38,11 +39,16 @@ var _env_particles_on: bool = false
 var _scatter_particles_on: bool = false
 var _accent := Color(0.92, 0.93, 0.95)
 var _terrain_meta: Dictionary = {}
-var _rot_accum_center: float = 0.0
-var _rot_accum_scatter: float = 0.0
+var _rot_accum_center: Vector3 = Vector3.ZERO
+var _rot_accum_scatter: Vector3 = Vector3.ZERO
+var _rot_accum_env: Vector3 = Vector3.ZERO
 var _base_fill_energy: float = 1.0
 var _base_sun_energy: float = 1.1
 var _base_sun_color := Color(1.0, 0.96, 0.9)
+var _base_sky_energy: float = 1.0
+var _base_ambient_energy: float = 0.7
+var _base_bg_energy: float = 1.0
+var _base_ambient_color := Color(0.55, 0.55, 0.56)
 ## Uniform scale applied to file-based environments for readable flythroughs.
 var _env_fit_scale: float = 1.0
 ## Per-environment user scale (playlist / layer config). Multiplies after auto-fit.
@@ -248,7 +254,9 @@ func _apply_lighting_config(config: Dictionary) -> void:
 	env.tonemap_mode = Environment.TONE_MAPPER_ACES
 	env.tonemap_exposure = float(cfg.get("tonemap_exposure", 1.0))
 	env.glow_enabled = false
-	env.background_energy_multiplier = float(cfg.get("background_energy", 1.0))
+	_base_bg_energy = float(cfg.get("background_energy", 1.0))
+	env.background_energy_multiplier = _base_bg_energy
+	_base_ambient_color = ambient
 
 	var hdri_path := str(cfg.get("hdri_path", "")).strip_edges()
 	if use_hdri and not hdri_path.is_empty():
@@ -258,13 +266,15 @@ func _apply_lighting_config(config: Dictionary) -> void:
 			var sky := Sky.new()
 			var mat := PanoramaSkyMaterial.new()
 			mat.panorama = panorama
-			mat.energy_multiplier = float(cfg.get("sky_energy", 1.0))
+			_base_sky_energy = float(cfg.get("sky_energy", 1.0))
+			mat.energy_multiplier = _base_sky_energy
 			sky.sky_material = mat
 			env.sky = sky
 			env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 			env.ambient_light_sky_contribution = 1.0
 			# Milder ambient so IBL doesn't crush albedo detail.
-			env.ambient_light_energy = float(cfg.get("ambient_energy", 0.55))
+			_base_ambient_energy = float(cfg.get("ambient_energy", 0.55))
+			env.ambient_light_energy = _base_ambient_energy
 			env.ambient_light_color = Color(1, 1, 1)
 			env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
 			# HDRI must read as sky — keep fog off the panorama.
@@ -276,7 +286,9 @@ func _apply_lighting_config(config: Dictionary) -> void:
 
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = ambient
-	env.ambient_light_energy = float(cfg.get("ambient_energy", 0.7))
+	_base_ambient_energy = float(cfg.get("ambient_energy", 0.7))
+	env.ambient_light_energy = _base_ambient_energy
+	_base_sky_energy = 1.0
 	env.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
 
 	var use_sky := bool(cfg.get("use_sky", false))
@@ -289,6 +301,8 @@ func _apply_lighting_config(config: Dictionary) -> void:
 		mat2.ground_bottom_color = _color_from_dict(cfg.get("bg_color", {}), Color(0.08, 0.08, 0.09))
 		mat2.ground_horizon_color = mat2.sky_horizon_color.darkened(0.2)
 		mat2.sun_angle_max = 30.0
+		mat2.sky_energy_multiplier = float(cfg.get("sky_energy", 1.0))
+		_base_sky_energy = float(cfg.get("sky_energy", 1.0))
 		sky2.sky_material = mat2
 		env.sky = sky2
 	else:
@@ -382,7 +396,7 @@ func _rebuild_environment() -> void:
 	if source.is_empty():
 		source = FlythroughAssetCatalog.default_environment_path()
 	if FlythroughLayerSlot.is_file_path(source):
-		var node := FlythroughLayerSlot.load_asset_into(_env_root, source)
+		var node := FlythroughLayerSlot.load_asset_into(_env_root, source, {"role": "environment", "billboard": false})
 		if node:
 			_fit_environment_node(node)
 	elif FlythroughHTerrainBuilder.is_hterrain_kind(source):
@@ -500,7 +514,7 @@ func _rebuild_centerpiece() -> void:
 		_sync_particles()
 		return
 	if FlythroughLayerSlot.is_file_path(source):
-		var node := FlythroughLayerSlot.load_asset_into(_center_root, source)
+		var node := FlythroughLayerSlot.load_asset_into(_center_root, source, {"role": "centerpiece", "billboard": false})
 		if node:
 			_center_base_scale = FlythroughLayerSlot.fit_node_to_size(node, 1.6)
 	elif FlythroughLayerSlot.is_primitive_source(source):
@@ -560,8 +574,8 @@ func _update_centerpiece_transform(delta: float) -> void:
 	var local_offset := Vector3(sway, bob, -_center_distance)
 	_center_root.global_position = _camera.to_global(local_offset)
 	_center_root.global_basis = _camera.global_transform.basis
-	# Slow idle spin on the mesh itself (independent of camera).
-	if delta > 0.0 and _center_root.get_child_count() > 0 and not RH.property_active("rotation"):
+	# Slow idle spin only when Rotation target is off — schedule inactive must mute, not idle-Y.
+	if delta > 0.0 and _center_root.get_child_count() > 0 and not RH.affect_rotation():
 		var child := _center_root.get_child(0)
 		if child is Node3D and child != _center_particles:
 			(child as Node3D).rotate_y(delta * 0.4)
@@ -597,15 +611,26 @@ func _rebuild_scatter() -> void:
 	var template_mesh: Mesh = null
 	var template_mat: Material = null
 	var use_file := FlythroughLayerSlot.is_file_path(source)
+	var use_media := FlythroughLayerSlot.is_media_path(source)
 	var packed_scene: PackedScene = null
-	if use_file:
+	var media_master: Node3D = null
+	var media_base_scale := Vector3.ONE
+	if use_file and not use_media:
 		var res_path := source.replace("\\", "/")
 		if ResourceLoader.exists(res_path):
 			var res: Resource = load(res_path)
 			if res is PackedScene:
 				packed_scene = res as PackedScene
 
-	if use_file:
+	if use_media:
+		media_master = _MEDIA_PROP.spawn(_scatter_root, source, {"role": "scatter", "billboard": true}) as Node3D
+		if media_master == null:
+			_scatter_particles_on = false
+			_sync_particles()
+			return
+		FlythroughLayerSlot.fit_node_to_size(media_master, 0.85)
+		media_base_scale = media_master.scale
+	elif use_file:
 		pass
 	elif FlythroughLayerSlot.is_primitive_source(source):
 		var kind := FlythroughLayerSlot.normalize_primitive(source)
@@ -629,7 +654,18 @@ func _rebuild_scatter() -> void:
 		var offset := side * rng.randf_range(-_scatter_side_range, _scatter_side_range) \
 			+ up * rng.randf_range(-_scatter_side_range * 0.5, _scatter_side_range * 0.55)
 		var inst: Node3D
-		if use_file:
+		if use_media:
+			if i == 0:
+				inst = media_master
+			else:
+				var clone: MeshInstance3D = null
+				if media_master.has_method("make_mesh_clone"):
+					clone = media_master.call("make_mesh_clone", _scatter_root) as MeshInstance3D
+				if clone == null:
+					continue
+				inst = clone
+			inst.scale = media_base_scale
+		elif use_file:
 			if packed_scene:
 				var n := packed_scene.instantiate()
 				_scatter_root.add_child(n)
@@ -638,7 +674,7 @@ func _rebuild_scatter() -> void:
 					n.queue_free()
 					continue
 			else:
-				inst = FlythroughLayerSlot.load_asset_into(_scatter_root, source)
+				inst = FlythroughLayerSlot.load_asset_into(_scatter_root, source, {"role": "scatter", "billboard": true})
 			if inst == null:
 				continue
 			FlythroughLayerSlot.fit_node_to_size(inst, 0.85)
@@ -803,18 +839,22 @@ func apply_audio_state(state: AudioState) -> void:
 	var lfo := float(RH.get_field("lfo_mod01", 0.0))
 	var light_drive := RH.drive_value("light", state, lfo) if RH.property_active("light") else 0.0
 	# Lights react when "What reacts" includes lights (or Everything).
+	# Primary: HDRI / sky / ambient energy. Secondary: sun + fill.
 	if RH.property_active("light") and RH.applies_to("lights"):
 		var noise_mul := 1.0
 		if RH.noise_applies_to("lights"):
 			noise_mul = 1.0 + _sample_noise(0.5, 9.0) * (RH.noise_amount() / 35.0) * 1.5
+		var bright := (0.35 + light_drive * 2.8) * noise_mul
+		_apply_hdri_energy(bright)
 		if _light:
-			_light.light_energy = _base_fill_energy * (0.45 + light_drive * 5.5) * noise_mul
+			_light.light_energy = _base_fill_energy * bright
 			_light.omni_range = 14.0 + light_drive * 40.0
 			_light.light_color = _accent
 		if _sun:
-			_sun.light_energy = _base_sun_energy * (0.5 + light_drive * 3.2) * noise_mul
+			_sun.light_energy = _base_sun_energy * bright
 			_sun.light_color = _base_sun_color
 	else:
+		_apply_hdri_energy(1.0)
 		if _light:
 			_light.light_energy = _base_fill_energy
 			_light.light_color = _accent
@@ -846,6 +886,22 @@ func apply_audio_state(state: AudioState) -> void:
 	_drive_particle_systems(state)
 
 
+func _apply_hdri_energy(mul: float) -> void:
+	## Drive panorama / sky / ambient / background energy so “Lights” clearly brightens HDRI.
+	if _world_env == null or _world_env.environment == null:
+		return
+	var env: Environment = _world_env.environment
+	var m := maxf(mul, 0.05)
+	env.ambient_light_energy = _base_ambient_energy * m
+	env.background_energy_multiplier = _base_bg_energy * m
+	if env.sky and env.sky.sky_material:
+		var sm: Material = env.sky.sky_material
+		if sm is PanoramaSkyMaterial:
+			(sm as PanoramaSkyMaterial).energy_multiplier = _base_sky_energy * m
+		elif sm is ProceduralSkyMaterial:
+			(sm as ProceduralSkyMaterial).sky_energy_multiplier = _base_sky_energy * m
+
+
 func _drive_particle_systems(state: AudioState) -> void:
 	if _center_particles_on and _center_particles:
 		_center_particles.amount = clampi(int(200 + state.bass * 900), 120, 1600)
@@ -874,9 +930,12 @@ func _drive_particle_systems(state: AudioState) -> void:
 
 
 func _apply_environment_audio(state: AudioState, lfo: float) -> void:
-	if RH.property_active("rotation") and _terrain_meta.is_empty():
+	if RH.property_active("rotation") and _env_root:
 		var rd := RH.drive_value("rotation", state, lfo)
-		_env_root.rotate_y(rd * 0.22)
+		# Terrain: slower orbit. Non-terrain: mild. Amount + axes from settings.
+		var mul := 0.55 if not _terrain_meta.is_empty() else 1.0
+		var rate := RH.rotation_rate(rd) * mul
+		_apply_axis_rotation(_env_root, rate, true)
 	if RH.property_active("scale") and _terrain_meta.is_empty():
 		var sd := RH.drive_value("scale", state, lfo)
 		# Keep env readable in frame — still punchy at mid/high Scale Amount.
@@ -887,6 +946,7 @@ func _apply_environment_audio(state: AudioState, lfo: float) -> void:
 	if RH.property_active("emission"):
 		var ed := RH.drive_value("emission", state, lfo)
 		_drive_mesh_emission(_env_root, ed, false)
+		_drive_ambient_tint(ed)
 	else:
 		_reset_layer_emission(_env_root)
 
@@ -901,13 +961,16 @@ func _apply_centerpiece_audio(state: AudioState, lfo: float) -> void:
 			d = minf(d * 1.35, 1.0)
 		var amt := RH.scale_multiplier(d)
 		node.scale = _center_base_scale * RH.scale_vector(amt)
+	elif not _center_particles_on:
+		_reset_centerpiece_scale()
 	if RH.property_active("rotation") and not _center_particles_on:
 		var rd := RH.drive_value("rotation", state, lfo)
-		_rot_accum_center += rd * 0.75
-		node.rotation.y = _rot_accum_center
+		var rate := RH.rotation_rate(rd) * 1.15
+		_apply_axis_rotation(node, rate, false)
 	if RH.property_active("emission") and not _center_particles_on:
 		var ed := RH.drive_value("emission", state, lfo)
 		_drive_mesh_emission(node, ed, true)
+		_drive_ambient_tint(ed)
 	else:
 		_reset_layer_emission(node)
 
@@ -921,6 +984,25 @@ func _centerpiece_content_node() -> Node3D:
 	return null
 
 
+func _apply_axis_rotation(node: Node3D, rate: float, track_env_accum: bool) -> void:
+	## Spin only the enabled X/Y/Z axes. rate is radians per audio frame (~per display frame).
+	if node == null:
+		return
+	var axes := RH.rotation_axis_mask()
+	if axes.length_squared() < 0.01:
+		return
+	# Small floor so axis toggles stay obvious when the band is quiet.
+	var r := maxf(rate, (RH.rotation_amount() / 20.0) * 0.01)
+	if axes.x > 0.0:
+		node.rotate_x(r * axes.x)
+	if axes.y > 0.0:
+		node.rotate_y(r * axes.y)
+	if axes.z > 0.0:
+		node.rotate_z(r * axes.z)
+	if track_env_accum:
+		_rot_accum_env = node.rotation
+
+
 func _apply_scatter_audio(state: AudioState, lfo: float) -> void:
 	if RH.property_active("scale") and not _scatter_particles_on:
 		var d := RH.drive_value("scale", state, lfo)
@@ -931,17 +1013,20 @@ func _apply_scatter_audio(state: AudioState, lfo: float) -> void:
 				continue
 			var base: Vector3 = _scatter_base_scales[i] if i < _scatter_base_scales.size() else Vector3.ONE
 			_scatter_nodes[i].scale = base * scale_vec
+	elif not _scatter_particles_on:
+		_reset_scatter_scales()
 	if RH.property_active("rotation") and not _scatter_particles_on:
 		var rd := RH.drive_value("rotation", state, lfo)
-		_rot_accum_scatter += rd * 0.55
+		var rate := RH.rotation_rate(rd) * 0.95
 		for node in _scatter_nodes:
 			if is_instance_valid(node):
-				node.rotation.y = _rot_accum_scatter
+				_apply_axis_rotation(node, rate, false)
 	if RH.property_active("emission") and not _scatter_particles_on:
 		var ed := RH.drive_value("emission", state, lfo)
 		for node in _scatter_nodes:
 			if is_instance_valid(node):
 				_drive_mesh_emission(node, ed, true)
+		_drive_ambient_tint(ed)
 	else:
 		for node in _scatter_nodes:
 			if is_instance_valid(node):
@@ -983,6 +1068,18 @@ func _drive_mesh_emission(root: Node, drive01: float, allow_untextured_tint: boo
 	_drive_mesh_emission_recursive(root, d, emit_col, allow_untextured_tint)
 
 
+func _drive_ambient_tint(drive01: float) -> void:
+	## Make Emission / Color visibly shift sky/ambient so the control isn't a no-op on textured scenes.
+	if _world_env == null or _world_env.environment == null:
+		return
+	var env: Environment = _world_env.environment
+	var d := clampf(drive01, 0.0, 1.0)
+	var tint := Color.from_hsv(fposmod(0.08 + d * 0.55, 1.0), 0.35 + d * 0.4, 1.0)
+	env.ambient_light_color = _base_ambient_color.lerp(tint, d * 0.85)
+	if env.ambient_light_source == Environment.AMBIENT_SOURCE_SKY:
+		env.ambient_light_color = Color(1, 1, 1).lerp(tint, d * 0.65)
+
+
 func _drive_mesh_emission_recursive(node: Node, drive01: float, emit_col: Color, allow_untextured_tint: bool) -> void:
 	if node is MeshInstance3D:
 		var mi := node as MeshInstance3D
@@ -992,9 +1089,12 @@ func _drive_mesh_emission_recursive(node: Node, drive01: float, emit_col: Color,
 				continue
 			mat.emission_enabled = true
 			mat.emission = emit_col
-			mat.emission_energy_multiplier = 0.15 + drive01 * 3.2
+			mat.emission_energy_multiplier = 0.35 + drive01 * 6.5
 			if allow_untextured_tint and mat.albedo_texture == null:
-				mat.albedo_color = mat.albedo_color.lerp(emit_col, drive01 * 0.35)
+				mat.albedo_color = mat.albedo_color.lerp(emit_col, drive01 * 0.55)
+			elif drive01 > 0.05:
+				# Textured meshes still get a readable glow without full albedo wash.
+				mat.emission_energy_multiplier = 0.8 + drive01 * 5.0
 	for child in node.get_children():
 		_drive_mesh_emission_recursive(child, drive01, emit_col, allow_untextured_tint)
 
@@ -1032,15 +1132,22 @@ func _apply_noise_distort(state: AudioState, lfo: float) -> void:
 		_clear_noise_deform()
 		return
 	var drive := RH.drive_value("noise", state, lfo)
-	# noise_amount is world-unit amplitude (UI 0–100). Drive pushes it harder.
-	var amt := RH.noise_amount() * (0.55 + drive * 1.8)
+	# noise_amount (UI: how much) strongly controls visible displace; audio/LFO boosts within that budget.
+	var strength := clampf(RH.noise_amount() / 100.0, 0.0, 1.0)
+	var amt := strength * (4.0 + drive * 36.0)
 	var feature := maxf(RH.noise_scale(), 0.5)
-	var want_env := RH.noise_applies_to("environment") and _terrain_meta.is_empty() and not (_env_root == null)
+	var axes := RH.noise_axis_mask()
+	if axes.length_squared() < 0.01 or strength < 0.005:
+		_clear_noise_deform()
+		return
+	var want_env := RH.noise_applies_to("environment") and _env_root != null
 	var want_center := RH.noise_applies_to("centerpiece") and not _center_particles_on
 	var want_scatter := RH.noise_applies_to("scatter") and not _scatter_particles_on
 	if _env_root and _terrain_meta.is_empty():
-		_env_root.rotation_degrees.x = 0.0
-		_env_root.rotation_degrees.z = 0.0
+		# Don't clobber reactive multi-axis rotation on the env root.
+		if not RH.property_active("rotation"):
+			_env_root.rotation_degrees.x = 0.0
+			_env_root.rotation_degrees.z = 0.0
 		_env_root.position = Vector3.ZERO
 	var cnode := _centerpiece_content_node()
 	if cnode and not RH.property_active("rotation"):
@@ -1052,21 +1159,34 @@ func _apply_noise_distort(state: AudioState, lfo: float) -> void:
 			_scatter_nodes[i].position = _scatter_base_positions[i]
 
 	var active_ids: Dictionary = {}
-	# Env meshes are large — full amount. Hero/scatter get strong but slightly less.
-	if want_env:
-		_apply_noise_to_root(_env_root, amt, feature, Vector3(0.1, 0.2, 0.3), active_ids)
+	# HTerrain uses DirectMeshInstance chunks — vertex shader overrides don't apply.
+	# Approximate displace via root transform wobble so mountains still react.
+	if want_env and not _terrain_meta.is_empty():
+		_apply_terrain_noise_wobble(amt, axes)
+	elif want_env:
+		_apply_noise_to_root(_env_root, amt, feature, Vector3(0.1, 0.2, 0.3), axes, active_ids)
 	if want_center and cnode:
-		_apply_noise_to_root(cnode, amt * 0.75, feature * 0.7, Vector3(1.1, 0.4, 0.7), active_ids)
+		_apply_noise_to_root(cnode, amt * 0.85, feature * 0.7, Vector3(1.1, 0.4, 0.7), axes, active_ids)
 	if want_scatter:
 		for i in _scatter_nodes.size():
 			if not is_instance_valid(_scatter_nodes[i]):
 				continue
 			var nseed := Vector3(float(i) * 0.37, 2.0, float(i) * 0.19)
-			_apply_noise_to_root(_scatter_nodes[i], amt * 0.65, feature * 0.85, nseed, active_ids)
+			_apply_noise_to_root(_scatter_nodes[i], amt * 0.75, feature * 0.85, nseed, axes, active_ids)
 	_prune_noise_materials(active_ids)
 
 
-func _apply_noise_to_root(root: Node, amount: float, feature: float, nseed: Vector3, active_ids: Dictionary) -> void:
+func _apply_terrain_noise_wobble(amount: float, axes: Vector3) -> void:
+	if _env_root == null:
+		return
+	var nx := _sample_noise(0.2, 1.0)
+	var ny := _sample_noise(1.1, 2.4)
+	var nz := _sample_noise(2.7, 0.6)
+	# World-unit wobble — amount already scaled by UI "how much".
+	_env_root.position = Vector3(nx, ny, nz) * axes * amount * 0.55
+
+
+func _apply_noise_to_root(root: Node, amount: float, feature: float, nseed: Vector3, axes: Vector3, active_ids: Dictionary) -> void:
 	if root == null or amount <= 0.001:
 		return
 	var meshes: Array = []
@@ -1086,6 +1206,7 @@ func _apply_noise_to_root(root: Node, amount: float, feature: float, nseed: Vect
 				var sm := mat as ShaderMaterial
 				sm.set_shader_parameter("noise_amount", amount)
 				sm.set_shader_parameter("noise_scale", feature)
+				sm.set_shader_parameter("noise_axes", axes)
 				sm.set_shader_parameter("time_sec", _noise_t)
 
 
@@ -1133,6 +1254,7 @@ func _make_noise_shader_from(base: Material, nseed: Vector3) -> ShaderMaterial:
 	sm.set_shader_parameter("noise_seed", nseed)
 	sm.set_shader_parameter("noise_amount", 0.0)
 	sm.set_shader_parameter("noise_scale", 1.0)
+	sm.set_shader_parameter("noise_axes", Vector3.ONE)
 	if tex != null:
 		sm.set_shader_parameter("albedo_tex", tex)
 		sm.set_shader_parameter("use_albedo_tex", 1.0)
@@ -1172,10 +1294,11 @@ func _clear_noise_deform() -> void:
 		_restore_noise_material(int(key))
 	_noise_mats.clear()
 	_noise_backup.clear()
-	if _env_root and _terrain_meta.is_empty():
-		_env_root.rotation_degrees.x = 0.0
-		_env_root.rotation_degrees.z = 0.0
+	if _env_root:
 		_env_root.position = Vector3.ZERO
+		if _terrain_meta.is_empty() and not RH.property_active("rotation"):
+			_env_root.rotation_degrees.x = 0.0
+			_env_root.rotation_degrees.z = 0.0
 	var cnode := _centerpiece_content_node()
 	if cnode:
 		cnode.position = Vector3.ZERO

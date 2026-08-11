@@ -12,8 +12,8 @@ func _ready() -> void:
 	_rect = _make_screen_color_rect("res://effects/chromatic_effect.gdshader")
 	var mat := _mat()
 	if mat:
-		mat.set_shader_parameter("intensity", 0.85)
-		mat.set_shader_parameter("amount", 1.0)
+		mat.set_shader_parameter("intensity", 1.1)
+		mat.set_shader_parameter("amount", 1.4)
 	visible = false
 
 
@@ -37,15 +37,18 @@ func apply_audio_state(state: AudioState) -> void:
 	visible = true
 	var mat := _mat()
 	if mat:
-		mat.set_shader_parameter("audio_drive", state.highs * _intensity)
+		mat.set_shader_parameter("audio_drive", resolve_drive(state.highs))
 
 
 func apply_modulator(mod01: float) -> void:
+	super.apply_modulator(mod01)
 	if not enabled:
 		return
-	var mat := _mat()
-	if mat:
-		mat.set_shader_parameter("amount", clampf(0.35 + mod01 * 0.7, 0.0, 1.0))
+	if normalize_drive_mode(drive_mode) == "lfo":
+		var mat := _mat()
+		if mat:
+			mat.set_shader_parameter("audio_drive", resolve_drive(0.0))
+			mat.set_shader_parameter("amount", clampf(0.5 + mod01 * 2.2, 0.0, 4.0))
 
 
 func _on_params_changed(params: Dictionary) -> void:

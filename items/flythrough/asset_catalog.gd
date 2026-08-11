@@ -430,6 +430,11 @@ static func short_label_for_config(config: Variant) -> String:
 				return "Street city"
 			if path.contains("chiostro") or path.contains("convento"):
 				return "Ex-convento"
+			var ext := path.get_extension().to_lower()
+			if ext in ["gif", "mp4", "webm", "ogv", "mov", "avi"]:
+				return path.get_file()
+			if ext in ["png", "jpg", "jpeg", "webp", "bmp", "svg"]:
+				return path.get_file()
 			return path.get_file()
 		if d.has("source"):
 			return str(d["source"]).replace("primitive:", "")

@@ -10,7 +10,7 @@ const BEAT_THRESHOLD := 1.4
 
 var current_state: AudioState = AudioState.new()
 var master_intensity: float = 1.0
-var band_sensitivity: float = 1.0
+var band_sensitivity: float = 1.75
 
 var _bus_index: int = -1
 var _spectrum: AudioEffectSpectrumAnalyzerInstance
@@ -88,15 +88,18 @@ func _analyze() -> void:
 		total_energy += value
 		peak = maxf(peak, value)
 	total_energy /= float(BAND_COUNT)
-	var bass := _average_range(bands, 0, 3)
-	var mids := _average_range(bands, 4, 9)
-	var highs := _average_range(bands, 10, BAND_COUNT - 1)
-	var beat := _detect_beat(total_energy)
+	# Spectrum magnitudes are tiny — lift into a usable 0..1 envelope for UI + reactivity.
+	var bass := _perceptual(_average_range(bands, 0, 3))
+	var mids := _perceptual(_average_range(bands, 4, 9))
+	var highs := _perceptual(_average_range(bands, 10, BAND_COUNT - 1))
+	var energy := _perceptual(total_energy)
+	var peak_n := _perceptual(peak)
+	var beat := _detect_beat(energy)
 	if beat:
-		_kick_env = maxf(_kick_env, clampf(bass * 1.8 + total_energy, 0.35, 1.0))
+		_kick_env = maxf(_kick_env, clampf(bass * 1.8 + energy, 0.45, 1.0))
 	current_state.bands = bands
-	current_state.energy = total_energy
-	current_state.peak = peak
+	current_state.energy = energy
+	current_state.peak = peak_n
 	current_state.beat = beat
 	current_state.bass = bass
 	current_state.mids = mids
@@ -104,6 +107,12 @@ func _analyze() -> void:
 	current_state.kick = _kick_env
 	current_state.bpm_estimate = _estimate_bpm()
 	state_updated.emit(current_state)
+
+
+func _perceptual(raw: float) -> float:
+	## Map quiet mic/FFT levels into punchy 0..1 meters and drives.
+	var v := maxf(raw, 0.0) * 14.0 * maxf(band_sensitivity, 0.15)
+	return clampf(pow(v, 0.48), 0.0, 1.0)
 
 
 func _average_range(bands: PackedFloat32Array, from_idx: int, to_idx: int) -> float:
@@ -116,9 +125,9 @@ func _average_range(bands: PackedFloat32Array, from_idx: int, to_idx: int) -> fl
 
 
 func _detect_beat(energy: float) -> bool:
-	var threshold := _energy_history * BEAT_THRESHOLD + 0.02
-	var is_beat := energy > threshold and energy > 0.05
-	_energy_history = lerpf(_energy_history, energy, 0.15)
+	var threshold := _energy_history * BEAT_THRESHOLD + 0.04
+	var is_beat := energy > threshold and energy > 0.08
+	_energy_history = lerpf(_energy_history, energy, 0.18)
 	if is_beat:
 		var now := Time.get_ticks_msec() / 1000.0
 		if now - _last_beat_time > 0.25:

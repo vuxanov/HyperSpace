@@ -42,7 +42,7 @@ layout_mode = 2
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 13
-text = "  Preview  —  Present opens projector window (keep this UI)"
+text = "  Preview  —  Present = projector window (Esc/F11 exits; editor stays)"
 
 [node name="PresentButton" type="Button" parent="Root/OutputPane/OutputColumn/OutputHeader"]
 layout_mode = 2

@@ -7,6 +7,9 @@ var _rect: ColorRect
 var _history: ImageTexture
 var _has_history: bool = false
 var _capture_pending: bool = false
+var _base_mix: float = 0.78
+var _base_persist: float = 0.9
+var _base_zoom: float = 1.04
 
 
 func _ready() -> void:
@@ -15,10 +18,12 @@ func _ready() -> void:
 	_rect = ColorRect.new()
 	_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_rect.color = Color(1, 1, 1, 0)
 	var mat := ShaderMaterial.new()
 	mat.shader = load("res://effects/feedback_effect.gdshader")
-	mat.set_shader_parameter("mix_amount", 0.78)
-	mat.set_shader_parameter("persistence", 0.9)
+	mat.set_shader_parameter("mix_amount", _base_mix)
+	mat.set_shader_parameter("persistence", _base_persist)
+	mat.set_shader_parameter("zoom", _base_zoom)
 	mat.set_shader_parameter("has_history", 0.0)
 	_rect.material = mat
 	add_child(_rect)
@@ -55,18 +60,40 @@ func apply_audio_state(state: AudioState) -> void:
 		return
 	visible = true
 	var mat := _mat()
-	if mat:
-		mat.set_shader_parameter("audio_drive", state.energy * _intensity)
-		mat.set_shader_parameter("mix_amount", clampf(0.72 + state.mids * 0.2, 0.65, 0.95))
-		mat.set_shader_parameter("persistence", clampf(0.86 + state.bass * 0.08, 0.75, 0.96))
+	if mat == null:
+		return
+	match drive_mode:
+		"auto", "manual":
+			mat.set_shader_parameter("audio_drive", 0.0)
+			mat.set_shader_parameter("mix_amount", _base_mix)
+			mat.set_shader_parameter("persistence", _base_persist)
+			mat.set_shader_parameter("zoom", _base_zoom)
+		"lfo":
+			var d := resolve_drive(0.0)
+			mat.set_shader_parameter("audio_drive", d * 0.35)
+			mat.set_shader_parameter("mix_amount", clampf(_base_mix * (0.85 + _last_lfo * 0.3), 0.05, 0.98))
+			mat.set_shader_parameter("persistence", clampf(_base_persist * (0.9 + _last_lfo * 0.12), 0.5, 0.98))
+			mat.set_shader_parameter("zoom", _base_zoom + _last_lfo * 0.06)
+		_:
+			# audio — sensitivity tames oversensitivity
+			var drive := resolve_drive(state.energy)
+			mat.set_shader_parameter("audio_drive", drive * 0.45)
+			var boost := drive * 0.12 * audio_sensitivity
+			mat.set_shader_parameter("mix_amount", clampf(_base_mix + boost, 0.05, 0.98))
+			mat.set_shader_parameter("persistence", clampf(_base_persist + boost * 0.35, 0.5, 0.98))
+			mat.set_shader_parameter("zoom", _base_zoom + drive * 0.03)
 
 
 func apply_modulator(mod01: float) -> void:
-	if not enabled:
+	super.apply_modulator(mod01)
+	if not enabled or normalize_drive_mode(drive_mode) != "lfo":
 		return
 	var mat := _mat()
 	if mat:
-		mat.set_shader_parameter("zoom", 1.02 + mod01 * 0.06)
+		mat.set_shader_parameter("audio_drive", resolve_drive(0.0) * 0.35)
+		mat.set_shader_parameter("mix_amount", clampf(_base_mix * (0.85 + mod01 * 0.3), 0.05, 0.98))
+		mat.set_shader_parameter("persistence", clampf(_base_persist * (0.9 + mod01 * 0.12), 0.5, 0.98))
+		mat.set_shader_parameter("zoom", _base_zoom + mod01 * 0.06)
 
 
 func _on_frame_post_draw() -> void:
@@ -108,11 +135,14 @@ func _apply_shader(params: Dictionary) -> void:
 	if mat == null:
 		return
 	if params.has("persistence"):
-		mat.set_shader_parameter("persistence", float(params["persistence"]))
+		_base_persist = clampf(float(params["persistence"]), 0.5, 0.98)
+		mat.set_shader_parameter("persistence", _base_persist)
 	if params.has("zoom"):
-		mat.set_shader_parameter("zoom", float(params["zoom"]))
+		_base_zoom = float(params["zoom"])
+		mat.set_shader_parameter("zoom", _base_zoom)
 	if params.has("mix_amount"):
-		mat.set_shader_parameter("mix_amount", float(params["mix_amount"]))
+		_base_mix = clampf(float(params["mix_amount"]), 0.0, 1.0)
+		mat.set_shader_parameter("mix_amount", _base_mix)
 
 
 func _mat() -> ShaderMaterial:

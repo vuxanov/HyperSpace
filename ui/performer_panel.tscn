@@ -255,5 +255,5 @@ layout_mode = 2
 title = "Add Media"
 size = Vector2i(900, 600)
 access = 2
-file_mode = 0
+file_mode = 1
 use_native_dialog = true

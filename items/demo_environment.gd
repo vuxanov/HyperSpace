@@ -117,15 +117,24 @@ func _process(delta: float) -> void:
 		ring.position.z = -z
 		ring.rotate_z(delta * 0.4)
 	if _particles_mode:
-		if _particles and RH.applies_to("foreground") and RH.affect_rotation():
-			_particles.rotate_y(delta * _rotation_speed)
-		elif _particles:
+		if _particles and RH.applies_to("foreground") and RH.property_active("rotation"):
+			_rotate_reactive(_particles, delta * _rotation_speed)
+		elif _particles and not RH.affect_rotation():
 			_particles.rotate_y(delta * 0.25)
 	elif _mesh:
-		if RH.applies_to("foreground") and RH.affect_rotation():
-			_mesh.rotate_y(delta * _rotation_speed)
-		else:
+		if RH.applies_to("foreground") and RH.property_active("rotation"):
+			_rotate_reactive(_mesh, delta * _rotation_speed)
+		elif not RH.affect_rotation():
 			_mesh.rotate_y(delta * 0.25)
+
+
+func _rotate_reactive(node: Node3D, rate: float) -> void:
+	var axes := RH.rotation_axis_mask()
+	if axes.length_squared() < 0.01:
+		return
+	node.rotate_x(rate * axes.x)
+	node.rotate_y(rate * axes.y)
+	node.rotate_z(rate * axes.z)
 
 
 func _sync_particles_mode() -> void:
@@ -185,7 +194,8 @@ func apply_audio_state(state: AudioState) -> void:
 			mat.emission_energy_multiplier = 1.0 + ed2 * 6.0
 			mat.albedo_color = base_color.lerp(mat.emission, 0.35)
 	if RH.property_active("rotation"):
-		_rotation_speed = 0.2 + RH.drive_value("rotation", state, lfo) * 2.0
+		var rd := RH.drive_value("rotation", state, lfo)
+		_rotation_speed = 0.2 + RH.rotation_rate(rd) * 28.0
 	else:
 		_rotation_speed = 0.2
 

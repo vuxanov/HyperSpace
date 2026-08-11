@@ -13,11 +13,11 @@ func _ready() -> void:
 	_rect = _make_screen_color_rect("res://effects/glitch_effect.gdshader")
 	var mat := _mat()
 	if mat:
-		mat.set_shader_parameter("intensity", 0.85)
-		mat.set_shader_parameter("rate", 1.5)
-		mat.set_shader_parameter("h_size", 0.75)
-		mat.set_shader_parameter("rgb_split", 0.85)
-		mat.set_shader_parameter("slice_chaos", 0.65)
+		mat.set_shader_parameter("intensity", 1.2)
+		mat.set_shader_parameter("rate", 2.0)
+		mat.set_shader_parameter("h_size", 0.8)
+		mat.set_shader_parameter("rgb_split", 0.9)
+		mat.set_shader_parameter("slice_chaos", 0.75)
 	visible = false
 	set_process(true)
 
@@ -51,15 +51,18 @@ func apply_audio_state(state: AudioState) -> void:
 	visible = true
 	var mat := _mat()
 	if mat:
-		mat.set_shader_parameter("audio_drive", state.highs * _intensity)
+		mat.set_shader_parameter("audio_drive", resolve_drive(state.highs))
 
 
 func apply_modulator(mod01: float) -> void:
+	super.apply_modulator(mod01)
 	if not enabled:
 		return
-	var mat := _mat()
-	if mat:
-		mat.set_shader_parameter("intensity", clampf(_intensity * (0.35 + mod01 * 0.9), 0.0, 1.2))
+	if normalize_drive_mode(drive_mode) == "lfo":
+		var mat := _mat()
+		if mat:
+			mat.set_shader_parameter("audio_drive", resolve_drive(0.0))
+			mat.set_shader_parameter("intensity", clampf(_intensity * (0.45 + mod01 * 1.2), 0.0, 4.0))
 
 
 func _on_params_changed(params: Dictionary) -> void:

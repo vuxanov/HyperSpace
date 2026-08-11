@@ -18,6 +18,8 @@ func create_effect(effect_id: String) -> EffectLayer:
 			return ChromaticEffect.new()
 		"pixel_sort":
 			return PixelSortEffect.new()
+		"wireframe":
+			return WireframeEffect.new()
 		_:
 			push_warning("EffectStack: unknown effect '%s'" % effect_id)
 			return null
