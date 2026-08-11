@@ -10,6 +10,9 @@ var _capture_pending: bool = false
 var _base_mix: float = 0.78
 var _base_persist: float = 0.9
 var _base_zoom: float = 1.04
+var _frame_skip: int = 0
+const CAPTURE_EVERY_N := 2
+const CAPTURE_MAX_DIM := 640
 
 
 func _ready() -> void:
@@ -99,6 +102,10 @@ func apply_modulator(mod01: float) -> void:
 func _on_frame_post_draw() -> void:
 	if not enabled or not is_inside_tree() or _capture_pending:
 		return
+	_frame_skip += 1
+	if _frame_skip < CAPTURE_EVERY_N:
+		return
+	_frame_skip = 0
 	_capture_pending = true
 	_capture_history()
 	_capture_pending = false
@@ -112,12 +119,26 @@ func _capture_history() -> void:
 	if vt == null:
 		return
 	var img := vt.get_image()
-	if img == null:
+	if img == null or img.is_empty():
 		return
+	# Half-res (or capped) history — full-res GPU readback every frame was a major hitch.
+	var w := img.get_width()
+	var h := img.get_height()
+	var m := maxi(w, h)
+	if m > CAPTURE_MAX_DIM:
+		var sc := float(CAPTURE_MAX_DIM) / float(m)
+		img.resize(maxi(1, int(w * sc)), maxi(1, int(h * sc)), Image.INTERPOLATE_BILINEAR)
+	elif m > 960:
+		img.resize(maxi(1, w >> 1), maxi(1, h >> 1), Image.INTERPOLATE_BILINEAR)
 	if _history == null:
 		_history = ImageTexture.create_from_image(img)
 	else:
-		_history.update(img)
+		var prev := Vector2i(_history.get_size())
+		var cur := img.get_size()
+		if prev != cur:
+			_history.set_image(img)
+		else:
+			_history.update(img)
 	_has_history = true
 	var mat := _mat()
 	if mat:

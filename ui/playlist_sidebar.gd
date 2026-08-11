@@ -504,15 +504,16 @@ func _apply_lighting(entry: Dictionary, force_sel: int = -1) -> void:
 	var idx := _ensure_stage()
 	if idx < 0:
 		return
-	var cfg: Dictionary = (entry.get("config", {}) as Dictionary).duplicate(true)
+	# Same extraction path as other layers; stamp preset from entry id when missing
+	# so rematch / status labels work for user-added HDRIs.
+	var cfg: Dictionary = FlythroughAssetCatalog.layer_config_from_entry(entry, "lighting")
+	var entry_id := str(entry.get("id", "")).strip_edges()
+	if str(cfg.get("preset", "")).strip_edges().is_empty() and not entry_id.is_empty():
+		cfg["preset"] = entry_id
 	_suppress_playlist_ui = true
 	ShowDirector.set_flythrough_layer("lighting", cfg, idx)
 	_suppress_playlist_ui = false
-	if force_sel >= 0 and force_sel < _light_entries.size():
-		_sel_light = force_sel
-	else:
-		var matched := _index_of_lighting(_light_entries, cfg)
-		_sel_light = matched if matched >= 0 else _sel_light
+	_sel_light = _resolve_lighting_selection_after_apply(force_sel, cfg)
 	_rebuild_all_lists()
 	_refresh_status()
 	status_label.text = "Light: %s" % str(entry.get("label", "?"))
@@ -530,6 +531,20 @@ func _resolve_selection_after_apply(entries: Array[Dictionary], force_sel: int, 
 	# Last resort: keep a valid index so the next autoplay step can still advance.
 	if entries.is_empty():
 		return -1
+	return 0
+
+
+func _resolve_lighting_selection_after_apply(force_sel: int, cfg: Dictionary) -> int:
+	## Lighting rematch is preset/hdri_path based — same force_sel trust as other tabs.
+	if force_sel >= 0 and force_sel < _light_entries.size():
+		return force_sel
+	var matched := _index_of_lighting(_light_entries, cfg)
+	if matched >= 0:
+		return matched
+	if _light_entries.is_empty():
+		return -1
+	if _sel_light >= 0:
+		return clampi(_sel_light, 0, _light_entries.size() - 1)
 	return 0
 
 
@@ -603,8 +618,12 @@ func _step_tab(tab: int, delta_i: int) -> void:
 	var entries := _entries_for_tab(tab)
 	if entries.is_empty():
 		return
+	# Single-item lists still re-apply so Lighting Play refreshes the sky/panorama
+	# instead of looking "stuck" with a no-op skip.
 	var sel := _selection_for_tab(tab)
-	if sel < 0:
+	if entries.size() == 1:
+		sel = 0
+	elif sel < 0:
 		sel = 0 if delta_i >= 0 else entries.size() - 1
 	else:
 		sel = (sel + delta_i) % entries.size()
@@ -679,16 +698,22 @@ func _index_of_lighting(entries: Array[Dictionary], config: Variant) -> int:
 	if not (config is Dictionary):
 		return -1
 	var cfg: Dictionary = config
-	var preset := str(cfg.get("preset", ""))
-	if preset.is_empty():
+	var preset := str(cfg.get("preset", "")).strip_edges()
+	var hdri := str(cfg.get("hdri_path", "")).strip_edges().replace("\\", "/")
+	if preset.is_empty() and hdri.is_empty():
 		return -1
 	for i in entries.size():
 		var entry: Dictionary = entries[i]
-		if str(entry.get("id", "")) == preset:
-			return i
 		var ecfg: Dictionary = entry.get("config", {}) as Dictionary
-		if str(ecfg.get("preset", "")) == preset:
-			return i
+		if not preset.is_empty():
+			if str(entry.get("id", "")) == preset:
+				return i
+			if str(ecfg.get("preset", "")).strip_edges() == preset:
+				return i
+		if not hdri.is_empty():
+			var ehdri := str(ecfg.get("hdri_path", "")).strip_edges().replace("\\", "/")
+			if not ehdri.is_empty() and ehdri == hdri:
+				return i
 	return -1
 
 
@@ -742,6 +767,16 @@ func _rebuild_all_lists() -> void:
 	_update_all_play_buttons()
 
 
+func _ellipsis_middle(text: String, max_chars: int = 28) -> String:
+	## Keep start + end of long filenames so extension / id stay readable.
+	if text.length() <= max_chars:
+		return text
+	var keep := maxi(max_chars - 1, 3)
+	var left := keep / 2
+	var right := keep - left
+	return text.substr(0, left) + "…" + text.substr(text.length() - right)
+
+
 func _rebuild_list(container: VBoxContainer, entries: Array[Dictionary], tab: int, selected: int) -> void:
 	for child in container.get_children():
 		child.queue_free()
@@ -749,13 +784,18 @@ func _rebuild_list(container: VBoxContainer, entries: Array[Dictionary], tab: in
 		var entry: Dictionary = entries[i]
 		var row := HBoxContainer.new()
 		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.clip_contents = true
+		var full_label := str(entry.get("label", "Asset"))
 		var title := Button.new()
-		title.text = str(entry.get("label", "Asset"))
+		title.text = _ellipsis_middle(full_label, 28)
 		title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		title.size_flags_stretch_ratio = 1.0
 		title.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		title.clip_text = true
+		title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		title.toggle_mode = true
 		title.button_pressed = (i == selected)
-		title.tooltip_text = "Apply this asset"
+		title.tooltip_text = "%s\nApply this asset" % full_label
 		var idx := i
 		title.pressed.connect(func() -> void:
 			if _rebuilding:
@@ -766,14 +806,18 @@ func _rebuild_list(container: VBoxContainer, entries: Array[Dictionary], tab: in
 		row.add_child(title)
 		var replace := Button.new()
 		replace.text = "↻"
-		replace.custom_minimum_size = Vector2(36, 0)
+		replace.custom_minimum_size = Vector2(36, 28)
+		replace.size_flags_horizontal = Control.SIZE_SHRINK_END
+		replace.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		replace.tooltip_text = "Replace this item with another file"
 		replace.disabled = (tab == TAB_LIGHT)
 		replace.pressed.connect(func() -> void: _pick_replace(tab, idx))
 		row.add_child(replace)
 		var del := Button.new()
 		del.text = "✕"
-		del.custom_minimum_size = Vector2(32, 0)
+		del.custom_minimum_size = Vector2(32, 28)
+		del.size_flags_horizontal = Control.SIZE_SHRINK_END
+		del.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		del.tooltip_text = "Remove from this list"
 		del.pressed.connect(func() -> void: _remove_entry(tab, idx))
 		row.add_child(del)
@@ -1070,6 +1114,12 @@ func cycle_scatter(delta_i: int) -> void:
 	## Gamepad / hotkey: cycle Scatter list and apply.
 	_ensure_stage()
 	_step_tab(TAB_SCATTER, delta_i)
+
+
+func cycle_lighting(delta_i: int) -> void:
+	## Gamepad / hotkey: cycle Lighting / HDRI list and apply.
+	_ensure_stage()
+	_step_tab(TAB_LIGHT, delta_i)
 
 
 func toggle_tab_play() -> void:

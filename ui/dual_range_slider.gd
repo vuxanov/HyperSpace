@@ -35,7 +35,9 @@ const TRACK_H := 6.0
 			high_value = low_value
 		queue_redraw()
 
-## If true, thumbs are independent (low=Active, high=Inactive) and may cross.
+## If true, thumbs are independent and may cross.
+## Schedule convention (when used for gates): low = Active seconds, high = Inactive.
+## Prefer ScheduleSecondsPair for Active/Inactive — clearer labeled sliders.
 @export var independent: bool = false
 
 var _grab: int = -1  # 0=low, 1=high, -1=none

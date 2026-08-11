@@ -166,10 +166,17 @@ layout_mode = 2
 
 [node name="AffectRotation" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
 layout_mode = 2
-button_pressed = true
+button_pressed = false
 text = "Rotation"
 
 [node name="RotationSource" type="OptionButton" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+
+[node name="RotationTargetLabel" type="Label" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+text = "Rotation affects"
+
+[node name="RotationTarget" type="OptionButton" parent="Margin/Scroll/Column/Targets"]
 layout_mode = 2
 
 [node name="RotationAmountLabel" type="Label" parent="Margin/Scroll/Column/Targets"]
@@ -181,7 +188,7 @@ layout_mode = 2
 min_value = 0.0
 max_value = 200.0
 step = 1.0
-value = 20.0
+value = 1.0
 allow_greater = true
 
 [node name="RotationAxisRow" type="HBoxContainer" parent="Margin/Scroll/Column/Targets"]

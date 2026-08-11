@@ -25,7 +25,7 @@ func _ready() -> void:
 	add_child(_texture_rect)
 	_sub_viewport = SubViewport.new()
 	_sub_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	_sub_viewport.size = Vector2i(1920, 1080)
+	_sub_viewport.size = Vector2i(1280, 720)
 	# Isolated 3D world so WorldEnvironment / HDRI sky actually apply as background.
 	_sub_viewport.own_world_3d = true
 	_sub_viewport.transparent_bg = false
@@ -33,6 +33,28 @@ func _ready() -> void:
 	add_child(_sub_viewport)
 	if not _pending_path.is_empty() or _pending_params.size() > 0:
 		_load_scene(_pending_path, _pending_params)
+	call_deferred("_sync_viewport_size")
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_RESIZED:
+		_sync_viewport_size()
+
+
+func _sync_viewport_size() -> void:
+	if _sub_viewport == null:
+		return
+	var sx := int(size.x)
+	var sy := int(size.y)
+	if sx < 64 or sy < 64:
+		return
+	# Match panel size but soft-cap fill rate for post-FX stack.
+	var target := Vector2i(clampi(sx, 640, 1600), clampi(sy, 360, 900))
+	# Keep ~16:9-ish when panel is weirdly tall/wide.
+	if float(target.x) / float(maxi(target.y, 1)) > 2.2:
+		target.x = int(target.y * 16.0 / 9.0)
+	if _sub_viewport.size != target:
+		_sub_viewport.size = target
 
 
 func _gui_input(event: InputEvent) -> void:
@@ -113,8 +135,12 @@ func _create_fallback_environment(params: Dictionary) -> void:
 func set_flythrough_layer(layer_id: String, config: Dictionary) -> void:
 	_pending_params["style"] = "flythrough"
 	_pending_params[layer_id] = config.duplicate(true)
-	if _environment and _environment.has_method("set_layer_source"):
+	if _environment != null and _environment.has_method("set_layer_source"):
 		_environment.call("set_layer_source", layer_id, config)
+		return
+	# Wrong / missing env (e.g. DemoEnvironment) — rebuild as flythrough so lighting/HDRI apply.
+	if _sub_viewport != null:
+		_load_scene(_pending_path, _pending_params)
 
 
 func set_layer_alpha(alpha: float) -> void:

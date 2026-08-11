@@ -12,12 +12,13 @@ var scale_z: bool = true
 var affect_light: bool = true
 ## Off by default — emission drive washes authored textures on hero/scatter/env models.
 var affect_emission: bool = false
-var affect_rotation: bool = true
+## Off by default — rotation amount is easy to overdrive on hero / env meshes.
+var affect_rotation: bool = false
 var rotation_x: bool = true
 var rotation_y: bool = true
 var rotation_z: bool = true
 ## Peak spin strength (UI: Rotation Amount). Scales reactive angular rate.
-var rotation_amount: float = 20.0
+var rotation_amount: float = 1.0
 var affect_noise: bool = false
 var scale_amount: float = 25.0
 ## World-unit displace strength (UI: Displace Strength).
@@ -30,6 +31,8 @@ var noise_z: bool = true
 var target: String = "all"  # centerpiece | scatter | environment | lights | all
 var particles_target: String = "all"
 var noise_target: String = "all"
+## Which layers reactive rotation influences (independent of global target).
+var rotation_target: String = "all"
 
 ## Per-property drivers: off | bass | mids | highs | kick | energy | lfo
 var scale_source: String = "bass"

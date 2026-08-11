@@ -2,7 +2,10 @@ extends VBoxContainer
 class_name ScheduleSecondsPair
 
 ## Two separate Active / Inactive second sliders with live readouts.
-## Replaces DualRange for schedule gates (clearer than dual thumbs).
+## Mapping (must match FxAutomation):
+##   Active slider   → seconds the effect/drive is ON
+##   Inactive slider → seconds the effect/drive is OFF
+## Then the cycle repeats. (DualRange leftover: low=active, high=inactive.)
 
 signal range_changed(active_sec: float, inactive_sec: float)
 

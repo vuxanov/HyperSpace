@@ -43,6 +43,7 @@ const FX_IDS := ["ascii", "particles", "feedback", "glitch", "chromatic", "pixel
 @onready var emission_schedule_host: VBoxContainer = $Margin/Scroll/Column/Targets/EmissionScheduleHost
 @onready var affect_rotation: CheckButton = $Margin/Scroll/Column/Targets/AffectRotation
 @onready var rotation_source: OptionButton = $Margin/Scroll/Column/Targets/RotationSource
+@onready var rotation_target: OptionButton = $Margin/Scroll/Column/Targets/RotationTarget
 @onready var rotation_amount_spin: SpinBox = $Margin/Scroll/Column/Targets/RotationAmountSpin
 @onready var rotation_x: CheckButton = $Margin/Scroll/Column/Targets/RotationAxisRow/RotationX
 @onready var rotation_y: CheckButton = $Margin/Scroll/Column/Targets/RotationAxisRow/RotationY
@@ -185,10 +186,10 @@ func _ready() -> void:
 	scale_z.button_pressed = bool(RH.get_field("scale_z", true))
 	affect_light.button_pressed = bool(RH.get_field("affect_light", true))
 	affect_emission.button_pressed = bool(RH.get_field("affect_emission", false))
-	affect_rotation.button_pressed = bool(RH.get_field("affect_rotation", true))
+	affect_rotation.button_pressed = bool(RH.get_field("affect_rotation", false))
 	affect_noise.button_pressed = bool(RH.get_field("affect_noise", false))
 	scale_amount_spin.value = RH.scale_amount()
-	rotation_amount_spin.value = float(RH.get_field("rotation_amount", 20.0))
+	rotation_amount_spin.value = float(RH.get_field("rotation_amount", 1.0))
 	rotation_x.button_pressed = bool(RH.get_field("rotation_x", true))
 	rotation_y.button_pressed = bool(RH.get_field("rotation_y", true))
 	rotation_z.button_pressed = bool(RH.get_field("rotation_z", true))
@@ -222,6 +223,13 @@ func _ready() -> void:
 	noise_target.add_item("Environment", 3)
 	noise_target.add_item("Lights", 4)
 	_select_noise_target(str(RH.get_field("noise_target", "all")))
+	rotation_target.clear()
+	rotation_target.add_item("Everything", 0)
+	rotation_target.add_item("Main character", 1)
+	rotation_target.add_item("Scatter", 2)
+	rotation_target.add_item("Environment", 3)
+	rotation_target.add_item("Lights", 4)
+	_select_rotation_target(str(RH.get_field("rotation_target", "all")))
 
 	reactivity_toggle.toggled.connect(_on_reactivity_toggled)
 	intensity_slider.value_changed.connect(func(v: float) -> void: AudioAnalyzer.master_intensity = v)
@@ -244,6 +252,7 @@ func _ready() -> void:
 	light_source.item_selected.connect(func(i: int) -> void: RH.set_field("light_source", DRIVER_IDS[i]))
 	noise_source.item_selected.connect(func(i: int) -> void: RH.set_field("noise_source", DRIVER_IDS[i]))
 	noise_target.item_selected.connect(_on_noise_target_selected)
+	rotation_target.item_selected.connect(_on_rotation_target_selected)
 	noise_amount.value_changed.connect(func(v: float) -> void: RH.set_field("noise_amount", v))
 	noise_scale.value_changed.connect(func(v: float) -> void: RH.set_field("noise_scale", v))
 	noise_x.toggled.connect(func(v: bool) -> void: RH.set_field("noise_x", v))
@@ -510,6 +519,8 @@ func _sync_conditional_ui() -> void:
 
 	var rotation_on := react_on and affect_rotation.button_pressed
 	rotation_source.visible = rotation_on
+	$Margin/Scroll/Column/Targets/RotationTargetLabel.visible = rotation_on
+	rotation_target.visible = rotation_on
 	$Margin/Scroll/Column/Targets/RotationAmountLabel.visible = rotation_on
 	rotation_amount_spin.visible = rotation_on
 	$Margin/Scroll/Column/Targets/RotationAxisRow.visible = rotation_on
@@ -598,6 +609,20 @@ func _select_noise_target(t: String) -> void:
 			noise_target.select(0)
 
 
+func _select_rotation_target(t: String) -> void:
+	match t:
+		"centerpiece", "foreground", "main":
+			rotation_target.select(1)
+		"scatter":
+			rotation_target.select(2)
+		"environment":
+			rotation_target.select(3)
+		"lights", "light":
+			rotation_target.select(4)
+		_:
+			rotation_target.select(0)
+
+
 func _on_particles_target_selected(index: int) -> void:
 	var t := "all"
 	match index:
@@ -632,6 +657,20 @@ func _on_noise_target_selected(index: int) -> void:
 		4:
 			t = "lights"
 	RH.set_field("noise_target", t)
+
+
+func _on_rotation_target_selected(index: int) -> void:
+	var t := "all"
+	match index:
+		1:
+			t = "centerpiece"
+		2:
+			t = "scatter"
+		3:
+			t = "environment"
+		4:
+			t = "lights"
+	RH.set_field("rotation_target", t)
 
 
 func _on_affect_scale(enabled: bool) -> void:

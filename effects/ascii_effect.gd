@@ -92,12 +92,13 @@ func _ready() -> void:
 	_rect.material = mat
 	add_child(_rect)
 	visible = false
-	set_process(true)
+	set_process(false)
 	apply_preset("Standard")
 
 
 func _process(delta: float) -> void:
 	if not enabled:
+		set_process(false)
 		return
 	_lfo_phase = fposmod(_lfo_phase + delta * maxf(_lfo_rate, 0.05), 1.0)
 	if normalize_drive_mode(drive_mode) == "lfo":
@@ -117,22 +118,26 @@ func apply_params(params: Dictionary) -> void:
 	super.apply_params(params)
 	_apply_shader_params(params)
 	_sync_visibility()
+	set_process(enabled and normalize_drive_mode(drive_mode) == "lfo")
 
 
 func set_active(is_on: bool) -> void:
 	enabled = is_on
 	_sync_visibility()
+	set_process(is_on and normalize_drive_mode(drive_mode) == "lfo")
 
 
 func apply_audio_state(state: AudioState) -> void:
 	if not enabled:
 		_sync_visibility()
+		set_process(false)
 		return
 	_sync_visibility()
 	var mat := _shader_mat()
 	if mat == null:
 		return
 	var mode := normalize_drive_mode(drive_mode)
+	set_process(mode == "lfo")
 	if mode == "lfo":
 		_apply_density_from_lfo()
 		return

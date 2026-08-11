@@ -2,12 +2,30 @@ extends Object
 
 ## Typed access to the ReactivitySettings autoload + driver resolution.
 
+static var _cached_node: Node = null
+static var _cached_director: Node = null
+
 
 static func node() -> Node:
+	if is_instance_valid(_cached_node):
+		return _cached_node
 	var tree := Engine.get_main_loop() as SceneTree
 	if tree == null or tree.root == null:
+		_cached_node = null
 		return null
-	return tree.root.get_node_or_null("ReactivitySettings")
+	_cached_node = tree.root.get_node_or_null("ReactivitySettings")
+	return _cached_node
+
+
+static func _director() -> Node:
+	if is_instance_valid(_cached_director):
+		return _cached_director
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree == null or tree.root == null:
+		_cached_director = null
+		return null
+	_cached_director = tree.root.get_node_or_null("ShowDirector")
+	return _cached_director
 
 
 static func enabled() -> bool:
@@ -32,7 +50,7 @@ static func affect_emission() -> bool:
 
 static func affect_rotation() -> bool:
 	var n := node()
-	return bool(n.get("affect_rotation")) if n else true
+	return bool(n.get("affect_rotation")) if n else false
 
 
 static func affect_noise() -> bool:
@@ -47,7 +65,7 @@ static func scale_amount() -> float:
 
 static func rotation_amount() -> float:
 	var n := node()
-	return float(n.get("rotation_amount")) if n else 20.0
+	return float(n.get("rotation_amount")) if n else 1.0
 
 
 static func noise_amount() -> float:
@@ -76,6 +94,11 @@ static func target() -> String:
 static func noise_target() -> String:
 	var n := node()
 	return str(n.get("noise_target")) if n else "all"
+
+
+static func rotation_target() -> String:
+	var n := node()
+	return str(n.get("rotation_target")) if n else "all"
 
 
 static func scale_x() -> bool:
@@ -211,10 +234,7 @@ static func particles_target() -> String:
 
 
 static func particles_applies_to(layer_id: String) -> bool:
-	var tree := Engine.get_main_loop() as SceneTree
-	if tree == null or tree.root == null:
-		return false
-	var director := tree.root.get_node_or_null("ShowDirector")
+	var director := _director()
 	if director == null or not bool(director.call("get_effect_enabled", "particles")):
 		return false
 	return _layer_matches_target(particles_target(), layer_id)
@@ -226,6 +246,14 @@ static func noise_applies_to(layer_id: String) -> bool:
 	if source_for("noise") == "off":
 		return false
 	return _layer_matches_target(noise_target(), layer_id)
+
+
+static func rotation_applies_to(layer_id: String) -> bool:
+	if not enabled() or not affect_rotation():
+		return false
+	if source_for("rotation") == "off":
+		return false
+	return _layer_matches_target(rotation_target(), layer_id)
 
 
 static func _layer_matches_target(t: String, layer_id: String) -> bool:
@@ -259,26 +287,22 @@ static func schedule_gate_id(property: String) -> String:
 
 
 ## True when schedule is off (always active) or currently in the Active window.
+## Active/Inactive seconds come from ScheduleSecondsPair → FxAutomation gates
+## (open for exactly active_sec, closed for inactive_sec, then repeat).
 static func schedule_open(property: String) -> bool:
-	var tree := Engine.get_main_loop() as SceneTree
-	if tree == null or tree.root == null:
-		return true
-	var director := tree.root.get_node_or_null("ShowDirector")
+	var director := _director()
 	if director == null:
 		return true
 	var fx = director.get("fx_automation")
 	if fx == null or not fx.has_method("is_gate_open"):
 		return true
 	var gate_id := schedule_gate_id(property)
-	# Disabled gate ⇒ always open. Enabled + timer outside Active ⇒ muted.
+	# Disabled gate ⇒ always open. Enabled + phase ≥ active_sec ⇒ muted.
 	return bool(fx.call("is_gate_open", gate_id))
 
 
 static func schedule_enabled(property: String) -> bool:
-	var tree := Engine.get_main_loop() as SceneTree
-	if tree == null or tree.root == null:
-		return false
-	var director := tree.root.get_node_or_null("ShowDirector")
+	var director := _director()
 	if director == null:
 		return false
 	var fx = director.get("fx_automation")

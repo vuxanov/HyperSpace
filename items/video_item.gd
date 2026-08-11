@@ -6,12 +6,20 @@ const RH = preload("res://core/reactivity_hub.gd")
 var item_id: String = ""
 var item_loop: bool = false
 var _player: VideoStreamPlayer
+var _fallback: TextureRect
 var _alpha: float = 1.0
 var _pending_path: String = ""
 
 
 func _ready() -> void:
 	set_anchors_preset(PRESET_FULL_RECT)
+	_fallback = TextureRect.new()
+	_fallback.set_anchors_preset(PRESET_FULL_RECT)
+	_fallback.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_fallback.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_fallback.visible = false
+	_fallback.modulate = Color(0.42, 0.08, 0.1, 1.0)
+	add_child(_fallback)
 	_player = VideoStreamPlayer.new()
 	_player.set_anchors_preset(PRESET_FULL_RECT)
 	_player.expand = true
@@ -32,12 +40,31 @@ func configure(item: PlaylistItem) -> void:
 func _apply_path(path: String) -> void:
 	if path.is_empty():
 		return
-	if ResourceLoader.exists(path):
-		_player.stream = load(path)
-	elif FileAccess.file_exists(path):
-		_player.stream = load(path)
+	_fallback.visible = false
+	_player.visible = true
+	var stream := MediaImport.load_video_stream(path)
+	if stream != null:
+		_player.stream = stream
+		return
+	# GIF / failed video → still or animated texture fallback (never blank white).
+	var tex: Texture2D = null
+	if path.get_extension().to_lower() == "gif":
+		tex = MediaImport.load_gif_texture(path)
 	else:
-		push_warning("VideoItem: missing file %s" % path)
+		tex = MediaImport.load_texture(path)
+	if tex != null:
+		_player.stream = null
+		_player.visible = false
+		_fallback.texture = tex
+		_fallback.modulate = Color.WHITE
+		_fallback.visible = true
+		return
+	push_warning("VideoItem: missing or unplayable file %s" % path)
+	_player.stream = null
+	_player.visible = false
+	_fallback.texture = null
+	_fallback.modulate = Color(0.42, 0.08, 0.1, 1.0)
+	_fallback.visible = true
 
 
 func set_layer_alpha(alpha: float) -> void:
@@ -58,7 +85,7 @@ func apply_audio_state(state: AudioState) -> void:
 		var sy := amt if RH.scale_y() else 1.0
 		scale = Vector2(sx, sy)
 	if RH.affect_emission():
-		var g := 1.0 + state.mids * 0.6
+		var g := 1.0 + state.mids * 0.35
 		modulate = Color(g, g, g, _alpha)
 
 

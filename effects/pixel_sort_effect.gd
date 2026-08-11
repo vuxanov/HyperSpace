@@ -17,11 +17,12 @@ func _ready() -> void:
 		mat.set_shader_parameter("threshold", 0.45)
 		mat.set_shader_parameter("stretch", 0.55)
 	visible = false
-	set_process(true)
+	set_process(false)
 
 
 func _process(delta: float) -> void:
 	if not enabled:
+		set_process(false)
 		return
 	_time += delta
 	var mat := _mat()
@@ -34,19 +35,23 @@ func set_active(is_on: bool) -> void:
 	visible = is_on
 	if _rect:
 		_rect.visible = is_on
+	set_process(is_on)
 
 
 func apply_params(params: Dictionary) -> void:
 	super.apply_params(params)
 	_apply_shader(params)
 	visible = enabled
+	set_process(enabled)
 
 
 func apply_audio_state(state: AudioState) -> void:
 	if not enabled:
 		visible = false
+		set_process(false)
 		return
 	visible = true
+	set_process(true)
 	var mat := _mat()
 	if mat:
 		mat.set_shader_parameter("audio_drive", resolve_drive(state.mids))
@@ -66,6 +71,7 @@ func apply_modulator(mod01: float) -> void:
 func _on_params_changed(params: Dictionary) -> void:
 	_apply_shader(params)
 	visible = enabled
+	set_process(enabled)
 
 
 func _apply_shader(params: Dictionary) -> void:

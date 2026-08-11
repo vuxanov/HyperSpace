@@ -43,9 +43,10 @@ float vnoise(vec3 p) {
 }
 
 float fbm(vec3 p) {
+	// 2 octaves — was 4; vertex cost dominates on large envs / scatter.
 	float a = 0.0;
-	float amp = 0.55;
-	for (int i = 0; i < 4; i++) {
+	float amp = 0.65;
+	for (int i = 0; i < 2; i++) {
 		a += (vnoise(p) * 2.0 - 1.0) * amp;
 		p = p * 2.07 + vec3(1.7, 9.2, 2.3);
 		amp *= 0.5;

@@ -2,18 +2,41 @@ extends Node3D
 class_name FlythroughMediaProp
 
 ## Reusable 3D media screen — still image, GIF, or looping video on a quad.
+## Uses preloaded emission shader (hint_default_black) so unbound samples are never white.
+## Video frames come from MediaVideoPool (shared decode + throttled ImageTexture blit).
+## GIF frames cycle manually into ImageTexture (AnimatedTexture does not animate as a shader uniform).
 
 
 const DEFAULT_HEIGHT := 1.0
-const VIDEO_VIEW_SIZE := Vector2i(1280, 720)
+## Dim LDR so ACES does not blow screen content.
+const EXPOSURE_COMP := 0.72
+const FALLBACK_CHARCOAL := Color(0.08, 0.08, 0.1)
+const FALLBACK_ERROR := Color(0.42, 0.08, 0.1)
+## Soft cap GIF frame rate when source delays are tiny.
+const GIF_MIN_FRAME_DUR := 0.04
+
+const _MEDIA_SHADER: Shader = preload("res://effects/media_screen.gdshader")
+const _VideoPool = preload("res://core/media_video_pool.gd")
 
 var _mesh_inst: MeshInstance3D
-var _viewport: SubViewport
-var _player: VideoStreamPlayer
-var _mat: StandardMaterial3D
+var _mat: ShaderMaterial
 var _loop: bool = true
 var _source_path: String = ""
 var _play_path: String = ""
+var _video_pool_key: String = ""
+var _billboard: bool = false
+var _needs_video_process: bool = false
+var _bound_tex: Texture2D = null
+var _bound_aspect: float = 16.0 / 9.0
+var _use_error_fallback: bool = false
+
+## Manual GIF animation (shader-safe). Shared ImageTextures from MediaImport cache.
+var _gif_frames: Array[ImageTexture] = []
+var _gif_durations: Array[float] = []
+var _gif_index: int = 0
+var _gif_elapsed: float = 0.0
+var _gif_bound_index: int = -1
+var _needs_gif_process: bool = false
 
 
 static func spawn(parent: Node3D, path: String, opts: Dictionary = {}) -> Node3D:
@@ -33,28 +56,48 @@ static func spawn(parent: Node3D, path: String, opts: Dictionary = {}) -> Node3D
 func setup(path: String, opts: Dictionary = {}) -> void:
 	_source_path = path
 	_loop = bool(opts.get("loop", true))
-	var billboard := bool(opts.get("billboard", false))
+	_billboard = bool(opts.get("billboard", false))
 	var height := float(opts.get("height", DEFAULT_HEIGHT))
-	_ensure_mesh(height, billboard)
+	_ensure_mesh(height, _billboard)
+	_show_fallback(false)
+	_release_video()
+	_gif_frames.clear()
+	_gif_durations.clear()
+	_needs_gif_process = false
+	_needs_video_process = false
+	_gif_bound_index = -1
 	var media_type := MediaImport.detect_type(path)
 	if media_type.is_empty():
 		push_warning("FlythroughMediaProp: unsupported media %s" % path)
+		_show_fallback(true)
 		return
 	_play_path = MediaImport.prepare_path(path, media_type)
 	var play_ext := _play_path.get_extension().to_lower()
+	var ok := false
 	if media_type == "video" or play_ext in ["ogv", "webm", "mp4", "mov", "avi"]:
-		if not _try_bind_video(_play_path):
-			_try_bind_still(_play_path if media_type != "gif" else path)
+		ok = _try_bind_video(_play_path)
+		if not ok and media_type == "gif":
+			ok = _try_bind_gif_frames(path)
+		if not ok:
+			ok = _try_bind_still(_play_path if media_type != "gif" else path)
 	elif media_type == "gif":
-		if play_ext in ["ogv", "webm", "mp4"] and _try_bind_video(_play_path):
-			pass
-		else:
-			_try_bind_still(path)
+		# Native frame cycling is reliable without ffmpeg; ogv is optional.
+		ok = _try_bind_gif_frames(path)
+		if not ok and play_ext in ["ogv", "webm", "mp4"]:
+			ok = _try_bind_video(_play_path)
+		if not ok:
+			ok = _try_bind_still(path)
 	else:
-		_try_bind_still(_play_path)
+		ok = _try_bind_still(_play_path)
+	if not ok:
+		push_warning("FlythroughMediaProp: failed to bind media %s" % path)
+		_show_fallback(true)
+	else:
+		# Re-apply after the mesh is fully in the Scene3D SubViewport tree.
+		call_deferred("_rebind_texture")
 
 
-func get_shared_material() -> StandardMaterial3D:
+func get_shared_material() -> Material:
 	return _mat
 
 
@@ -72,6 +115,8 @@ func make_mesh_clone(parent: Node3D) -> MeshInstance3D:
 	clone.mesh = _mesh_inst.mesh
 	clone.material_override = _mat
 	clone.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	clone.set_meta("media_screen", true)
+	clone.rotation = _mesh_inst.rotation
 	parent.add_child(clone)
 	return clone
 
@@ -79,31 +124,69 @@ func make_mesh_clone(parent: Node3D) -> MeshInstance3D:
 func _ensure_mesh(height: float, billboard: bool) -> void:
 	if _mesh_inst != null:
 		return
-	_mat = StandardMaterial3D.new()
-	_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
-	_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	if billboard:
-		_mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	_mat = ShaderMaterial.new()
+	_mat.shader = _MEDIA_SHADER
+	_mat.set_shader_parameter("exposure_comp", EXPOSURE_COMP)
+	_mat.set_shader_parameter("modulate", Color(1, 1, 1, 1))
+	_mat.set_shader_parameter("has_tex", 0.0)
+	_mat.set_shader_parameter("use_billboard", 1.0 if billboard else 0.0)
+	_mat.set_shader_parameter("fallback_rgb", Vector3(FALLBACK_CHARCOAL.r, FALLBACK_CHARCOAL.g, FALLBACK_CHARCOAL.b))
+	_mat.set_shader_parameter("tex_albedo", null)
+	_mat.render_priority = 16
 	var quad := QuadMesh.new()
 	quad.size = Vector2(height * (16.0 / 9.0), height)
 	_mesh_inst = MeshInstance3D.new()
 	_mesh_inst.mesh = quad
 	_mesh_inst.material_override = _mat
 	_mesh_inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_mesh_inst.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+	_mesh_inst.set_meta("media_screen", true)
+	# Quad faces +Z; camera-matched parent looks along -Z — flip when not billboarded.
+	if not billboard:
+		_mesh_inst.rotation_degrees.y = 180.0
 	add_child(_mesh_inst)
 
 
-func _set_albedo(tex: Texture2D, aspect: float = -1.0) -> void:
+func _show_fallback(is_error: bool) -> void:
+	_use_error_fallback = is_error
+	_bound_tex = null
+	if _mat == null:
+		return
+	var c := FALLBACK_ERROR if is_error else FALLBACK_CHARCOAL
+	_mat.set_shader_parameter("has_tex", 0.0)
+	_mat.set_shader_parameter("tex_albedo", null)
+	_mat.set_shader_parameter("fallback_rgb", Vector3(c.r, c.g, c.b))
+	_mat.set_shader_parameter("exposure_comp", 1.0 if is_error else EXPOSURE_COMP)
+	_mat.set_shader_parameter("modulate", Color(1, 1, 1, 1))
+
+
+func _set_screen_texture(tex: Texture2D, aspect: float = -1.0) -> void:
 	if _mat == null or tex == null:
 		return
-	_mat.albedo_texture = tex
-	_mat.albedo_color = Color.WHITE
-	if aspect > 0.01 and _mesh_inst and _mesh_inst.mesh is QuadMesh:
+	_bound_tex = tex
+	_use_error_fallback = false
+	if aspect > 0.01:
+		_bound_aspect = aspect
+	_mat.set_shader_parameter("tex_albedo", tex)
+	_mat.set_shader_parameter("has_tex", 1.0)
+	_mat.set_shader_parameter("exposure_comp", EXPOSURE_COMP)
+	_mat.set_shader_parameter("modulate", Color(1, 1, 1, 1))
+	_mat.set_shader_parameter("fallback_rgb", Vector3(FALLBACK_CHARCOAL.r, FALLBACK_CHARCOAL.g, FALLBACK_CHARCOAL.b))
+	if _bound_aspect > 0.01 and _mesh_inst and _mesh_inst.mesh is QuadMesh:
 		var q := _mesh_inst.mesh as QuadMesh
 		var h := q.size.y
-		q.size = Vector2(h * aspect, h)
+		q.size = Vector2(h * _bound_aspect, h)
+
+
+func _rebind_texture() -> void:
+	if _mat == null:
+		return
+	if _bound_tex != null:
+		_set_screen_texture(_bound_tex, _bound_aspect)
+	elif _use_error_fallback:
+		_show_fallback(true)
+	else:
+		_show_fallback(false)
 
 
 func _try_bind_still(path: String) -> bool:
@@ -115,42 +198,113 @@ func _try_bind_still(path: String) -> bool:
 	var sz := tex.get_size()
 	if sz.y > 0.0:
 		aspect = sz.x / sz.y
-	_set_albedo(tex, aspect)
+	_set_screen_texture(tex, aspect)
 	return true
+
+
+func _try_bind_gif_frames(path: String) -> bool:
+	var anim := MediaImport.load_gif_animation(path)
+	if not bool(anim.get("ok", false)):
+		return false
+	var frames: Array = anim.get("frames", [])
+	var durs: Array = anim.get("durations", [])
+	if frames.is_empty():
+		return false
+	_gif_frames.clear()
+	_gif_durations.clear()
+	for i in frames.size():
+		if frames[i] is ImageTexture:
+			_gif_frames.append(frames[i] as ImageTexture)
+			_gif_durations.append(float(durs[i]) if i < durs.size() else 0.08)
+	if _gif_frames.is_empty():
+		return false
+	_gif_index = 0
+	_gif_elapsed = 0.0
+	_gif_bound_index = -1
+	var first := _gif_frames[0]
+	var aspect := 16.0 / 9.0
+	var sz := first.get_size()
+	if sz.y > 0.0:
+		aspect = sz.x / sz.y
+	_set_screen_texture(first, aspect)
+	_gif_bound_index = 0
+	if _gif_frames.size() > 1:
+		_needs_gif_process = true
+		set_process(true)
+	return true
+
+
+func _try_bind_gif(path: String) -> bool:
+	return _try_bind_gif_frames(path)
 
 
 func _try_bind_video(path: String) -> bool:
 	var stream := MediaImport.load_video_stream(path)
 	if stream == null:
 		return false
-	if _viewport == null:
-		_viewport = SubViewport.new()
-		_viewport.name = "MediaViewport"
-		_viewport.size = VIDEO_VIEW_SIZE
-		_viewport.disable_3d = true
-		_viewport.transparent_bg = true
-		_viewport.handle_input_locally = false
-		_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-		add_child(_viewport)
-	if _player == null:
-		_player = VideoStreamPlayer.new()
-		_player.name = "VideoPlayer"
-		_player.expand = true
-		_player.size = Vector2(VIDEO_VIEW_SIZE)
-		_player.autoplay = false
-		_player.finished.connect(_on_video_finished)
-		_viewport.add_child(_player)
-	_player.stream = stream
-	_player.play()
-	_set_albedo(_viewport.get_texture(), 16.0 / 9.0)
+	var got: Dictionary = _VideoPool.acquire(path, stream, _loop)
+	if not bool(got.get("ok", false)):
+		return false
+	_video_pool_key = str(got.get("key", path))
+	var frame_tex: ImageTexture = got.get("frame_tex") as ImageTexture
+	if frame_tex == null:
+		_VideoPool.release(_video_pool_key)
+		_video_pool_key = ""
+		return false
+	var aspect := float(got.get("aspect", 16.0 / 9.0))
+	_set_screen_texture(frame_tex, aspect)
+	_needs_video_process = true
+	set_process(true)
 	return true
 
 
-func _on_video_finished() -> void:
-	if _loop and _player != null and _player.stream != null:
-		_player.play()
+func _release_video() -> void:
+	if not _video_pool_key.is_empty():
+		_VideoPool.release(_video_pool_key)
+		_video_pool_key = ""
+	_needs_video_process = false
+
+
+func _advance_gif(delta: float) -> void:
+	if _gif_frames.size() <= 1:
+		return
+	_gif_elapsed += delta
+	var dur := _gif_durations[_gif_index] if _gif_index < _gif_durations.size() else 0.08
+	dur = maxf(dur, GIF_MIN_FRAME_DUR)
+	var changed := false
+	while _gif_elapsed >= dur:
+		_gif_elapsed -= dur
+		_gif_index = (_gif_index + 1) % _gif_frames.size()
+		changed = true
+		dur = _gif_durations[_gif_index] if _gif_index < _gif_durations.size() else 0.08
+		dur = maxf(dur, GIF_MIN_FRAME_DUR)
+	if changed and _gif_index != _gif_bound_index:
+		_gif_bound_index = _gif_index
+		# Shared material: only swap the texture uniform (clones already share _mat).
+		_mat.set_shader_parameter("tex_albedo", _gif_frames[_gif_index])
+		_bound_tex = _gif_frames[_gif_index]
+
+
+func _process(delta: float) -> void:
+	if _needs_gif_process:
+		_advance_gif(delta)
+	if _needs_video_process:
+		_VideoPool.tick(delta)
+		# Keep aspect in sync if the first real frame differs from seed.
+		if not _video_pool_key.is_empty():
+			var a := _VideoPool.aspect_for(_video_pool_key)
+			if absf(a - _bound_aspect) > 0.01 and _mesh_inst and _mesh_inst.mesh is QuadMesh:
+				_bound_aspect = a
+				var q := _mesh_inst.mesh as QuadMesh
+				var h := q.size.y
+				q.size = Vector2(h * _bound_aspect, h)
 
 
 func _exit_tree() -> void:
-	if _player != null:
-		_player.stop()
+	set_process(false)
+	_needs_video_process = false
+	_needs_gif_process = false
+	_gif_frames.clear()
+	_gif_durations.clear()
+	_release_video()
+	_bound_tex = null

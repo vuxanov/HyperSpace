@@ -1,4 +1,68 @@
-# HyperSpace Issue Log
+﻿# HyperSpace Issue Log
+
+## 2026-08-11 — Performance: media + FX janky / slow
+
+**Issues:** Show runs but feels slow/janky with GIFs, video screens, post-FX, noise, particles.
+
+**Findings (likely hotspots):**
+1. Video media_prop calls `Texture2D.get_image()` every frame at 1280×720 — full GPU readback/sync.
+2. Feedback LFX does the same every `frame_post_draw` at full output resolution.
+3. GIF decode uses per-pixel `set_pixel` (very slow); no cache/downscale; up to 180 full-res frames × textures.
+4. Noise deform re-collects all MeshInstance3Ds and updates shader params every audio tick; FBM uses 4 octaves × 4 noise evals per vertex.
+5. Particle `amount` rewritten every audio frame (forces GPUParticles rebuild); beat `restart()`; high caps (1600–2000).
+6. ReactivityHub does SceneTree node lookups for nearly every settings read.
+7. Disabled glitch/pixel_sort still `set_process(true)` forever.
+8. Scatter media already shares material via clones (good); still allow up to 80 clones + full-cost master decode.
+
+**Plan:**
+1. Throttle + downscale video frame pulls; share video decode host per path.
+2. Cache/downscale/cap GIF frames; faster packed-byte blit in GifDecoder.
+3. Throttle/shrink feedback history capture.
+4. Cache noise mesh lists; cheaper noise shader; lower mesh limit.
+5. Stabilize particle amounts; lower caps; throttle beat restarts.
+6. Cache ReactivitySettings node; disable FX `_process` when off; cap media scatter count.
+
+**Resolution:**
+1. Video: `MediaVideoPool` shares one 640×360 decode + ImageTexture per path; pull capped ~18 Hz (was 1280×720 every frame).
+2. GIF: path cache, ≤512px / ≤90 frames, packed-byte blit in GifDecoder, min frame dur 0.04s; scatter material still shared via clones.
+3. Feedback: capture every 2nd frame, history resized ≤640.
+4. Noise: 2-octave FBM, mesh-list cache, ≤48 meshes.
+5. Particles: lower caps, amount hysteresis, beat restart cool-down.
+6. ReactivityHub node/director cache; FX `_process` off when disabled; Scene3D viewport matches panel ≤1600×900; media scatter ≤24.
+
+## 2026-08-11 — GIFs red / not animated; playlist delete clipped; rotation defaults
+
+**Issues:**
+1. Still images work, but GIFs show as **red** error placeholder (bind failure). Videos may also fail / stay static. Need visible **animated** GIFs and playing mp4/webm/ogv on 3D media screens.
+2. Playlist row delete is clipped/unreachable when asset names are long — cannot remove media items.
+3. Rotation amount default is **20** (too strong); rotation is **on by default**. Need default amount **1**, affect_rotation = false, and a **rotation target** chooser (everything / hero / environment / scatter / lights) like noise.
+
+**Causes / plan:**
+1. MediaImport depended on ffmpeg; without it GIF bind failed (red). AnimatedTexture does not animate as a spatial shader uniform. Fix: native GifDecoder + ImageTexture frame cycling; tools/ffmpeg for video→ogv.
+2. Title button expand pushed replace/delete off-row. Fix: middle-ellipsis, clip_text, fixed-width shrink-end buttons.
+3. Change defaults; add rotation_target + rotation_applies_to; UI OptionButton; wire flythrough.
+
+**Resolution:**
+1. GIF/video: Added core/gif_decoder.gd. media_prop cycles frames into ImageTexture. MediaImport finds tools/ffmpeg/ffmpeg.exe for mp4/webm→ogv. Portable ffmpeg installed locally (gitignored).
+2. Playlist delete: Middle-ellipsis labels, clip_text, fixed-width replace/delete buttons.
+3. Rotation: Defaults affect_rotation=false, rotation_amount=1; added rotation_target chooser + rotation_applies_to in flythrough.
+
+## 2026-08-11 — media_prop Vector2!=Vector2i crash; media still white
+
+**Issues:**
+1. Runtime error at `media_prop.gd` ~284: `Invalid operands "Vector2" and "Vector2i" for "!=" operator`. Broke script load ? `ReactivitySettings` null.
+2. Uploaded images/GIFs/videos still appear solid white/light on 3D media screens.
+
+**Resolution:** Fixed Vector2i cast compare; emission media shader + ImageTexture video blit + error charcoal/red placeholder.
+
+## 2026-08-11 — Schedule Active/Inactive timing inaccurate; media still solid white
+
+**Issues:** Schedule timing drift; media white quads.
+**Resolution:** FxAutomation phase gate rewrite; dedicated media shader + root video host SubViewport.
+
+## 2026-08-11 — Images load but appear completely white / blown out
+
+**Resolution:** Media screen emission shader, EXPOSURE_COMP, media_screen skip for emission/noise.
 
 ## 2026-08-11 ? Active/Inactive dual-thumb unclear; LFX white / no-op
 

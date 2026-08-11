@@ -30,9 +30,8 @@ void fragment() {
 	float span = (8.0 + stretch * 28.0 + drive * 10.0);
 	float dir = (fract(sin(dot(floor(uv * vec2(1.0 / px.x, 1.0)), vec2(12.9898, 78.233)) + time_sec) * 43758.5453) > 0.5) ? 1.0 : -1.0;
 
-	vec3 a = sample_screen(uv + vec2(px.x * span * 0.25 * dir, 0.0));
-	vec3 b = sample_screen(uv + vec2(px.x * span * 0.55 * dir, 0.0));
-	vec3 c = sample_screen(uv + vec2(px.x * span * dir, 0.0));
+	vec3 a = sample_screen(uv + vec2(px.x * span * 0.4 * dir, 0.0));
+	vec3 b = sample_screen(uv + vec2(px.x * span * dir, 0.0));
 
 	vec3 sorted = src;
 	if (luma(a) > lum) {
@@ -40,9 +39,6 @@ void fragment() {
 	}
 	if (luma(b) > luma(sorted)) {
 		sorted = b;
-	}
-	if (luma(c) < thr) {
-		sorted = mix(sorted, src, 0.35);
 	}
 
 	float streak = stretch * drive * 0.4;

@@ -117,12 +117,12 @@ func _process(delta: float) -> void:
 		ring.position.z = -z
 		ring.rotate_z(delta * 0.4)
 	if _particles_mode:
-		if _particles and RH.applies_to("foreground") and RH.property_active("rotation"):
+		if _particles and RH.rotation_applies_to("centerpiece") and RH.property_active("rotation"):
 			_rotate_reactive(_particles, delta * _rotation_speed)
 		elif _particles and not RH.affect_rotation():
 			_particles.rotate_y(delta * 0.25)
 	elif _mesh:
-		if RH.applies_to("foreground") and RH.property_active("rotation"):
+		if RH.rotation_applies_to("centerpiece") and RH.property_active("rotation"):
 			_rotate_reactive(_mesh, delta * _rotation_speed)
 		elif not RH.affect_rotation():
 			_mesh.rotate_y(delta * 0.25)

@@ -57,18 +57,20 @@ func _apply_path(path: String) -> void:
 	if path.is_empty():
 		return
 	var tex: Texture2D = null
-	if ResourceLoader.exists(path):
-		tex = load(path) as Texture2D
-	elif FileAccess.file_exists(path):
-		var image := Image.load_from_file(path)
-		if image != null:
-			tex = ImageTexture.create_from_image(image)
+	if path.get_extension().to_lower() == "gif":
+		tex = MediaImport.load_gif_texture(path)
+	else:
+		tex = MediaImport.load_texture(path)
 	if tex == null:
 		push_warning("ImageItem: missing file %s" % path)
+		_texture_rect.texture = null
+		_texture_rect.modulate = Color(0.42, 0.08, 0.1, 1.0)
 		return
 	_texture_rect.texture = tex
+	_texture_rect.modulate = Color.WHITE
+	modulate = Color(1, 1, 1, _alpha)
 	if _particles:
-		_particles.texture = tex
+		_particles.texture = tex if not (tex is AnimatedTexture) else (tex as AnimatedTexture).get_frame_texture(0)
 
 
 func set_layer_alpha(alpha: float) -> void:
@@ -94,8 +96,11 @@ func apply_audio_state(state: AudioState) -> void:
 		)
 	if RH.property_active("emission"):
 		var ed := RH.drive_value("emission", state, lfo)
-		var glow := 1.0 + ed * 1.2
+		# Keep mild — high modulate blows the whole TextureRect to white.
+		var glow := 1.0 + ed * 0.25
 		modulate = Color(glow, glow, glow, _alpha)
+	else:
+		modulate = Color(1, 1, 1, _alpha)
 	if _particles_mode and _particles:
 		_particles.emitting = true
 		_particles.amount = clampi(int(100 + state.bass * 400), 80, 800)

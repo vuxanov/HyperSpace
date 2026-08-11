@@ -18,3 +18,9 @@ exports/
 # Media cache
 shows/**/content/*.webm.import
 shows/**/content/*.mp4.import
+
+# Portable ffmpeg (download into tools/ffmpeg/; too large for git)
+tools/ffmpeg/ffmpeg.exe
+tools/ffmpeg/ffprobe.exe
+tools/ffmpeg/*.zip
+tools/ffmpeg/extract/
