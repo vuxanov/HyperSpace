@@ -1,15 +1,42 @@
-﻿# HyperSpace Issue Log
+# HyperSpace Issue Log
 
-## 2026-08-11 — Performance: media + FX janky / slow
+## 2026-08-11 ? Asset switch hitch / multi-second freezes
+
+**Issues:** Every Env / Main / Scatter / Lighting change (manual apply or Play cycling) freezes the app for seconds. Transitions are not continuous.
+
+**Root causes (profiled):**
+1. Sync `load()` / `GLTFDocument.append_from_file` on main thread in `FlythroughLayerSlot` at apply time.
+2. Env apply cascades path rebuild + full scatter rebuild + AABB walks in the same frame.
+3. HDRI via sync `Image.load_from_file` + WorldEnvironment sky rebuild.
+4. Media: sync GIF decode / `OS.execute(ffmpeg)` video convert / ffmpeg path probe on apply.
+5. No path?PackedScene / texture cache ? cycling the same assets reloads from disk.
+6. Playlist UI `_rebuild_all_lists()` destroys/recreates every row on each apply (including during Play).
+
+**Plan:**
+1. Add `AssetCache` (path ? PackedScene / Texture2D) with `ResourceLoader.load_threaded_*` + worker-thread GLTF/HDRI parse; keep previous layer until ready.
+2. Isolate layer swaps; skip path rebuild when env AABB unchanged; stagger env?path?scatter across frames.
+3. Cache HDRI/textures; non-blocking video convert when ogv missing; cache ffmpeg path.
+4. Prefetch next Play items; skip full list rebuild during cycling (selection highlight only).
+5. Defer media bind when cache miss so first frame stays live.
+
+**Resolution:**
+1. Added `core/asset_cache.gd` + poll host: path?PackedScene/Texture2D cache, `ResourceLoader.load_threaded_*` for imports, WorkerThreadPool for runtime GLB/HDRI image loads.
+2. Flythrough layer swaps keep previous content until the new asset is ready; env?path?scatter is staggered; path rebuild skipped when AABB unchanged; scatter clones spawn ~4/frame.
+3. HDRI apply is async (no sync `Image.load_from_file` on apply); textures/GIF/ffmpeg path cached; video convert is fire-and-forget (`OS.create_process`) when ogv missing.
+4. Playlist Play: prefetch next 1?2 assets; selection highlight only (no full list rebuild) while autoplaying.
+
+**Remaining gaps:** First-ever cold load of a huge GLB can still cost a frame or two when packing finishes (then cached). Scatter still briefly empties before staggered fill. GIF decode remains main-thread (cached after first). FBX outside Godot import may still sync-fail until imported.
+
+## 2026-08-11 ? Performance: media + FX janky / slow
 
 **Issues:** Show runs but feels slow/janky with GIFs, video screens, post-FX, noise, particles.
 
 **Findings (likely hotspots):**
-1. Video media_prop calls `Texture2D.get_image()` every frame at 1280×720 — full GPU readback/sync.
+1. Video media_prop calls `Texture2D.get_image()` every frame at 1280?720 ? full GPU readback/sync.
 2. Feedback LFX does the same every `frame_post_draw` at full output resolution.
-3. GIF decode uses per-pixel `set_pixel` (very slow); no cache/downscale; up to 180 full-res frames × textures.
-4. Noise deform re-collects all MeshInstance3Ds and updates shader params every audio tick; FBM uses 4 octaves × 4 noise evals per vertex.
-5. Particle `amount` rewritten every audio frame (forces GPUParticles rebuild); beat `restart()`; high caps (1600–2000).
+3. GIF decode uses per-pixel `set_pixel` (very slow); no cache/downscale; up to 180 full-res frames ? textures.
+4. Noise deform re-collects all MeshInstance3Ds and updates shader params every audio tick; FBM uses 4 octaves ? 4 noise evals per vertex.
+5. Particle `amount` rewritten every audio frame (forces GPUParticles rebuild); beat `restart()`; high caps (1600?2000).
 6. ReactivityHub does SceneTree node lookups for nearly every settings read.
 7. Disabled glitch/pixel_sort still `set_process(true)` forever.
 8. Scatter media already shares material via clones (good); still allow up to 80 clones + full-cost master decode.
@@ -23,31 +50,31 @@
 6. Cache ReactivitySettings node; disable FX `_process` when off; cap media scatter count.
 
 **Resolution:**
-1. Video: `MediaVideoPool` shares one 640×360 decode + ImageTexture per path; pull capped ~18 Hz (was 1280×720 every frame).
-2. GIF: path cache, ≤512px / ≤90 frames, packed-byte blit in GifDecoder, min frame dur 0.04s; scatter material still shared via clones.
-3. Feedback: capture every 2nd frame, history resized ≤640.
-4. Noise: 2-octave FBM, mesh-list cache, ≤48 meshes.
+1. Video: `MediaVideoPool` shares one 640?360 decode + ImageTexture per path; pull capped ~18 Hz (was 1280?720 every frame).
+2. GIF: path cache, =512px / =90 frames, packed-byte blit in GifDecoder, min frame dur 0.04s; scatter material still shared via clones.
+3. Feedback: capture every 2nd frame, history resized =640.
+4. Noise: 2-octave FBM, mesh-list cache, =48 meshes.
 5. Particles: lower caps, amount hysteresis, beat restart cool-down.
-6. ReactivityHub node/director cache; FX `_process` off when disabled; Scene3D viewport matches panel ≤1600×900; media scatter ≤24.
+6. ReactivityHub node/director cache; FX `_process` off when disabled; Scene3D viewport matches panel =1600?900; media scatter =24.
 
-## 2026-08-11 — GIFs red / not animated; playlist delete clipped; rotation defaults
+## 2026-08-11 ? GIFs red / not animated; playlist delete clipped; rotation defaults
 
 **Issues:**
 1. Still images work, but GIFs show as **red** error placeholder (bind failure). Videos may also fail / stay static. Need visible **animated** GIFs and playing mp4/webm/ogv on 3D media screens.
-2. Playlist row delete is clipped/unreachable when asset names are long — cannot remove media items.
+2. Playlist row delete is clipped/unreachable when asset names are long ? cannot remove media items.
 3. Rotation amount default is **20** (too strong); rotation is **on by default**. Need default amount **1**, affect_rotation = false, and a **rotation target** chooser (everything / hero / environment / scatter / lights) like noise.
 
 **Causes / plan:**
-1. MediaImport depended on ffmpeg; without it GIF bind failed (red). AnimatedTexture does not animate as a spatial shader uniform. Fix: native GifDecoder + ImageTexture frame cycling; tools/ffmpeg for video→ogv.
+1. MediaImport depended on ffmpeg; without it GIF bind failed (red). AnimatedTexture does not animate as a spatial shader uniform. Fix: native GifDecoder + ImageTexture frame cycling; tools/ffmpeg for video?ogv.
 2. Title button expand pushed replace/delete off-row. Fix: middle-ellipsis, clip_text, fixed-width shrink-end buttons.
 3. Change defaults; add rotation_target + rotation_applies_to; UI OptionButton; wire flythrough.
 
 **Resolution:**
-1. GIF/video: Added core/gif_decoder.gd. media_prop cycles frames into ImageTexture. MediaImport finds tools/ffmpeg/ffmpeg.exe for mp4/webm→ogv. Portable ffmpeg installed locally (gitignored).
+1. GIF/video: Added core/gif_decoder.gd. media_prop cycles frames into ImageTexture. MediaImport finds tools/ffmpeg/ffmpeg.exe for mp4/webm?ogv. Portable ffmpeg installed locally (gitignored).
 2. Playlist delete: Middle-ellipsis labels, clip_text, fixed-width replace/delete buttons.
 3. Rotation: Defaults affect_rotation=false, rotation_amount=1; added rotation_target chooser + rotation_applies_to in flythrough.
 
-## 2026-08-11 — media_prop Vector2!=Vector2i crash; media still white
+## 2026-08-11 ? media_prop Vector2!=Vector2i crash; media still white
 
 **Issues:**
 1. Runtime error at `media_prop.gd` ~284: `Invalid operands "Vector2" and "Vector2i" for "!=" operator`. Broke script load ? `ReactivitySettings` null.
@@ -55,12 +82,12 @@
 
 **Resolution:** Fixed Vector2i cast compare; emission media shader + ImageTexture video blit + error charcoal/red placeholder.
 
-## 2026-08-11 — Schedule Active/Inactive timing inaccurate; media still solid white
+## 2026-08-11 ? Schedule Active/Inactive timing inaccurate; media still solid white
 
 **Issues:** Schedule timing drift; media white quads.
 **Resolution:** FxAutomation phase gate rewrite; dedicated media shader + root video host SubViewport.
 
-## 2026-08-11 — Images load but appear completely white / blown out
+## 2026-08-11 ? Images load but appear completely white / blown out
 
 **Resolution:** Media screen emission shader, EXPOSURE_COMP, media_screen skip for emission/noise.
 
@@ -628,3 +655,72 @@
 3. Per-tab durations clamped to 1?600s (including session restore); Play starts by stepping once immediately.
 4. ShowDirector autoplay soft-loops a single playlist item / element sequence without `next_item` stage rebuild.
 
+
+## 2026-08-11 ? Effects sidebar layout / Play All / camera rotation / defaults (investigation)
+
+**Issues:**
+1. Targets (Scale/Lights/Emission/Rotation/Noise/Camera) are flat siblings under `Targets` ? no `*Body` accordion nesting like FxSection; controls stay visible via `_sync_conditional_ui` hide/show only.
+2. Play All bootstraps only ASCII when nothing is on; `set_play_all_effects` only schedules already-enabled FX ? so only ASCII plays.
+3. Rotation target has no Camera option; flythrough never applies `rotation_applies_to("camera")` ? camera motion is separate ModulatorBus presets only.
+4. Defaults: `enabled`, `affect_scale`, `affect_light` are true (tscn + ReactivitySettings); user wants all off.
+5. Camera section lacks amount/speed naming consistency; Feedback LFO rate cross-writes `camera_rate`.
+
+**Plan:** See Effects sidebar implementation checklist (nest Bodies; add camera rotation target + apply; defaults off; Camera motion amount/speed + nested rotation; Play All enables all FX + random/audio/speed/own scheduler).
+
+## 2026-08-11 ? Effects panel: terrain noise, sidebar consistency, Play All, defaults
+
+**Issues:**
+1. Noise Displace does not visibly warp HTerrain hills ? only root wobble; MeshInstance ShaderMaterial overrides never reach DirectMeshInstance chunks.
+2. Right sidebar effects/reactivity controls are flat siblings (not nested under each effect accordion); Scale Amount orphaned under Audio Reactivity; Camera motion not a uniform section; patterns differ across effects.
+3. Rotation target lacks Camera; camera motion has no amount/speed + nested rotation drive.
+4. Defaults: Scale / Lights / Audio Reactivity start ON ? should all be OFF for new installs / default settings.
+5. Play All only bootstraps ASCII (and schedules already-on effects) ? must enable all visual FX + random/audio/speed + own Active/Inactive schedule.
+
+**Plan:**
+1. Custom HTerrain shader (Classic4 + vertex noise uniforms); drive via `set_shader_param` from flythrough `_apply_noise_distort`.
+2. Nest each Targets effect's controls under Body VBoxes; move Scale Amount under Scale; Camera motion section with rate/depth/amount + camera rotation nested; align Mode/schedule patterns.
+3. Add `camera` to `rotation_target` / `rotation_applies_to`; apply via camera_rig / flythrough.
+4. Defaults: `enabled`, `affect_scale`, `affect_light` = false in `reactivity_settings.gd` + tscn checkboxes.
+5. Play All: force-enable all FX_IDS, random + audio-reactive + speed controls, dedicated schedule gate; wire `fx_automation` / ShowDirector.
+
+**Resolution:**
+1. Terrain noise: Classic4 `simple4.gdshader` gains `u_hs_noise_*` vertex displace; flythrough drives via `set_shader_param` (no root wobble).
+2. Sidebar: Scale/Light/Emission/Rotation/Noise nest under Body accordions; Scale Amount under Scale; Camera motion section with Speed/Amount + nested Rotation (camera); Mode labels aligned.
+3. Rotation target includes Camera; `camera_rig.apply_reactive_spin` + `affect_camera_rotation`.
+4. Defaults: `enabled`, `affect_scale`, `affect_light` = false (tscn + settings + hub fallbacks).
+5. Play All: enables all FX_IDS + schedules; Mode Cycle/Random/Audio, Speed, Audio reactive, own DualRange / `play_all` gate; fx_automation speed/random/audio energy.
+
+## 2026-08-11 ? Rotation leave-on crooked; playlist freeze on change
+
+**Issues:**
+1. Turning off reactivity Rotation (camera / Camera motion) or when schedule goes inactive leaves camera and env/main/scatter transforms crooked ? spin accumulates and is never restored.
+2. Playlist Play / asset cycling still freezes on change (especially GIFs) because only next 1?2 neighbors are prefetched; cold GIF decode and model load still hit the apply path.
+
+**Plan:**
+1. Store rest orientations for env/centerpiece/scatter at spawn; track reactive spin as separate camera offsets; on disable / schedule inactive, restore rest (camera `reset_reactive_spin`, node `rotation = rest`). Same for demo_environment.
+2. Eager warm of entire Env/Main/Scatter/Lighting playlist via AssetCache + MediaImport (GIF decode, textures, scenes, video/ogv prepare). Block Play with Caching until warm complete; raise cache caps; cycling only swaps from cache.
+
+**Resolution:**
+1. Rotation reset: camera_rig keeps reactive yaw/pitch/roll separate from mouse look; reset_reactive_spin on disable. Flythrough stores env/center/scatter rest rotations at spawn and restores when drive turns off or schedule closes. Demo environment same edge restore.
+2. Full playlist precache: AssetCache.warm_paths + MediaImport.warm_path / warm_paths_sync_media; playlist sidebar warms all tabs on load/show/file-add; Play shows Caching and waits until ready; GIFs bind cache-only (no sync decode on apply); cache caps raised to 256.
+
+## 2026-08-11 ? Play All identical Active/Inactive; effects overlap
+
+**Issue:** Play All assigns the same Active/Inactive seconds to every effect gate and resets all phases to 0, so schedules lockstep. Effects stack; only the first ~two are visibly distinct.
+
+**Root cause:**
+1. `_on_play_all_toggled` / `_on_play_schedule_range` / `enable_play_all` clone one active/inactive pair onto every FX id.
+2. `set_gate_enabled` always starts `phase = 0`, so all gates open together.
+3. Independent jitter only in Random mode and only ?40% of the shared base ? not enough to desync.
+
+**Plan:**
+1. Play All assigns per-effect randomized Active/Inactive within sensible ranges (around the Play All schedule base, min ~2s).
+2. Stagger each gate's start phase so on/off windows do not sync.
+3. Keep jitter on for Play All so windows keep varying; stop cloning identical values from the Play All schedule onto every effect.
+4. Sync per-effect schedule UI to the rolled values; leave manual per-effect schedule edits working.
+
+**Resolution:**
+1. `FxAutomation.pick_independent_schedule` / `apply_independent_gate_schedule` / `stagger_gate_phase`: each Play All effect gets its own Active/Inactive (around the Play All base, min 2s) plus a random phase offset.
+2. `enable_play_all` no longer clones one pair onto every id; always enables gate jitter and staggers after `set_gate_enabled`.
+3. Play All schedule slider is a base hint only; adjusting it re-rolls independent schedules (does not clone). Per-effect schedule UI syncs to rolled values; manual per-effect edits still work.
+4. Tick jitter reroll runs whenever Play All is running (not only Random mode).

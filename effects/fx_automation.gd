@@ -32,6 +32,15 @@ var density_random_interval: float = 4.0
 ## effect_id -> gate dict
 var _gates: Dictionary = {}
 
+## Play All master controls (own schedule + mode/speed/audio).
+var play_all_running: bool = false
+var play_all_mode: String = "cycle"  # cycle | random | audio
+var play_all_speed: float = 1.0
+var play_all_audio_reactive: bool = false
+var play_all_audio_energy: float = 0.0
+var _play_all_ids: Array = []
+var _play_all_random_timer: float = 0.0
+
 
 func configure_style_presets(names: PackedStringArray) -> void:
 	style_presets = names
@@ -153,7 +162,11 @@ func get_gate_inactive(effect_id: String) -> float:
 func tick(delta: float) -> void:
 	## Use real process delta only (never accumulate while paused — ShowDirector
 	## simply stops calling tick when the tree is paused).
-	var dt := maxf(delta, 0.0)
+	var speed := play_all_speed if play_all_running else 1.0
+	if play_all_running and play_all_audio_reactive:
+		# Audio reactive: quiet = slower cycles, loud = faster.
+		speed *= lerpf(0.45, 1.75, clampf(play_all_audio_energy, 0.0, 1.0))
+	var dt := maxf(delta, 0.0) * maxf(speed, 0.05)
 	if style_active and style_presets.size() > 0:
 		style_timer += dt
 		var eff := style_effective_interval if style_effective_interval > 0.0 else style_interval
@@ -172,46 +185,157 @@ func tick(delta: float) -> void:
 			density_random_timer = fmod(density_random_timer, di)
 			density_randomize_tick.emit()
 
+	if play_all_running and play_all_mode == "random":
+		_play_all_random_timer += dt
+		var g := ensure_gate("play_all")
+		var interval := maxf(0.5, float(g.get("effective_active", 4.0)))
+		if _play_all_random_timer >= interval:
+			_play_all_random_timer = 0.0
+			_reroll_random_play_all_subset()
+
 	for effect_id in _gates.keys():
-		var g: Dictionary = _gates[effect_id]
-		if not bool(g.get("enabled", false)):
-			if not bool(g.get("open", true)):
-				g["open"] = true
+		var g2: Dictionary = _gates[effect_id]
+		if not bool(g2.get("enabled", false)):
+			if not bool(g2.get("open", true)):
+				g2["open"] = true
 				gate_changed.emit(str(effect_id), true)
 			continue
-		var active := maxf(0.05, float(g.get("effective_active", g.get("active_sec", 4.0))))
-		var inactive := maxf(0.05, float(g.get("effective_inactive", g.get("inactive_sec", 4.0))))
+		var active := maxf(0.05, float(g2.get("effective_active", g2.get("active_sec", 4.0))))
+		var inactive := maxf(0.05, float(g2.get("effective_inactive", g2.get("inactive_sec", 4.0))))
+		if play_all_running and play_all_audio_reactive and not str(effect_id).begins_with("react_"):
+			# Stretch active window with energy so loud passages keep FX open longer.
+			active *= lerpf(0.65, 1.45, clampf(play_all_audio_energy, 0.0, 1.0))
 		var cycle := active + inactive
-		var phase := float(g.get("phase", 0.0)) + dt
+		var phase := float(g2.get("phase", 0.0)) + dt
 		# Wrap exactly on cycle boundaries; reroll jitter windows on each wrap.
 		while phase >= cycle:
 			phase -= cycle
-			if bool(g.get("jitter", false)):
-				_reroll_gate(g)
-				active = maxf(0.05, float(g.get("effective_active", 4.0)))
-				inactive = maxf(0.05, float(g.get("effective_inactive", 4.0)))
+			# Play All always jitter-rerolls so cadences keep drifting apart.
+			if bool(g2.get("jitter", false)) or play_all_running:
+				_reroll_gate(g2)
+				active = maxf(0.05, float(g2.get("effective_active", 4.0)))
+				inactive = maxf(0.05, float(g2.get("effective_inactive", 4.0)))
 				cycle = active + inactive
-		g["phase"] = phase
-		_apply_open_state(str(effect_id), g, true)
+		g2["phase"] = phase
+		_apply_open_state(str(effect_id), g2, true)
+
+
+func configure_play_all(mode: String, speed: float, audio_reactive: bool, active_sec: float, inactive_sec: float) -> void:
+	play_all_mode = mode if mode in ["cycle", "random", "audio"] else "cycle"
+	play_all_speed = clampf(speed, 0.1, 4.0)
+	play_all_audio_reactive = audio_reactive or play_all_mode == "audio"
+	set_gate_active_inactive("play_all", active_sec, inactive_sec)
+	set_gate_enabled("play_all", true)
+	# Play All always keeps per-effect jitter so windows stay desynced.
+	for eid in _play_all_ids:
+		var g := ensure_gate(str(eid))
+		g["jitter"] = true
+		_reroll_gate(g)
+
+
+func set_play_all_speed(speed: float) -> void:
+	play_all_speed = clampf(speed, 0.1, 4.0)
+
+
+func set_play_all_audio_reactive(on: bool) -> void:
+	play_all_audio_reactive = on
+
+
+func set_play_all_audio_energy(energy: float) -> void:
+	play_all_audio_energy = clampf(energy, 0.0, 1.0)
+
+
+func pick_independent_schedule(base_active: float, base_inactive: float) -> Vector2:
+	## Independent Active/Inactive around the Play All base (never zero / lockstep).
+	var ba := maxf(2.0, base_active)
+	var bi := maxf(2.0, base_inactive)
+	var a := clampf(ba * randf_range(0.45, 1.85), 2.0, 28.0)
+	var i := clampf(bi * randf_range(0.55, 2.15), 2.0, 36.0)
+	# Snap toward whole seconds so UI sliders stay readable.
+	a = snappedf(a, 1.0)
+	i = snappedf(i, 1.0)
+	return Vector2(maxf(2.0, a), maxf(2.0, i))
+
+
+func apply_independent_gate_schedule(effect_id: String, base_active: float, base_inactive: float, stagger: bool = true) -> Vector2:
+	## Assign a unique schedule + optional phase stagger. Returns (active, inactive).
+	var pair := pick_independent_schedule(base_active, base_inactive)
+	set_gate_active_inactive(effect_id, pair.x, pair.y)
+	var g := ensure_gate(effect_id)
+	g["jitter"] = true
+	_reroll_gate(g)
+	if stagger:
+		stagger_gate_phase(effect_id)
+	return Vector2(float(g.get("active_sec", pair.x)), float(g.get("inactive_sec", pair.y)))
+
+
+func stagger_gate_phase(effect_id: String) -> void:
+	var g := ensure_gate(effect_id)
+	var active := maxf(0.05, float(g.get("effective_active", g.get("active_sec", 4.0))))
+	var inactive := maxf(0.05, float(g.get("effective_inactive", g.get("inactive_sec", 4.0))))
+	var cycle := maxf(0.1, active + inactive)
+	g["phase"] = randf() * cycle
+	_apply_open_state(effect_id, g, true)
+
+
+func randomize_play_all_schedules(base_active: float, base_inactive: float) -> Dictionary:
+	## Re-roll every Play All effect schedule independently. Returns eid -> Vector2(a,i).
+	var out: Dictionary = {}
+	var a := clampf(base_active, 0.05, 120.0)
+	var i := clampf(base_inactive, 0.05, 120.0)
+	set_gate_active_inactive("play_all", a, i)
+	for eid_any in _play_all_ids:
+		var eid := str(eid_any)
+		out[eid] = apply_independent_gate_schedule(eid, a, i, true)
+	return out
+
+
+func _reroll_random_play_all_subset() -> void:
+	## Randomly open/close a subset so the mix changes over time.
+	if _play_all_ids.is_empty():
+		return
+	for eid in _play_all_ids:
+		var g := ensure_gate(str(eid))
+		if not bool(g.get("enabled", false)):
+			continue
+		# ~55% chance open; always keep at least one visually busy FX likely.
+		var want_open := randf() < 0.55
+		g["phase"] = 0.0 if want_open else float(g.get("effective_active", 4.0))
+		_apply_open_state(str(eid), g, true)
 
 
 func enable_play_all(effect_ids: Array, cycle_sec: float = 20.0, active_sec: float = 5.0) -> void:
-	## Master “Play All”: style switch + schedules for the given effects.
+	## Master “Play All”: style switch + independent per-effect schedules (not lockstep).
+	play_all_running = true
+	_play_all_ids = []
+	for id in effect_ids:
+		_play_all_ids.append(str(id))
 	set_style_active(true)
 	var a := clampf(active_sec, 0.05, 120.0)
 	var inactive := maxf(0.05, cycle_sec - a)
+	set_gate_active_inactive("play_all", a, inactive)
+	set_gate_enabled("play_all", true)
 	for id in effect_ids:
 		var eid := str(id)
-		set_gate_active_inactive(eid, a, inactive)
+		var pair := pick_independent_schedule(a, inactive)
+		set_gate_active_inactive(eid, pair.x, pair.y)
+		var g := ensure_gate(eid)
+		g["jitter"] = true
 		set_gate_enabled(eid, true)
+		# set_gate_enabled resets phase to 0 — stagger after so FX do not open together.
+		stagger_gate_phase(eid)
 
 
 func disable_play_all() -> void:
+	play_all_running = false
+	_play_all_ids.clear()
+	_play_all_random_timer = 0.0
 	set_style_active(false)
+	set_gate_enabled("play_all", false)
 	for effect_id in _gates.keys():
 		var eid := str(effect_id)
 		# Leave reactivity Active/Inactive gates alone (react_*).
-		if eid.begins_with("react_"):
+		if eid.begins_with("react_") or eid == "play_all":
 			continue
 		set_gate_enabled(eid, false)
 

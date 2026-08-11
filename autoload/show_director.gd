@@ -183,11 +183,11 @@ func is_play_all_active() -> bool:
 func set_play_all_effects(on: bool, cycle_sec: float = 20.0, active_sec: float = 5.0) -> void:
 	_play_all_active = on
 	if on:
+		# Play All always drives every known visual effect id.
 		var ids: Array = []
-		for eid in _effect_user_enabled.keys():
-			if bool(_effect_user_enabled[eid]):
-				ids.append(eid)
-		# Prefer currently-enabled effects; do not invent effects the user never turned on.
+		for eid in ["ascii", "particles", "feedback", "glitch", "chromatic", "pixel_sort", "wireframe"]:
+			ids.append(eid)
+			_effect_user_enabled[eid] = true
 		fx_automation.enable_play_all(ids, cycle_sec, active_sec)
 		for eid in ids:
 			_apply_effect_effective(str(eid))

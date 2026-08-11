@@ -37,19 +37,16 @@ var _gif_index: int = 0
 var _gif_elapsed: float = 0.0
 var _gif_bound_index: int = -1
 var _needs_gif_process: bool = false
+var _pending_gif_path: String = ""
 
 
 static func spawn(parent: Node3D, path: String, opts: Dictionary = {}) -> Node3D:
 	if parent == null or path.strip_edges().is_empty():
 		return null
-	var script: GDScript = load("res://items/flythrough/media_prop.gd") as GDScript
-	if script == null:
-		return null
-	var prop: Node3D = script.new() as Node3D
+	var prop := FlythroughMediaProp.new()
 	prop.name = "MediaProp_%s" % path.get_file().get_basename()
 	parent.add_child(prop)
-	if prop.has_method("setup"):
-		prop.call("setup", path, opts)
+	prop.setup(path, opts)
 	return prop
 
 
@@ -66,12 +63,33 @@ func setup(path: String, opts: Dictionary = {}) -> void:
 	_needs_gif_process = false
 	_needs_video_process = false
 	_gif_bound_index = -1
+	_pending_gif_path = ""
 	var media_type := MediaImport.detect_type(path)
 	if media_type.is_empty():
 		push_warning("FlythroughMediaProp: unsupported media %s" % path)
 		_show_fallback(true)
 		return
+	# Non-blocking prepare: use cached ogv if present; never sync-ffmpeg here.
 	_play_path = MediaImport.prepare_path(path, media_type)
+	# GIFs: only bind from cache — never sync-decode on apply (precache warms them).
+	if media_type == "gif":
+		if MediaImport.gif_cached(path):
+			_bind_media(path, media_type)
+		else:
+			_show_fallback(false)
+			_pending_gif_path = path
+			set_process(true)
+		return
+	_bind_media(path, media_type)
+
+
+func _bind_media_deferred(path: String, media_type: String) -> void:
+	if not is_inside_tree() or path != _source_path:
+		return
+	_bind_media(path, media_type)
+
+
+func _bind_media(path: String, media_type: String) -> void:
 	var play_ext := _play_path.get_extension().to_lower()
 	var ok := false
 	if media_type == "video" or play_ext in ["ogv", "webm", "mp4", "mov", "avi"]:
@@ -203,6 +221,9 @@ func _try_bind_still(path: String) -> bool:
 
 
 func _try_bind_gif_frames(path: String) -> bool:
+	## Cache-only — never sync-decode on the apply/bind path (playlist warm fills cache).
+	if not MediaImport.gif_cached(path):
+		return false
 	var anim := MediaImport.load_gif_animation(path)
 	if not bool(anim.get("ok", false)):
 		return false
@@ -286,6 +307,14 @@ func _advance_gif(delta: float) -> void:
 
 
 func _process(delta: float) -> void:
+	if not _pending_gif_path.is_empty():
+		if MediaImport.gif_cached(_pending_gif_path):
+			var p := _pending_gif_path
+			_pending_gif_path = ""
+			_bind_media(p, "gif")
+		elif not _needs_gif_process and not _needs_video_process:
+			# Keep process alive until warm finishes; charcoal stays visible.
+			pass
 	if _needs_gif_process:
 		_advance_gif(delta)
 	if _needs_video_process:
@@ -298,6 +327,8 @@ func _process(delta: float) -> void:
 				var q := _mesh_inst.mesh as QuadMesh
 				var h := q.size.y
 				q.size = Vector2(h * _bound_aspect, h)
+	if not _needs_gif_process and not _needs_video_process and _pending_gif_path.is_empty():
+		set_process(false)
 
 
 func _exit_tree() -> void:

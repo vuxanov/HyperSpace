@@ -7,6 +7,7 @@ const LAYER_ENVIRONMENT := "environment"
 const LAYER_SCATTER := "scatter"
 const LAYER_CENTERPIECE := "centerpiece"
 const _MEDIA_PROP := preload("res://items/flythrough/media_prop.gd")
+const _AssetCache := preload("res://core/asset_cache.gd")
 
 
 static func clear_root(root: Node3D) -> void:
@@ -17,6 +18,7 @@ static func clear_root(root: Node3D) -> void:
 
 
 static func load_asset_into(parent: Node3D, path: String, opts: Dictionary = {}) -> Node3D:
+	## Instantiates from AssetCache when possible (sync only on cold miss).
 	if path.is_empty() or parent == null:
 		return null
 	var resolved := _resolve_res_path(path)
@@ -29,29 +31,36 @@ static func load_asset_into(parent: Node3D, path: String, opts: Dictionary = {})
 			"height": float(opts.get("height", 1.0)),
 		}
 		return _MEDIA_PROP.spawn(parent, resolved, media_opts)
-	# Prefer Godot-imported PackedScene (glb/gltf/fbx).
+	# Cached / threaded-loaded PackedScene.
+	var cached: PackedScene = _AssetCache.get_scene(resolved)
+	if cached != null:
+		var inst: Node = cached.instantiate()
+		parent.add_child(inst)
+		if inst is Node3D:
+			return inst as Node3D
+		inst.queue_free()
+	# Prefer Godot-imported PackedScene (glb/gltf/fbx) — also seeds cache.
 	if ResourceLoader.exists(resolved):
-		var res: Resource = load(resolved)
-		if res is PackedScene:
-			var instance: Node = (res as PackedScene).instantiate()
+		var packed := _AssetCache.peek_or_load_scene_sync(resolved)
+		if packed != null:
+			var instance: Node = packed.instantiate()
 			parent.add_child(instance)
 			if instance is Node3D:
 				return instance as Node3D
 			instance.queue_free()
-	# Runtime GLTF/GLB parse (also works with absolute paths).
+	# Runtime GLTF/GLB parse (also works with absolute paths) — seeds cache.
 	var abs_path := resolved
 	if resolved.begins_with("res://"):
 		abs_path = ProjectSettings.globalize_path(resolved)
 	var lower := abs_path.to_lower()
 	if (lower.ends_with(".glb") or lower.ends_with(".gltf")) and FileAccess.file_exists(abs_path):
-		var gltf := GLTFDocument.new()
-		var state := GLTFState.new()
-		var err := gltf.append_from_file(abs_path, state)
-		if err == OK:
-			var scene := gltf.generate_scene(state)
+		var packed2 := _AssetCache.peek_or_load_scene_sync(resolved)
+		if packed2 != null:
+			var scene: Node = packed2.instantiate()
 			parent.add_child(scene)
 			if scene is Node3D:
 				return scene as Node3D
+			scene.queue_free()
 	push_warning("FlythroughLayerSlot: could not load %s" % path)
 	return null
 

@@ -4,6 +4,7 @@ extends RefCounted
 ## Detect media type from path and prepare GIFs/videos for Godot playback.
 
 const _GifDecoder = preload("res://core/gif_decoder.gd")
+const _AssetCache := preload("res://core/asset_cache.gd")
 
 ## Soft caps for runtime GIF memory / upload cost on 3D screens.
 const MAX_GIF_DIM := 512
@@ -12,10 +13,101 @@ const MAX_STILL_DIM := 2048
 
 ## absolute_path -> { ok, frames: Array[ImageTexture], durations, width, height }
 static var _gif_cache: Dictionary = {}
+## absolute_path -> Texture2D (stills)
+static var _tex_cache: Dictionary = {}
+## Cached ffmpeg executable path ("" = missing, "__unset__" = not probed).
+static var _ffmpeg_cached: String = "__unset__"
+## Paths currently converting to ogv in a background process.
+static var _converting: Dictionary = {}
 
 
 static func clear_gif_cache() -> void:
 	_gif_cache.clear()
+	_tex_cache.clear()
+
+
+static func prefetch_gif(path: String) -> void:
+	## Decode off the apply hot-path when possible (still main-thread, but early).
+	var key := absolute_path(path)
+	if _gif_cache.has(key):
+		return
+	# Defer so Play step / layer apply returns first.
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree:
+		tree.create_timer(0.05).timeout.connect(func() -> void:
+			if not _gif_cache.has(key):
+				load_gif_animation(path)
+		)
+	else:
+		load_gif_animation(path)
+
+
+static func warm_path(path: String) -> void:
+	## Eager cache for playlist warm — decode GIF / texture / queue video / scene now.
+	var resolved := to_project_or_absolute(path)
+	if resolved.is_empty() or resolved.begins_with("primitive:"):
+		return
+	var media_type := detect_type(resolved)
+	match media_type:
+		"gif":
+			load_gif_animation(resolved)
+		"image":
+			load_texture(resolved)
+		"hdri":
+			_AssetCache.request_texture(resolved)
+		"video":
+			prepare_path(resolved, "video")
+			var ogv := _ogv_if_cached(resolved)
+			if not ogv.is_empty():
+				load_video_stream(ogv)
+			else:
+				# Kick convert; stream loads later from cache when ready.
+				pass
+		"scene3d":
+			_AssetCache.request_scene(resolved)
+		_:
+			var lower := resolved.to_lower()
+			if lower.ends_with(".hdr") or lower.ends_with(".exr"):
+				_AssetCache.request_texture(resolved)
+
+
+static func warm_paths_sync_media(paths: Array, max_items: int = 1) -> int:
+	## Process up to max_items GIF/image warm steps this frame. Returns remaining media paths needing work.
+	var remaining := 0
+	var done := 0
+	for p in paths:
+		var s := str(p).strip_edges()
+		if s.is_empty() or s.begins_with("primitive:"):
+			continue
+		var t := detect_type(s)
+		if t == "gif":
+			if gif_cached(s):
+				continue
+			if done < max_items:
+				load_gif_animation(s)
+				done += 1
+			else:
+				remaining += 1
+		elif t == "image":
+			if texture_cached(s):
+				continue
+			if done < max_items:
+				load_texture(s)
+				done += 1
+			else:
+				remaining += 1
+		elif t == "video":
+			prepare_path(s, "video")
+	return remaining
+
+
+static func gif_cached(path: String) -> bool:
+	return _gif_cache.has(absolute_path(path))
+
+
+static func texture_cached(path: String) -> bool:
+	var key := absolute_path(path)
+	return _tex_cache.has(key) or _AssetCache.has_texture(path)
 
 
 static func detect_type(path: String) -> String:
@@ -60,8 +152,20 @@ static func absolute_path(path: String) -> String:
 
 
 static func prepare_path(path: String, media_type: String) -> String:
-	## Return a path Godot can play. Non-ogv videos convert to ogv via ffmpeg when available.
+	## Return a path Godot can play. Uses cached ogv when present; never blocks on ffmpeg.
 	## GIFs stay as .gif — decoded natively (GifDecoder) or via VideoItem fallback.
+	var resolved := to_project_or_absolute(path)
+	var ext := resolved.get_extension().to_lower()
+	if media_type == "video" and ext != "ogv":
+		var converted := _ogv_if_cached(path)
+		if not converted.is_empty():
+			return converted
+		_queue_convert_to_ogv(path)
+	return resolved
+
+
+static func prepare_path_blocking(path: String, media_type: String) -> String:
+	## Explicit sync convert (import tools only — avoid during live Play).
 	var resolved := to_project_or_absolute(path)
 	var ext := resolved.get_extension().to_lower()
 	if media_type == "video" and ext != "ogv":
@@ -73,19 +177,34 @@ static func prepare_path(path: String, media_type: String) -> String:
 
 static func load_texture(path: String) -> Texture2D:
 	## Prefer runtime Image→ImageTexture so external uploads always sample as LDR RGBA.
-	var abs_path := absolute_path(path)
+	var cache_key := absolute_path(path)
+	if _tex_cache.has(cache_key):
+		return _tex_cache[cache_key] as Texture2D
+	var cached_asset := _AssetCache.get_texture(path)
+	if cached_asset != null:
+		_tex_cache[cache_key] = cached_asset
+		return cached_asset
+	var abs_path := cache_key
 	if FileAccess.file_exists(abs_path):
 		var img: Image = Image.load_from_file(abs_path)
 		if img != null and not img.is_empty():
-			return _image_to_texture(img)
+			var tex := _image_to_texture(img)
+			_tex_cache[cache_key] = tex
+			_AssetCache.put_texture(path, tex)
+			return tex
 	var resolved := to_project_or_absolute(path)
 	if ResourceLoader.exists(resolved):
-		var res: Resource = load(resolved)
+		var res: Resource = ResourceLoader.load(resolved)
 		if res is Texture2D:
 			var src := res as Texture2D
 			var img2: Image = src.get_image() if src.has_method("get_image") else null
 			if img2 != null and not img2.is_empty():
-				return _image_to_texture(img2)
+				var tex2 := _image_to_texture(img2)
+				_tex_cache[cache_key] = tex2
+				_AssetCache.put_texture(path, tex2)
+				return tex2
+			_tex_cache[cache_key] = src
+			_AssetCache.put_texture(path, src)
 			return src
 	if FileAccess.file_exists(abs_path):
 		var f := FileAccess.open(abs_path, FileAccess.READ)
@@ -99,14 +218,18 @@ static func load_texture(path: String) -> Texture2D:
 			if err != OK:
 				err = img3.load_webp_from_buffer(buf)
 			if err == OK and not img3.is_empty():
-				return _image_to_texture(img3)
+				var tex3 := _image_to_texture(img3)
+				_tex_cache[cache_key] = tex3
+				return tex3
 	# GIF still-frame fallback via native decoder.
 	if abs_path.get_extension().to_lower() == "gif":
 		var gif := load_gif_animation(path)
 		if bool(gif.get("ok", false)):
 			var frames: Array = gif.get("frames", [])
 			if not frames.is_empty() and frames[0] is ImageTexture:
-				return frames[0] as ImageTexture
+				var gf := frames[0] as ImageTexture
+				_tex_cache[cache_key] = gf
+				return gf
 	push_warning("MediaImport.load_texture: failed for %s" % path)
 	return null
 
@@ -293,7 +416,48 @@ static func _cache_key(src_path: String) -> String:
 	return abs_p.md5_text().substr(0, 16)
 
 
+static func _ogv_if_cached(src_path: String) -> String:
+	var out_dir := "user://converted_media"
+	var key := _cache_key(src_path)
+	var out_res := out_dir.path_join(key + ".ogv")
+	var out_abs := ProjectSettings.globalize_path(out_res)
+	if FileAccess.file_exists(out_res) or FileAccess.file_exists(out_abs):
+		return out_res
+	return ""
+
+
+static func _queue_convert_to_ogv(src_path: String) -> void:
+	## Fire-and-forget ffmpeg so Play/apply never blocks on OS.execute.
+	var key := _cache_key(src_path)
+	if _converting.has(key):
+		return
+	if not _ogv_if_cached(src_path).is_empty():
+		return
+	var ffmpeg := _find_ffmpeg()
+	if ffmpeg.is_empty():
+		return
+	var out_dir := "user://converted_media"
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(out_dir))
+	var out_res := out_dir.path_join(key + ".ogv")
+	var out_abs := ProjectSettings.globalize_path(out_res)
+	var in_abs := absolute_path(src_path)
+	if not FileAccess.file_exists(in_abs):
+		return
+	_converting[key] = true
+	var args := PackedStringArray([
+		"-y", "-i", in_abs,
+		"-c:v", "libtheora", "-q:v", "7",
+		"-an",
+		"-pix_fmt", "yuv420p",
+		out_abs,
+	])
+	OS.create_process(ffmpeg, args)
+
+
 static func _convert_to_ogv(src_path: String) -> String:
+	var cached := _ogv_if_cached(src_path)
+	if not cached.is_empty():
+		return cached
 	var ffmpeg := _find_ffmpeg()
 	if ffmpeg.is_empty():
 		push_warning("MediaImport: ffmpeg not found — animated GIF/video may use native GIF decode or fail. Place ffmpeg at tools/ffmpeg/ffmpeg.exe.")
@@ -303,8 +467,6 @@ static func _convert_to_ogv(src_path: String) -> String:
 	var key := _cache_key(src_path)
 	var out_res := out_dir.path_join(key + ".ogv")
 	var out_abs := ProjectSettings.globalize_path(out_res)
-	if FileAccess.file_exists(out_res) or FileAccess.file_exists(out_abs):
-		return out_res
 	var in_abs := absolute_path(src_path)
 	if not FileAccess.file_exists(in_abs):
 		return ""
@@ -424,8 +586,9 @@ static func _convert_gif_to_webm(gif_path: String) -> String:
 
 
 static func _find_ffmpeg() -> String:
-	if OS.execute("ffmpeg", PackedStringArray(["-version"]), [], true, false) == 0:
-		return "ffmpeg"
+	if _ffmpeg_cached != "__unset__":
+		return _ffmpeg_cached
+	# Prefer local tools path before PATH probe (PATH probe is a sync OS.execute hitch).
 	var candidates: Array[String] = [
 		ProjectSettings.globalize_path("res://tools/ffmpeg/ffmpeg.exe"),
 		ProjectSettings.globalize_path("res://tools/ffmpeg/ffmpeg"),
@@ -447,7 +610,13 @@ static func _find_ffmpeg() -> String:
 	for c in candidates:
 		var p := c.replace("\\", "/")
 		if FileAccess.file_exists(p):
+			_ffmpeg_cached = p
 			return p
+	# Last resort: PATH (one-time cost, then cached).
+	if OS.execute("ffmpeg", PackedStringArray(["-version"]), [], true, false) == 0:
+		_ffmpeg_cached = "ffmpeg"
+		return "ffmpeg"
+	_ffmpeg_cached = ""
 	return ""
 
 

@@ -11,6 +11,8 @@ var _base_mix: float = 0.78
 var _base_persist: float = 0.9
 var _base_zoom: float = 1.04
 var _frame_skip: int = 0
+var _lfo_rate: float = 1.0
+var _lfo_phase: float = 0.0
 const CAPTURE_EVERY_N := 2
 const CAPTURE_MAX_DIM := 640
 
@@ -18,6 +20,7 @@ const CAPTURE_MAX_DIM := 640
 func _ready() -> void:
 	effect_id = "feedback"
 	layer = 2
+	set_process(false)
 	_rect = ColorRect.new()
 	_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -34,6 +37,21 @@ func _ready() -> void:
 	RenderingServer.frame_post_draw.connect(_on_frame_post_draw)
 
 
+func _process(delta: float) -> void:
+	if not enabled or normalize_drive_mode(drive_mode) != "lfo":
+		return
+	_lfo_phase = fposmod(_lfo_phase + delta * maxf(_lfo_rate, 0.05), 1.0)
+	var mod01 := 0.5 + 0.5 * sin(_lfo_phase * TAU)
+	_last_lfo = mod01
+	var mat := _mat()
+	if mat == null:
+		return
+	mat.set_shader_parameter("audio_drive", resolve_drive(0.0) * 0.35)
+	mat.set_shader_parameter("mix_amount", clampf(_base_mix * (0.85 + mod01 * 0.3), 0.05, 0.98))
+	mat.set_shader_parameter("persistence", clampf(_base_persist * (0.9 + mod01 * 0.12), 0.5, 0.98))
+	mat.set_shader_parameter("zoom", _base_zoom + mod01 * 0.06)
+
+
 func _exit_tree() -> void:
 	if RenderingServer.frame_post_draw.is_connected(_on_frame_post_draw):
 		RenderingServer.frame_post_draw.disconnect(_on_frame_post_draw)
@@ -44,6 +62,7 @@ func set_active(is_on: bool) -> void:
 	visible = is_on
 	if _rect:
 		_rect.visible = is_on
+	set_process(is_on and normalize_drive_mode(drive_mode) == "lfo")
 	if not is_on:
 		_has_history = false
 		var mat := _mat()
@@ -164,6 +183,9 @@ func _apply_shader(params: Dictionary) -> void:
 	if params.has("mix_amount"):
 		_base_mix = clampf(float(params["mix_amount"]), 0.0, 1.0)
 		mat.set_shader_parameter("mix_amount", _base_mix)
+	if params.has("lfo_rate"):
+		_lfo_rate = clampf(float(params["lfo_rate"]), 0.05, 5.0)
+	set_process(enabled and normalize_drive_mode(drive_mode) == "lfo")
 
 
 func _mat() -> ShaderMaterial:

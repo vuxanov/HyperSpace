@@ -35,7 +35,7 @@ theme_override_constants/separation = 4
 
 [node name="ReactivityToggle" type="CheckButton" parent="Margin/Scroll/Column/AudioSection"]
 layout_mode = 2
-button_pressed = true
+button_pressed = false
 text = "Audio Reactivity"
 
 [node name="ReactivityBody" type="VBoxContainer" parent="Margin/Scroll/Column/AudioSection"]
@@ -100,7 +100,7 @@ layout_mode = 2
 
 [node name="AffectScale" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
 layout_mode = 2
-button_pressed = true
+button_pressed = false
 text = "Scale"
 
 [node name="ScaleSource" type="OptionButton" parent="Margin/Scroll/Column/Targets"]
@@ -134,7 +134,7 @@ layout_mode = 2
 
 [node name="AffectLight" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
 layout_mode = 2
-button_pressed = true
+button_pressed = false
 text = "HDRI / Lights energy"
 
 [node name="LightSource" type="OptionButton" parent="Margin/Scroll/Column/Targets"]
@@ -282,33 +282,59 @@ visible = false
 layout_mode = 2
 
 [node name="CameraLabel" type="Label" parent="Margin/Scroll/Column/Targets"]
+visible = false
 layout_mode = 2
 text = "Camera motion (LFO)"
 
-[node name="CameraPreset" type="OptionButton" parent="Margin/Scroll/Column/Targets"]
+[node name="CameraMotionToggle" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
+layout_mode = 2
+button_pressed = false
+text = "Camera motion"
+
+[node name="CameraBody" type="VBoxContainer" parent="Margin/Scroll/Column/Targets"]
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="CameraPreset" type="OptionButton" parent="Margin/Scroll/Column/Targets/CameraBody"]
 layout_mode = 2
 
-[node name="CameraRateLabel" type="Label" parent="Margin/Scroll/Column/Targets"]
+[node name="CameraRateLabel" type="Label" parent="Margin/Scroll/Column/Targets/CameraBody"]
 layout_mode = 2
-text = "LFO Rate"
+text = "Speed"
 
-[node name="CameraRate" type="HSlider" parent="Margin/Scroll/Column/Targets"]
+[node name="CameraRate" type="HSlider" parent="Margin/Scroll/Column/Targets/CameraBody"]
 layout_mode = 2
 min_value = 1.0
 max_value = 100.0
 step = 1.0
 value = 20.0
 
-[node name="CameraDepthLabel" type="Label" parent="Margin/Scroll/Column/Targets"]
+[node name="CameraDepthLabel" type="Label" parent="Margin/Scroll/Column/Targets/CameraBody"]
 layout_mode = 2
-text = "LFO Depth"
+text = "Amount"
 
-[node name="CameraDepth" type="HSlider" parent="Margin/Scroll/Column/Targets"]
+[node name="CameraDepth" type="HSlider" parent="Margin/Scroll/Column/Targets/CameraBody"]
 layout_mode = 2
 min_value = 0.0
 max_value = 100.0
 step = 1.0
 value = 55.0
+
+[node name="CameraRotationToggle" type="CheckButton" parent="Margin/Scroll/Column/Targets/CameraBody"]
+layout_mode = 2
+button_pressed = false
+text = "Rotation (camera)"
+
+[node name="CameraRotationBody" type="VBoxContainer" parent="Margin/Scroll/Column/Targets/CameraBody"]
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="CameraRotationHint" type="Label" parent="Margin/Scroll/Column/Targets/CameraBody/CameraRotationBody"]
+layout_mode = 2
+text = "Uses Rotation source / amount / axes"
+autowrap_mode = 2
 
 [node name="FxSection" type="VBoxContainer" parent="Margin/Scroll/Column"]
 layout_mode = 2
@@ -320,12 +346,39 @@ text = "Visual Effects"
 
 [node name="PlayAllToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection"]
 layout_mode = 2
-text = "Play All (style + schedules)"
+text = "Play All"
 
 [node name="PlayAllBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection"]
 visible = false
 layout_mode = 2
 theme_override_constants/separation = 4
+
+[node name="PlayModeLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+layout_mode = 2
+text = "Mode"
+
+[node name="PlayMode" type="OptionButton" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+layout_mode = 2
+
+[node name="PlaySpeedLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+layout_mode = 2
+text = "Speed"
+
+[node name="PlaySpeedSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+layout_mode = 2
+min_value = 0.25
+max_value = 3.0
+step = 0.05
+value = 1.0
+
+[node name="PlayAudioReactive" type="CheckButton" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+layout_mode = 2
+button_pressed = false
+text = "Audio reactive"
+
+[node name="PlayScheduleLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+layout_mode = 2
+text = "Active / Inactive schedule"
 
 [node name="PlayCycleLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
 visible = false
@@ -352,6 +405,9 @@ min_value = 1.0
 max_value = 30.0
 step = 1.0
 value = 6.0
+
+[node name="PlayScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+layout_mode = 2
 
 [node name="AsciiToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection"]
 layout_mode = 2

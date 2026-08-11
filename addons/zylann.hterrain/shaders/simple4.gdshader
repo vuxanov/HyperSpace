@@ -54,6 +54,12 @@ uniform vec4 u_colormap_opacity_per_texture = vec4(1.0, 1.0, 1.0, 1.0);
 
 uniform float u_specular = 0.5;
 
+// HyperSpace reactive noise displace (world units). Defaults keep Classic4 unchanged.
+uniform float u_hs_noise_amount = 0.0;
+uniform float u_hs_noise_scale = 4.0;
+uniform float u_hs_noise_time = 0.0;
+uniform vec3 u_hs_noise_axes = vec3(1.0, 1.0, 1.0);
+
 #ifdef COLORMAP_PER_VERTEX
 varying float v_hole;
 varying vec3 v_tint0;
@@ -133,6 +139,44 @@ vec2 rotate(vec2 v, float cosa, float sina) {
 	return vec2(cosa * v.x - sina * v.y, sina * v.x + cosa * v.y);
 }
 
+float hs_hash31(vec3 p) {
+	p = fract(p * 0.1031);
+	p += dot(p, p.yzx + 33.33);
+	return fract((p.x + p.y) * p.z);
+}
+
+float hs_vnoise(vec3 p) {
+	vec3 i = floor(p);
+	vec3 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	float n000 = hs_hash31(i + vec3(0.0, 0.0, 0.0));
+	float n100 = hs_hash31(i + vec3(1.0, 0.0, 0.0));
+	float n010 = hs_hash31(i + vec3(0.0, 1.0, 0.0));
+	float n110 = hs_hash31(i + vec3(1.0, 0.0, 1.0));
+	float n001 = hs_hash31(i + vec3(0.0, 0.0, 1.0));
+	float n101 = hs_hash31(i + vec3(1.0, 0.0, 1.0));
+	float n011 = hs_hash31(i + vec3(0.0, 1.0, 1.0));
+	float n111 = hs_hash31(i + vec3(1.0, 1.0, 1.0));
+	float nx00 = mix(n000, n100, f.x);
+	float nx10 = mix(n010, n110, f.x);
+	float nx01 = mix(n001, n101, f.x);
+	float nx11 = mix(n011, n111, f.x);
+	float nxy0 = mix(nx00, nx10, f.y);
+	float nxy1 = mix(nx01, nx11, f.y);
+	return mix(nxy0, nxy1, f.z);
+}
+
+float hs_fbm(vec3 p) {
+	float a = 0.0;
+	float amp = 0.65;
+	for (int i = 0; i < 2; i++) {
+		a += (hs_vnoise(p) * 2.0 - 1.0) * amp;
+		p = p * 2.07 + vec3(1.7, 9.2, 2.3);
+		amp *= 0.5;
+	}
+	return a;
+}
+
 vec4 texture_antitile(sampler2D albedo_tex, sampler2D normal_tex, vec2 uv, out vec4 out_normal) {
 	float frequency = 2.0;
 	float scale = 1.3;
@@ -182,6 +226,24 @@ void vertex() {
 	float h = sample_heightmap(u_terrain_heightmap, UV);
 	VERTEX.y = h;
 	wpos.y = h;
+
+	// HyperSpace: warp hills after heightmap (DirectMeshInstance-safe via terrain material).
+	if (u_hs_noise_amount > 0.001) {
+		float feature = max(u_hs_noise_scale, 0.35);
+		float freq = 1.0 / feature;
+		vec3 sample_p = vec3(cell_coords.x, h, cell_coords.y) * freq
+			+ vec3(u_hs_noise_time * 0.14, u_hs_noise_time * 0.09, u_hs_noise_time * 0.11);
+		float nx = hs_fbm(sample_p);
+		float ny = hs_fbm(sample_p + vec3(17.2, 3.1, 9.4));
+		float nz = hs_fbm(sample_p + vec3(4.8, 21.7, 2.6));
+		vec3 axis_disp = vec3(nx, ny, nz) * u_hs_noise_axes;
+		float along_n = hs_fbm(sample_p + vec3(8.0, 1.0, 5.0));
+		float axis_w = max(length(u_hs_noise_axes), 0.001);
+		vec3 nrm = u_terrain_normal_basis * unpack_normal(texture(u_terrain_normalmap, UV));
+		VERTEX += (nrm * along_n * 0.7 * (axis_w / 1.732) + axis_disp * 0.95) * u_hs_noise_amount;
+		wpos = MODEL_MATRIX * vec4(VERTEX, 1);
+		h = VERTEX.y;
+	}
 
 	vec3 base_ground_uv = vec3(cell_coords.x, h * MODEL_MATRIX[1][1], cell_coords.y);
 	v_ground_uv0 = base_ground_uv.xz / u_ground_uv_scale_per_texture.x;

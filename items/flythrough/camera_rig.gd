@@ -15,6 +15,11 @@ var _curve: Curve3D
 var _distance: float = 0.0
 var _yaw: float = 0.0
 var _pitch: float = 0.0
+var _spin_roll: float = 0.0
+## Reactive rotation offsets — separate from mouse/gamepad look so disable can snap back.
+var _reactive_yaw: float = 0.0
+var _reactive_pitch: float = 0.0
+var _reactive_roll: float = 0.0
 var _mod: ModulatorBus
 
 
@@ -24,6 +29,8 @@ func setup(camera: Camera3D, curve: Curve3D) -> void:
 	_distance = 0.0
 	_yaw = 0.0
 	_pitch = 0.0
+	_spin_roll = 0.0
+	reset_reactive_spin()
 	_bind_shared_modulator()
 	_apply_transform()
 
@@ -35,6 +42,28 @@ func set_modulator(mod: ModulatorBus) -> void:
 func get_modulator() -> ModulatorBus:
 	_bind_shared_modulator()
 	return _mod
+
+
+func apply_reactive_spin(rate: float, axes: Vector3) -> void:
+	## Continuous look spin from Reactivity Rotation (camera target / Camera motion).
+	if axes.length_squared() < 0.01:
+		return
+	var r := maxf(rate, 0.0)
+	_reactive_yaw += r * axes.y
+	_reactive_pitch += r * axes.x
+	_reactive_pitch = clampf(_reactive_pitch, deg_to_rad(-max_pitch_deg), deg_to_rad(max_pitch_deg))
+	_reactive_roll += r * axes.z
+	# Soft-wrap roll so it doesn't runaway forever without looking wild.
+	_reactive_roll = fposmod(_reactive_roll + PI, TAU) - PI
+
+
+func reset_reactive_spin() -> void:
+	## Clear audio/reactivity spin so the camera returns to path + mouse look baseline.
+	_reactive_yaw = 0.0
+	_reactive_pitch = 0.0
+	_reactive_roll = 0.0
+	_spin_roll = 0.0
+	_apply_transform()
 
 
 func _bind_shared_modulator() -> void:
@@ -131,13 +160,13 @@ func _apply_transform() -> void:
 	if length <= 0.01:
 		return
 	var path_xf := _curve.sample_baked_with_rotation(_distance, false)
-	var yaw := _yaw
-	var pitch := _pitch
-	var roll := 0.0
+	var yaw := _yaw + _reactive_yaw
+	var pitch := _pitch + _reactive_pitch
+	var roll := _spin_roll + _reactive_roll
 	if _mod and _mod.preset != ModulatorBus.Preset.OFF:
 		yaw += _mod.yaw_offset
 		pitch += _mod.pitch_offset
 		roll += _mod.roll_offset
-		pitch = clampf(pitch, deg_to_rad(-max_pitch_deg), deg_to_rad(max_pitch_deg))
+	pitch = clampf(pitch, deg_to_rad(-max_pitch_deg), deg_to_rad(max_pitch_deg))
 	var look := Basis.from_euler(Vector3(pitch, yaw, roll))
 	_camera.global_transform = Transform3D(path_xf.basis * look, path_xf.origin)

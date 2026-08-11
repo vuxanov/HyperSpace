@@ -5,6 +5,7 @@ class_name FlythroughEnvironment
 
 const RH = preload("res://core/reactivity_hub.gd")
 const _MEDIA_PROP := preload("res://items/flythrough/media_prop.gd")
+const _AssetCache := preload("res://core/asset_cache.gd")
 ## Target longest AABB axis (meters) for imported environment models.
 const ENV_TARGET_LONGEST := 48.0
 const ENV_MIN_LONGEST := 10.0
@@ -42,6 +43,14 @@ var _terrain_meta: Dictionary = {}
 var _rot_accum_center: Vector3 = Vector3.ZERO
 var _rot_accum_scatter: Vector3 = Vector3.ZERO
 var _rot_accum_env: Vector3 = Vector3.ZERO
+## Spawn / baseline orientations — restored when reactive rotation turns off.
+var _env_rest_rotation := Vector3.ZERO
+var _center_rest_rotation := Vector3.ZERO
+var _scatter_rest_rotations: Array[Vector3] = []
+var _rot_driving_env: bool = false
+var _rot_driving_center: bool = false
+var _rot_driving_scatter: bool = false
+var _rot_driving_camera: bool = false
 var _base_fill_energy: float = 1.0
 var _base_sun_energy: float = 1.1
 var _base_sun_color := Color(1.0, 0.96, 0.9)
@@ -73,6 +82,20 @@ const NOISE_DEFORM_SHADER: Shader = preload("res://effects/noise_deform.gdshader
 const MEDIA_SCATTER_CAP := 24
 const NOISE_MESH_LIMIT := 48
 const PARTICLE_AMOUNT_HYSTERESIS := 80
+## Skip path rebuild when env AABB barely changes (meters).
+const PATH_AABB_EPS := 0.75
+
+## Async layer swap generations — ignore stale callbacks.
+var _load_gen: Dictionary = {"environment": 0, "centerpiece": 0, "scatter": 0, "lighting": 0}
+var _pending_scatter_after_env: bool = false
+var _last_path_aabb := AABB()
+var _has_path_aabb: bool = false
+var _env_source_key: String = ""
+var _center_source_key: String = ""
+var _scatter_source_key: String = ""
+## Incremental scatter spawn (avoids instantiating 18+ GLBs in one frame).
+var _scatter_spawn_job: Dictionary = {}
+const SCATTER_PER_FRAME := 4
 
 
 func _ready() -> void:
@@ -135,15 +158,11 @@ func set_layer_source(layer_id: String, config: Dictionary) -> void:
 		return
 	match layer_id:
 		"environment":
-			_rebuild_environment()
-			_rebuild_path_from_environment(true)
-			_rebuild_scatter()
-			_place_centerpiece()
+			_begin_environment_swap(config)
 		"scatter":
-			_rebuild_scatter()
+			_begin_scatter_swap(config)
 		"centerpiece":
-			_rebuild_centerpiece()
-			_place_centerpiece()
+			_begin_centerpiece_swap(config)
 
 
 func get_layer_config(layer_id: String) -> Dictionary:
@@ -276,35 +295,39 @@ func _apply_lighting_config(config: Dictionary) -> void:
 		"hdri" if use_hdri else ("sky" if bool(cfg.get("use_sky", false)) else "color"),
 	]
 	# Drop previous sky RID so panorama swaps are visible (in-place Sky assign can stick).
-	if lighting_key != _applied_lighting_key or use_hdri:
-		env.sky = null
-		env.background_mode = Environment.BG_COLOR
+	# For async HDRI: only clear when we already have a panorama ready.
+	var panorama_ready: Texture2D = null
+	if use_hdri and not hdri_path.is_empty():
+		panorama_ready = _AssetCache.get_texture(hdri_path)
+	if lighting_key != _applied_lighting_key:
+		if not use_hdri or panorama_ready != null:
+			env.sky = null
+			env.background_mode = Environment.BG_COLOR
 
 	if use_hdri and not hdri_path.is_empty():
-		var panorama := _load_hdri_texture(hdri_path)
-		if panorama != null:
-			var sky := Sky.new()
-			var mat := PanoramaSkyMaterial.new()
-			mat.panorama = panorama
-			_base_sky_energy = float(cfg.get("sky_energy", 1.0))
-			mat.energy_multiplier = _base_sky_energy
-			sky.sky_material = mat
-			env.background_mode = Environment.BG_SKY
-			env.sky = sky
-			env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-			env.ambient_light_sky_contribution = 1.0
-			# Milder ambient so IBL doesn't crush albedo detail.
-			_base_ambient_energy = float(cfg.get("ambient_energy", 0.55))
-			env.ambient_light_energy = _base_ambient_energy
-			env.ambient_light_color = Color(1, 1, 1)
-			env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
-			# HDRI must read as sky — keep fog off the panorama.
-			env.fog_sky_affect = 0.0
-			if fog_density <= 0.00015:
-				env.fog_enabled = false
+		if panorama_ready != null:
+			_apply_hdri_panorama(env, cfg, panorama_ready, lighting_key, fog_density)
+			return
+		# Keep previous sky visible while HDRI loads off-thread (never sync Image.load here).
+		var gen := int(_load_gen.get("lighting", 0)) + 1
+		_load_gen["lighting"] = gen
+		var st: int = _AssetCache.request_texture(hdri_path, func(status: int, payload: Variant) -> void:
+			if gen != int(_load_gen.get("lighting", 0)):
+				return
+			if status != _AssetCache.Status.READY or not (payload is Texture2D):
+				push_warning("FlythroughEnvironment: HDRI missing or unloadable: %s" % hdri_path)
+				return
+			if _world_env == null or _world_env.environment == null:
+				return
+			_apply_hdri_panorama(_world_env.environment, cfg, payload as Texture2D, lighting_key, fog_density)
+		)
+		if st == _AssetCache.Status.READY:
+			var tex := _AssetCache.get_texture(hdri_path)
+			if tex != null:
+				_apply_hdri_panorama(env, cfg, tex, lighting_key, fog_density)
+				return
+		if st == _AssetCache.Status.LOADING:
 			_applied_lighting_key = lighting_key
-			# Re-bind so SubViewport world picks up the new sky RID.
-			_world_env.environment = env
 			return
 		push_warning("FlythroughEnvironment: HDRI missing or unloadable: %s" % hdri_path)
 
@@ -337,12 +360,38 @@ func _apply_lighting_config(config: Dictionary) -> void:
 	_world_env.environment = env
 
 
-func _load_hdri_texture(path: String) -> Texture2D:
+func _apply_hdri_panorama(env: Environment, cfg: Dictionary, panorama: Texture2D, lighting_key: String, fog_density: float) -> void:
+	var sky := Sky.new()
+	var mat := PanoramaSkyMaterial.new()
+	mat.panorama = panorama
+	_base_sky_energy = float(cfg.get("sky_energy", 1.0))
+	mat.energy_multiplier = _base_sky_energy
+	sky.sky_material = mat
+	env.background_mode = Environment.BG_SKY
+	env.sky = sky
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.ambient_light_sky_contribution = 1.0
+	_base_ambient_energy = float(cfg.get("ambient_energy", 0.55))
+	env.ambient_light_energy = _base_ambient_energy
+	env.ambient_light_color = Color(1, 1, 1)
+	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
+	env.fog_sky_affect = 0.0
+	if fog_density <= 0.00015:
+		env.fog_enabled = false
+	_applied_lighting_key = lighting_key
+	_world_env.environment = env
+
+
+func _load_hdri_texture_cached(path: String) -> Texture2D:
+	var cached := _AssetCache.get_texture(path)
+	if cached != null:
+		return cached
 	var resolved := path.replace("\\", "/")
 	if resolved.begins_with("res://") or resolved.begins_with("user://"):
 		if ResourceLoader.exists(resolved):
-			var res: Resource = load(resolved)
+			var res: Resource = ResourceLoader.load(resolved)
 			if res is Texture2D:
+				_AssetCache.put_texture(resolved, res as Texture2D)
 				return res as Texture2D
 	var file_path := resolved
 	if file_path.begins_with("res://") or file_path.begins_with("user://"):
@@ -352,7 +401,13 @@ func _load_hdri_texture(path: String) -> Texture2D:
 	var img: Image = Image.load_from_file(file_path)
 	if img == null or img.is_empty():
 		return null
-	return ImageTexture.create_from_image(img)
+	var tex := ImageTexture.create_from_image(img)
+	_AssetCache.put_texture(resolved, tex)
+	return tex
+
+
+func _load_hdri_texture(path: String) -> Texture2D:
+	return _load_hdri_texture_cached(path)
 
 
 func _setup_particle_systems() -> void:
@@ -406,6 +461,201 @@ func _rebuild_all() -> void:
 		_rig.setup(_camera, _curve)
 
 
+func _bump_load_gen(layer_id: String) -> int:
+	var g := int(_load_gen.get(layer_id, 0)) + 1
+	_load_gen[layer_id] = g
+	return g
+
+
+func _begin_environment_swap(config: Dictionary) -> void:
+	var source := FlythroughLayerSlot.resolve_source_string(config)
+	if source.is_empty():
+		source = FlythroughAssetCatalog.default_environment_path()
+	var key := "%s|%s" % [source, str(config.get("user_scale", config.get("scale", 1.0)))]
+	# Same asset already showing — only refresh user scale / framing.
+	if key == _env_source_key and _env_root.get_child_count() > 1:
+		_env_user_scale = clampf(float(config.get("user_scale", config.get("scale", 1.0))), 0.05, 50.0)
+		_apply_env_display_scale()
+		_update_framing_from_environment()
+		_place_centerpiece()
+		return
+	if not FlythroughLayerSlot.is_file_path(source) or FlythroughLayerSlot.is_media_path(source):
+		_rebuild_environment()
+		_rebuild_path_from_environment(true)
+		_schedule_scatter_rebuild()
+		_place_centerpiece()
+		_env_source_key = key
+		return
+	var gen := _bump_load_gen("environment")
+	var packed := _AssetCache.get_scene(source)
+	if packed != null:
+		_swap_environment_packed(packed, config, key, gen)
+		return
+	var st: int = _AssetCache.request_scene(source, func(status: int, payload: Variant) -> void:
+		if gen != int(_load_gen.get("environment", 0)):
+			return
+		if status != _AssetCache.Status.READY or not (payload is PackedScene):
+			# Fallback sync once so the layer still updates.
+			_rebuild_environment()
+			_rebuild_path_from_environment(true)
+			_schedule_scatter_rebuild()
+			_place_centerpiece()
+			_env_source_key = key
+			return
+		_swap_environment_packed(payload as PackedScene, config, key, gen)
+	)
+	if st == _AssetCache.Status.LOADING:
+		# Keep previous env mesh visible until ready.
+		return
+	_rebuild_environment()
+	_rebuild_path_from_environment(true)
+	_schedule_scatter_rebuild()
+	_place_centerpiece()
+	_env_source_key = key
+
+
+func _swap_environment_packed(packed: PackedScene, config: Dictionary, key: String, gen: int) -> void:
+	if gen != int(_load_gen.get("environment", 0)):
+		return
+	_clear_noise_deform()
+	for child in _env_root.get_children():
+		if child == _env_particles:
+			continue
+		_env_root.remove_child(child)
+		child.free()
+	_terrain_meta = {}
+	_env_fit_scale = 1.0
+	_mat_cache.clear()
+	_env_user_scale = clampf(float(config.get("user_scale", config.get("scale", 1.0))), 0.05, 50.0)
+	_env_root.scale = Vector3.ONE * _env_user_scale
+	var instance: Node = packed.instantiate()
+	_env_root.add_child(instance)
+	if instance is Node3D:
+		_fit_environment_node(instance as Node3D)
+	_env_particles_on = false
+	_sync_particles()
+	_env_source_key = key
+	_rebuild_path_from_environment_if_needed(true)
+	_schedule_scatter_rebuild()
+	_place_centerpiece()
+	_capture_env_rest_rotation()
+
+
+func _begin_centerpiece_swap(config: Dictionary) -> void:
+	var source := FlythroughLayerSlot.resolve_source_string(config)
+	var key := source
+	if key == _center_source_key:
+		_place_centerpiece()
+		return
+	if source.is_empty() or not FlythroughLayerSlot.is_file_path(source) or FlythroughLayerSlot.is_media_path(source):
+		_rebuild_centerpiece()
+		_place_centerpiece()
+		_center_source_key = key
+		return
+	var gen := _bump_load_gen("centerpiece")
+	var packed := _AssetCache.get_scene(source)
+	if packed != null:
+		_swap_centerpiece_packed(packed, key, gen)
+		return
+	var st: int = _AssetCache.request_scene(source, func(status: int, payload: Variant) -> void:
+		if gen != int(_load_gen.get("centerpiece", 0)):
+			return
+		if status != _AssetCache.Status.READY or not (payload is PackedScene):
+			_rebuild_centerpiece()
+			_place_centerpiece()
+			_center_source_key = key
+			return
+		_swap_centerpiece_packed(payload as PackedScene, key, gen)
+	)
+	if st == _AssetCache.Status.LOADING:
+		return
+	_rebuild_centerpiece()
+	_place_centerpiece()
+	_center_source_key = key
+
+
+func _swap_centerpiece_packed(packed: PackedScene, key: String, gen: int) -> void:
+	if gen != int(_load_gen.get("centerpiece", 0)):
+		return
+	_clear_noise_deform()
+	for child in _center_root.get_children():
+		if child == _center_particles:
+			continue
+		_center_root.remove_child(child)
+		child.free()
+	_centerpiece_mesh = null
+	_mat_cache.clear()
+	var instance: Node = packed.instantiate()
+	_center_root.add_child(instance)
+	if instance is Node3D:
+		_center_base_scale = FlythroughLayerSlot.fit_node_to_size(instance as Node3D, 1.6)
+	_raise_centerpiece_priority(_center_root)
+	_center_particles_on = false
+	_sync_particles()
+	_center_source_key = key
+	_place_centerpiece()
+	_capture_centerpiece_rest_rotation()
+
+
+func _begin_scatter_swap(config: Dictionary) -> void:
+	var source := FlythroughLayerSlot.resolve_source_string(config)
+	var count := int(config.get("count", 18))
+	var key := "%s|%d" % [source, count]
+	if key == _scatter_source_key and not _scatter_nodes.is_empty():
+		return
+	if source.is_empty() or not FlythroughLayerSlot.is_file_path(source) or FlythroughLayerSlot.is_media_path(source):
+		_rebuild_scatter()
+		_scatter_source_key = key
+		return
+	var gen := _bump_load_gen("scatter")
+	var packed := _AssetCache.get_scene(source)
+	if packed != null:
+		_scatter_source_key = key
+		_rebuild_scatter_with_packed(packed)
+		return
+	var st: int = _AssetCache.request_scene(source, func(status: int, payload: Variant) -> void:
+		if gen != int(_load_gen.get("scatter", 0)):
+			return
+		if status != _AssetCache.Status.READY or not (payload is PackedScene):
+			_rebuild_scatter()
+			_scatter_source_key = key
+			return
+		_scatter_source_key = key
+		_rebuild_scatter_with_packed(payload as PackedScene)
+	)
+	if st == _AssetCache.Status.LOADING:
+		return
+	_rebuild_scatter()
+	_scatter_source_key = key
+
+
+func _schedule_scatter_rebuild() -> void:
+	## Spread env→path→scatter across frames so one apply doesn't stall for seconds.
+	_pending_scatter_after_env = true
+	call_deferred("_flush_pending_scatter")
+
+
+func _flush_pending_scatter() -> void:
+	if not _pending_scatter_after_env:
+		return
+	_pending_scatter_after_env = false
+	_rebuild_scatter()
+
+
+func _rebuild_path_from_environment_if_needed(reset_progress: bool = true) -> void:
+	var aabb := _fit_aabb_ignoring_user_scale()
+	if _has_path_aabb:
+		var prev := _last_path_aabb
+		var center_delta := (aabb.get_center() - prev.get_center()).length()
+		var size_delta := (aabb.size - prev.size).length()
+		if center_delta < PATH_AABB_EPS and size_delta < PATH_AABB_EPS:
+			_update_framing_from_environment()
+			return
+	_last_path_aabb = aabb
+	_has_path_aabb = true
+	_rebuild_path_from_environment(reset_progress)
+
+
 func _rebuild_environment() -> void:
 	_clear_noise_deform()
 	for child in _env_root.get_children():
@@ -438,6 +688,8 @@ func _rebuild_environment() -> void:
 		_update_framing_from_environment()
 	_env_particles_on = false
 	_sync_particles()
+	_env_source_key = "%s|%s" % [source, str(_env_user_scale)]
+	_capture_env_rest_rotation()
 
 
 func _fit_environment_node(node: Node3D) -> void:
@@ -511,6 +763,8 @@ func _rebuild_path_from_environment(reset_progress: bool = true) -> void:
 		_curve = FlythroughPathBuilder.overland(80.0, 8.0)
 	elif FlythroughLayerSlot.is_file_path(source):
 		var aabb := _fit_aabb_ignoring_user_scale()
+		_last_path_aabb = aabb
+		_has_path_aabb = true
 		var min_half := clampf(10.0 * clampf(_env_fit_scale, 0.25, 4.0), 8.0, 28.0)
 		_curve = FlythroughPathBuilder.from_aabb(aabb, 0.12, min_half)
 		_update_framing_from_environment()
@@ -539,6 +793,7 @@ func _rebuild_centerpiece() -> void:
 	if source.is_empty():
 		_center_particles_on = false
 		_sync_particles()
+		_center_source_key = ""
 		return
 	if FlythroughLayerSlot.is_file_path(source):
 		# Media: parent is camera-locked each frame, so mesh uses Y-180 flip (no
@@ -560,6 +815,8 @@ func _rebuild_centerpiece() -> void:
 	_raise_centerpiece_priority(_center_root)
 	_center_particles_on = false  # force resync
 	_sync_particles()
+	_center_source_key = source
+	_capture_centerpiece_rest_rotation()
 
 
 func _raise_centerpiece_priority(node: Node) -> void:
@@ -621,6 +878,7 @@ func _update_centerpiece_transform(delta: float) -> void:
 
 func _rebuild_scatter() -> void:
 	_clear_noise_deform()
+	_cancel_scatter_spawn()
 	for child in _scatter_root.get_children():
 		if child == _scatter_particles:
 			continue
@@ -629,6 +887,8 @@ func _rebuild_scatter() -> void:
 	_scatter_nodes.clear()
 	_scatter_base_scales.clear()
 	_scatter_base_positions.clear()
+	_scatter_rest_rotations.clear()
+	_rot_driving_scatter = false
 	_mat_cache.clear()
 	if _curve == null:
 		return
@@ -657,11 +917,9 @@ func _rebuild_scatter() -> void:
 	var media_master: Node3D = null
 	var media_base_scale := Vector3.ONE
 	if use_file and not use_media:
-		var res_path := source.replace("\\", "/")
-		if ResourceLoader.exists(res_path):
-			var res: Resource = load(res_path)
-			if res is PackedScene:
-				packed_scene = res as PackedScene
+		packed_scene = _AssetCache.get_scene(source)
+		if packed_scene == null:
+			packed_scene = _AssetCache.peek_or_load_scene_sync(source)
 
 	if use_media:
 		media_master = _MEDIA_PROP.spawn(_scatter_root, source, {"role": "scatter", "billboard": true}) as Node3D
@@ -672,7 +930,15 @@ func _rebuild_scatter() -> void:
 		FlythroughLayerSlot.fit_node_to_size(media_master, 0.85)
 		media_base_scale = media_master.scale
 	elif use_file:
-		pass
+		if packed_scene:
+			_rebuild_scatter_with_packed(packed_scene)
+			var scfg2: Dictionary = _layer_configs.get("scatter", {})
+			_scatter_source_key = "%s|%d" % [
+				FlythroughLayerSlot.resolve_source_string(scfg2),
+				int(scfg2.get("count", 18)),
+			]
+			return
+		# Fall through to sync load_asset_into below if cache miss without packed.
 	elif FlythroughLayerSlot.is_primitive_source(source):
 		var kind := FlythroughLayerSlot.normalize_primitive(source)
 		var proto := FlythroughPrimitives.spawn_scatter_template(kind)
@@ -707,15 +973,7 @@ func _rebuild_scatter() -> void:
 				inst = clone
 			inst.scale = media_base_scale
 		elif use_file:
-			if packed_scene:
-				var n := packed_scene.instantiate()
-				_scatter_root.add_child(n)
-				inst = n as Node3D
-				if inst == null:
-					n.queue_free()
-					continue
-			else:
-				inst = FlythroughLayerSlot.load_asset_into(_scatter_root, source, {"role": "scatter", "billboard": true})
+			inst = FlythroughLayerSlot.load_asset_into(_scatter_root, source, {"role": "scatter", "billboard": true})
 			if inst == null:
 				continue
 			FlythroughLayerSlot.fit_node_to_size(inst, 0.85)
@@ -730,11 +988,109 @@ func _rebuild_scatter() -> void:
 		_scatter_nodes.append(inst)
 		_scatter_base_scales.append(inst.scale)
 		_scatter_base_positions.append(inst.position)
+		_scatter_rest_rotations.append(inst.rotation)
+	_rot_driving_scatter = false
 	_scatter_particles_on = false
 	_sync_particles()
+	var scfg: Dictionary = _layer_configs.get("scatter", {})
+	_scatter_source_key = "%s|%d" % [
+		FlythroughLayerSlot.resolve_source_string(scfg),
+		int(scfg.get("count", 18)),
+	]
+
+
+func _rebuild_scatter_with_packed(packed_scene: PackedScene) -> void:
+	## Clear then instantiate a few clones per frame (no disk I/O; no multi-second stall).
+	_clear_noise_deform()
+	_cancel_scatter_spawn()
+	for child in _scatter_root.get_children():
+		if child == _scatter_particles:
+			continue
+		_scatter_root.remove_child(child)
+		child.free()
+	_scatter_nodes.clear()
+	_scatter_base_scales.clear()
+	_scatter_base_positions.clear()
+	_scatter_rest_rotations.clear()
+	_rot_driving_scatter = false
+	_mat_cache.clear()
+	if _curve == null or packed_scene == null:
+		_scatter_particles_on = false
+		_sync_particles()
+		return
+	var config: Dictionary = _layer_configs.get("scatter", {})
+	var count := clampi(int(config.get("count", 18)), 0, 80)
+	var length := _curve.get_baked_length()
+	if length <= 0.01 or count <= 0:
+		_scatter_particles_on = false
+		_sync_particles()
+		return
+	_scatter_spawn_job = {
+		"packed": packed_scene,
+		"count": count,
+		"length": length,
+		"index": 0,
+		"rng_state": 42,
+	}
+	_tick_scatter_spawn()
+
+
+func _cancel_scatter_spawn() -> void:
+	_scatter_spawn_job.clear()
+
+
+func _tick_scatter_spawn() -> void:
+	if _scatter_spawn_job.is_empty():
+		return
+	var packed: PackedScene = _scatter_spawn_job.get("packed") as PackedScene
+	if packed == null or _curve == null:
+		_cancel_scatter_spawn()
+		return
+	var count: int = int(_scatter_spawn_job.get("count", 0))
+	var length: float = float(_scatter_spawn_job.get("length", 0.0))
+	var index: int = int(_scatter_spawn_job.get("index", 0))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 42
+	# Fast-forward RNG to current index for stable positions.
+	for _skip in index:
+		rng.randf()
+		rng.randf()
+		rng.randf()
+	var spawned := 0
+	while index < count and spawned < SCATTER_PER_FRAME:
+		var dist := (float(index) + 0.5) / float(count) * length
+		var path_xf := _curve.sample_baked_with_rotation(dist, false)
+		var side := Vector3(path_xf.basis.x.normalized())
+		var up := Vector3(path_xf.basis.y.normalized())
+		var offset := side * rng.randf_range(-_scatter_side_range, _scatter_side_range) \
+			+ up * rng.randf_range(-_scatter_side_range * 0.5, _scatter_side_range * 0.55)
+		var n := packed.instantiate()
+		_scatter_root.add_child(n)
+		var inst := n as Node3D
+		if inst == null:
+			n.queue_free()
+			index += 1
+			spawned += 1
+			continue
+		FlythroughLayerSlot.fit_node_to_size(inst, 0.85)
+		inst.position = path_xf.origin + offset
+		inst.scale = inst.scale * rng.randf_range(0.75, 1.25)
+		_scatter_nodes.append(inst)
+		_scatter_base_scales.append(inst.scale)
+		_scatter_base_positions.append(inst.position)
+		_scatter_rest_rotations.append(inst.rotation)
+		index += 1
+		spawned += 1
+	_scatter_spawn_job["index"] = index
+	if index >= count:
+		_cancel_scatter_spawn()
+		_rot_driving_scatter = false
+		_scatter_particles_on = false
+		_sync_particles()
 
 
 func _process(delta: float) -> void:
+	_tick_scatter_spawn()
 	_noise_t += delta
 	if _particle_beat_cool > 0.0:
 		_particle_beat_cool = maxf(_particle_beat_cool - delta, 0.0)
@@ -929,6 +1285,7 @@ func apply_audio_state(state: AudioState) -> void:
 		_apply_centerpiece_rotation(state, lfo)
 
 	_apply_noise_distort(state, lfo)
+	_apply_camera_rotation(state, lfo)
 	_drive_particle_systems(state)
 
 
@@ -1007,10 +1364,13 @@ func _apply_environment_audio(state: AudioState, lfo: float) -> void:
 
 
 func _apply_environment_rotation(state: AudioState, lfo: float) -> void:
-	if not RH.rotation_applies_to("environment") or _env_root == null:
+	var want := RH.rotation_applies_to("environment") and RH.property_active("rotation") and _env_root != null
+	if not want:
+		if _rot_driving_env:
+			_restore_env_rotation()
+			_rot_driving_env = false
 		return
-	if not RH.property_active("rotation"):
-		return
+	_rot_driving_env = true
 	var rd := RH.drive_value("rotation", state, lfo)
 	# Terrain: slower orbit. Non-terrain: mild. Amount + axes from settings.
 	var mul := 0.55 if not _terrain_meta.is_empty() else 1.0
@@ -1040,16 +1400,41 @@ func _apply_centerpiece_audio(state: AudioState, lfo: float) -> void:
 
 
 func _apply_centerpiece_rotation(state: AudioState, lfo: float) -> void:
-	if not RH.rotation_applies_to("centerpiece"):
-		return
-	if not RH.property_active("rotation") or _center_particles_on:
+	var want := RH.rotation_applies_to("centerpiece") and RH.property_active("rotation") \
+		and not _center_particles_on
+	if not want:
+		if _rot_driving_center:
+			_restore_centerpiece_rotation()
+			_rot_driving_center = false
 		return
 	var node := _centerpiece_content_node()
 	if node == null:
+		if _rot_driving_center:
+			_restore_centerpiece_rotation()
+			_rot_driving_center = false
 		return
+	_rot_driving_center = true
 	var rd := RH.drive_value("rotation", state, lfo)
 	var rate := RH.rotation_rate(rd) * 1.15
 	_apply_axis_rotation(node, rate, false)
+
+
+func _apply_camera_rotation(state: AudioState, lfo: float) -> void:
+	if _rig == null:
+		return
+	var want := RH.rotation_applies_to("camera") and RH.schedule_open("rotation") \
+		and RH.source_for("rotation") != "off"
+	# property_active("rotation") covers affect_rotation OR affect_camera_rotation + schedule.
+	want = want and RH.property_active("rotation")
+	if not want:
+		if _rot_driving_camera:
+			_rig.reset_reactive_spin()
+			_rot_driving_camera = false
+		return
+	_rot_driving_camera = true
+	var rd := RH.drive_value("rotation", state, lfo)
+	var rate := RH.rotation_rate(rd) * 0.85
+	_rig.apply_reactive_spin(rate, RH.rotation_axis_mask())
 
 
 func _centerpiece_content_node() -> Node3D:
@@ -1080,6 +1465,48 @@ func _apply_axis_rotation(node: Node3D, rate: float, track_env_accum: bool) -> v
 		_rot_accum_env = node.rotation
 
 
+func _capture_env_rest_rotation() -> void:
+	if _env_root:
+		_env_rest_rotation = _env_root.rotation
+	_rot_driving_env = false
+
+
+func _capture_centerpiece_rest_rotation() -> void:
+	var node := _centerpiece_content_node()
+	_center_rest_rotation = node.rotation if node else Vector3.ZERO
+	_rot_driving_center = false
+
+
+func _capture_scatter_rest_rotations() -> void:
+	_scatter_rest_rotations.clear()
+	for node in _scatter_nodes:
+		if is_instance_valid(node):
+			_scatter_rest_rotations.append(node.rotation)
+		else:
+			_scatter_rest_rotations.append(Vector3.ZERO)
+	_rot_driving_scatter = false
+
+
+func _restore_env_rotation() -> void:
+	if _env_root:
+		_env_root.rotation = _env_rest_rotation
+	_rot_accum_env = _env_rest_rotation
+
+
+func _restore_centerpiece_rotation() -> void:
+	var node := _centerpiece_content_node()
+	if node:
+		node.rotation = _center_rest_rotation
+
+
+func _restore_scatter_rotations() -> void:
+	for i in _scatter_nodes.size():
+		if not is_instance_valid(_scatter_nodes[i]):
+			continue
+		var rest: Vector3 = _scatter_rest_rotations[i] if i < _scatter_rest_rotations.size() else Vector3.ZERO
+		_scatter_nodes[i].rotation = rest
+
+
 func _apply_scatter_audio(state: AudioState, lfo: float) -> void:
 	if RH.property_active("scale") and not _scatter_particles_on:
 		var d := RH.drive_value("scale", state, lfo)
@@ -1106,10 +1533,14 @@ func _apply_scatter_audio(state: AudioState, lfo: float) -> void:
 
 
 func _apply_scatter_rotation(state: AudioState, lfo: float) -> void:
-	if not RH.rotation_applies_to("scatter"):
+	var want := RH.rotation_applies_to("scatter") and RH.property_active("rotation") \
+		and not _scatter_particles_on
+	if not want:
+		if _rot_driving_scatter:
+			_restore_scatter_rotations()
+			_rot_driving_scatter = false
 		return
-	if not RH.property_active("rotation") or _scatter_particles_on:
-		return
+	_rot_driving_scatter = true
 	var rd := RH.drive_value("rotation", state, lfo)
 	var rate := RH.rotation_rate(rd) * 0.95
 	for node in _scatter_nodes:
@@ -1231,26 +1662,26 @@ func _apply_noise_distort(state: AudioState, lfo: float) -> void:
 	var want_scatter := RH.noise_applies_to("scatter") and not _scatter_particles_on
 	if _env_root and _terrain_meta.is_empty():
 		# Don't clobber reactive multi-axis rotation on the env root.
-		if not RH.property_active("rotation"):
-			_env_root.rotation_degrees.x = 0.0
-			_env_root.rotation_degrees.z = 0.0
+		if not RH.property_active("rotation") or not RH.rotation_applies_to("environment"):
+			_restore_env_rotation()
 		_env_root.position = Vector3.ZERO
 	var cnode := _centerpiece_content_node()
-	if cnode and not RH.property_active("rotation"):
+	if cnode and (not RH.property_active("rotation") or not RH.rotation_applies_to("centerpiece")):
 		cnode.position = Vector3.ZERO
-		cnode.rotation_degrees.x = 0.0
-		cnode.rotation_degrees.z = 0.0
+		_restore_centerpiece_rotation()
 	for i in _scatter_nodes.size():
 		if is_instance_valid(_scatter_nodes[i]) and i < _scatter_base_positions.size():
 			_scatter_nodes[i].position = _scatter_base_positions[i]
 
 	var active_ids: Dictionary = {}
-	# HTerrain uses DirectMeshInstance chunks — vertex shader overrides don't apply.
-	# Approximate displace via root transform wobble so mountains still react.
+	# HTerrain chunks use DirectMeshInstance — MeshInstance overrides never reach them.
+	# Drive Classic4 material uniforms (u_hs_noise_*) for real vertex displace on hills.
 	if want_env and not _terrain_meta.is_empty():
-		_apply_terrain_noise_wobble(amt, axes)
+		_apply_terrain_noise_displace(amt, feature, axes)
 	elif want_env:
 		_apply_noise_to_root(_env_root, amt, feature, Vector3(0.1, 0.2, 0.3), axes, active_ids)
+	else:
+		_clear_terrain_noise_displace()
 	if want_center and cnode:
 		_apply_noise_to_root(cnode, amt * 0.85, feature * 0.7, Vector3(1.1, 0.4, 0.7), axes, active_ids)
 	if want_scatter:
@@ -1262,14 +1693,31 @@ func _apply_noise_distort(state: AudioState, lfo: float) -> void:
 	_prune_noise_materials(active_ids)
 
 
-func _apply_terrain_noise_wobble(amount: float, axes: Vector3) -> void:
-	if _env_root == null:
+func _apply_terrain_noise_displace(amount: float, feature: float, axes: Vector3) -> void:
+	var terrain: Variant = _terrain_meta.get("terrain", null)
+	if terrain == null or not is_instance_valid(terrain):
 		return
-	var nx := _sample_noise(0.2, 1.0)
-	var ny := _sample_noise(1.1, 2.4)
-	var nz := _sample_noise(2.7, 0.6)
-	# World-unit wobble — amount already scaled by UI "how much".
-	_env_root.position = Vector3(nx, ny, nz) * axes * amount * 0.55
+	if terrain.has_method("set_shader_param"):
+		terrain.call("set_shader_param", "u_hs_noise_amount", amount)
+		terrain.call("set_shader_param", "u_hs_noise_scale", feature)
+		terrain.call("set_shader_param", "u_hs_noise_time", _noise_t)
+		terrain.call("set_shader_param", "u_hs_noise_axes", axes)
+	# Keep root stable — displace is in the terrain shader now.
+	if _env_root:
+		_env_root.position = Vector3.ZERO
+
+
+func _clear_terrain_noise_displace() -> void:
+	var terrain: Variant = _terrain_meta.get("terrain", null) if not _terrain_meta.is_empty() else null
+	if terrain == null or not is_instance_valid(terrain):
+		return
+	if terrain.has_method("set_shader_param"):
+		terrain.call("set_shader_param", "u_hs_noise_amount", 0.0)
+
+
+func _apply_terrain_noise_wobble(amount: float, axes: Vector3) -> void:
+	## Legacy fallback — prefer _apply_terrain_noise_displace.
+	_apply_terrain_noise_displace(amount, maxf(RH.noise_scale(), 0.5), axes)
 
 
 func _apply_noise_to_root(root: Node, amount: float, feature: float, nseed: Vector3, axes: Vector3, active_ids: Dictionary) -> void:
@@ -1399,6 +1847,7 @@ func _restore_noise_material(key: int) -> void:
 
 
 func _clear_noise_deform() -> void:
+	_clear_terrain_noise_displace()
 	var keys: Array = _noise_mats.keys()
 	for key in keys:
 		_restore_noise_material(int(key))
@@ -1407,15 +1856,13 @@ func _clear_noise_deform() -> void:
 	_noise_mesh_lists.clear()
 	if _env_root:
 		_env_root.position = Vector3.ZERO
-		if _terrain_meta.is_empty() and not RH.property_active("rotation"):
-			_env_root.rotation_degrees.x = 0.0
-			_env_root.rotation_degrees.z = 0.0
+		if _terrain_meta.is_empty() and (not RH.property_active("rotation") or not RH.rotation_applies_to("environment")):
+			_restore_env_rotation()
 	var cnode := _centerpiece_content_node()
 	if cnode:
 		cnode.position = Vector3.ZERO
-		if not RH.property_active("rotation"):
-			cnode.rotation_degrees.x = 0.0
-			cnode.rotation_degrees.z = 0.0
+		if not RH.property_active("rotation") or not RH.rotation_applies_to("centerpiece"):
+			_restore_centerpiece_rotation()
 	for i in _scatter_nodes.size():
 		if not is_instance_valid(_scatter_nodes[i]):
 			continue

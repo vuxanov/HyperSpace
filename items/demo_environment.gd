@@ -15,6 +15,9 @@ var _particles: GPUParticles3D
 var _env_rings: Array[MeshInstance3D] = []
 var _rotation_speed: float = 0.3
 var _base_scale: Vector3 = Vector3.ONE
+var _mesh_rest_rotation := Vector3.ZERO
+var _particles_rest_rotation := Vector3.ZERO
+var _rot_driving: bool = false
 var _particles_mode: bool = false
 var _scroll: float = 0.0
 
@@ -23,6 +26,10 @@ func _ready() -> void:
 	_build_world()
 	_build_environment_layer()
 	_build_foreground_layer()
+	if _mesh:
+		_mesh_rest_rotation = _mesh.rotation
+	if _particles:
+		_particles_rest_rotation = _particles.rotation
 
 
 func _build_world() -> void:
@@ -118,14 +125,24 @@ func _process(delta: float) -> void:
 		ring.rotate_z(delta * 0.4)
 	if _particles_mode:
 		if _particles and RH.rotation_applies_to("centerpiece") and RH.property_active("rotation"):
+			_rot_driving = true
 			_rotate_reactive(_particles, delta * _rotation_speed)
-		elif _particles and not RH.affect_rotation():
-			_particles.rotate_y(delta * 0.25)
+		elif _particles:
+			if _rot_driving:
+				_particles.rotation = _particles_rest_rotation
+				_rot_driving = false
+			if not RH.affect_rotation():
+				_particles.rotate_y(delta * 0.25)
 	elif _mesh:
 		if RH.rotation_applies_to("centerpiece") and RH.property_active("rotation"):
+			_rot_driving = true
 			_rotate_reactive(_mesh, delta * _rotation_speed)
-		elif not RH.affect_rotation():
-			_mesh.rotate_y(delta * 0.25)
+		else:
+			if _rot_driving:
+				_mesh.rotation = _mesh_rest_rotation
+				_rot_driving = false
+			if not RH.affect_rotation():
+				_mesh.rotate_y(delta * 0.25)
 
 
 func _rotate_reactive(node: Node3D, rate: float) -> void:

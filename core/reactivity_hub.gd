@@ -30,17 +30,17 @@ static func _director() -> Node:
 
 static func enabled() -> bool:
 	var n := node()
-	return bool(n.get("enabled")) if n else true
+	return bool(n.get("enabled")) if n else false
 
 
 static func affect_scale() -> bool:
 	var n := node()
-	return bool(n.get("affect_scale")) if n else true
+	return bool(n.get("affect_scale")) if n else false
 
 
 static func affect_light() -> bool:
 	var n := node()
-	return bool(n.get("affect_light")) if n else true
+	return bool(n.get("affect_light")) if n else false
 
 
 static func affect_emission() -> bool:
@@ -249,9 +249,19 @@ static func noise_applies_to(layer_id: String) -> bool:
 
 
 static func rotation_applies_to(layer_id: String) -> bool:
-	if not enabled() or not affect_rotation():
+	if not enabled():
 		return false
 	if source_for("rotation") == "off":
+		return false
+	# Camera can be driven from Camera motion nested toggle and/or Rotation target.
+	if layer_id == "camera":
+		var cam_rot := bool(get_field("affect_camera_rotation", false))
+		if cam_rot:
+			return true
+		if not affect_rotation():
+			return false
+		return _layer_matches_target(rotation_target(), "camera")
+	if not affect_rotation():
 		return false
 	return _layer_matches_target(rotation_target(), layer_id)
 
@@ -268,6 +278,8 @@ static func _layer_matches_target(t: String, layer_id: String) -> bool:
 	if t == "environment" and layer_id == "environment":
 		return true
 	if (t == "lights" or t == "light") and (layer_id == "lights" or layer_id == "light"):
+		return true
+	if (t == "camera" or t == "cam") and (layer_id == "camera" or layer_id == "cam"):
 		return true
 	return false
 
@@ -382,7 +394,9 @@ static func property_active(property: String) -> bool:
 		"emission":
 			return affect_emission() and source_for("emission") != "off"
 		"rotation":
-			return affect_rotation() and source_for("rotation") != "off"
+			if source_for("rotation") == "off":
+				return false
+			return affect_rotation() or bool(get_field("affect_camera_rotation", false))
 		"light":
 			return affect_light() and source_for("light") != "off"
 		"noise":

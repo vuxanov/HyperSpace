@@ -8,6 +8,7 @@ const TAB_ENV := 0
 const TAB_MAIN := 1
 const TAB_SCATTER := 2
 const TAB_LIGHT := 3
+const _AssetCache := preload("res://core/asset_cache.gd")
 
 @onready var show_label: Label = $Margin/Column/Header/ShowLabel
 @onready var status_label: Label = $Margin/Column/Header/StatusLabel
@@ -61,6 +62,16 @@ var _suppress_playlist_ui: bool = false
 var _autosave_timer: Timer
 var _restoring_session: bool = false
 var _session_restored: bool = false
+## Full playlist precache before Play / after show load.
+var _warming: bool = false
+var _warm_paths: Array = []
+var _warm_total: int = 0
+var _warm_done: int = 0
+var _pending_play_tab: int = -1
+var _warm_ready: bool = false
+const WARM_GIF_PER_FRAME := 1
+const WARM_TIMEOUT_SEC := 90.0
+var _warm_elapsed: float = 0.0
 
 
 func _ready() -> void:
@@ -97,6 +108,7 @@ func _ready() -> void:
 	_sync_fly_speed_from_stage()
 	_sync_env_scale_from_stage()
 	_update_all_play_buttons()
+	_start_warm_all(-1)
 	set_process(true)
 
 
@@ -254,8 +266,13 @@ func _clamp_sel(index: int, count: int) -> int:
 
 
 func _process(delta: float) -> void:
+	if _warming:
+		_tick_warm(delta)
 	for tab in [TAB_ENV, TAB_MAIN, TAB_SCATTER, TAB_LIGHT]:
 		if not _autoplay[tab]:
+			continue
+		# Don't advance timers until cache is ready (pending Play waits on warm).
+		if _warming and _pending_play_tab == tab:
 			continue
 		_elapsed[tab] += delta
 		var step := _duration_for_tab(tab)
@@ -368,6 +385,7 @@ func _on_show_loaded(show_name: String) -> void:
 	_sync_fly_speed_from_stage()
 	_sync_env_scale_from_stage()
 	_schedule_autosave()
+	_start_warm_all(-1)
 
 
 func _on_item_changed(_item_id: String, _index: int) -> void:
@@ -464,9 +482,10 @@ func _apply_environment(entry: Dictionary, force_sel: int = -1) -> void:
 	ShowDirector.set_flythrough_layer("environment", cfg, idx)
 	_suppress_playlist_ui = false
 	_sel_env = _resolve_selection_after_apply(_env_entries, force_sel, cfg, "environment")
-	_rebuild_all_lists()
+	_refresh_lists_after_apply()
 	_refresh_status()
 	status_label.text = "Env: %s" % str(entry.get("label", "?"))
+	_prefetch_neighbors(TAB_ENV)
 	_schedule_autosave()
 
 
@@ -479,9 +498,10 @@ func _apply_main(entry: Dictionary, force_sel: int = -1) -> void:
 	ShowDirector.set_flythrough_layer("centerpiece", cfg, idx)
 	_suppress_playlist_ui = false
 	_sel_main = _resolve_selection_after_apply(_main_entries, force_sel, cfg, "centerpiece")
-	_rebuild_all_lists()
+	_refresh_lists_after_apply()
 	_refresh_status()
 	status_label.text = "Main: %s" % str(entry.get("label", "?"))
+	_prefetch_neighbors(TAB_MAIN)
 	_schedule_autosave()
 
 
@@ -494,9 +514,10 @@ func _apply_scatter(entry: Dictionary, force_sel: int = -1) -> void:
 	ShowDirector.set_flythrough_layer("scatter", cfg, idx)
 	_suppress_playlist_ui = false
 	_sel_scatter = _resolve_selection_after_apply(_scatter_entries, force_sel, cfg, "scatter")
-	_rebuild_all_lists()
+	_refresh_lists_after_apply()
 	_refresh_status()
 	status_label.text = "Scatter: %s" % str(entry.get("label", "?"))
+	_prefetch_neighbors(TAB_SCATTER)
 	_schedule_autosave()
 
 
@@ -514,10 +535,75 @@ func _apply_lighting(entry: Dictionary, force_sel: int = -1) -> void:
 	ShowDirector.set_flythrough_layer("lighting", cfg, idx)
 	_suppress_playlist_ui = false
 	_sel_light = _resolve_lighting_selection_after_apply(force_sel, cfg)
-	_rebuild_all_lists()
+	_refresh_lists_after_apply()
 	_refresh_status()
 	status_label.text = "Light: %s" % str(entry.get("label", "?"))
+	_prefetch_neighbors(TAB_LIGHT)
 	_schedule_autosave()
+
+
+func _refresh_lists_after_apply() -> void:
+	## During Play cycling, only update selection highlights — recreating every row
+	## each step was a visible hitch on top of asset loads.
+	if _any_tab_autoplaying():
+		_sync_list_selection_highlights()
+		_update_all_play_buttons()
+		return
+	_rebuild_all_lists()
+
+
+func _sync_list_selection_highlights() -> void:
+	_sync_list_highlight(env_list, _sel_env)
+	_sync_list_highlight(main_list, _sel_main)
+	_sync_list_highlight(scatter_list, _sel_scatter)
+	_sync_list_highlight(light_list, _sel_light)
+
+
+func _sync_list_highlight(container: VBoxContainer, selected: int) -> void:
+	if container == null:
+		return
+	var i := 0
+	for child in container.get_children():
+		if child is HBoxContainer and child.get_child_count() > 0:
+			var title := child.get_child(0)
+			if title is Button:
+				(title as Button).set_pressed_no_signal(i == selected)
+		i += 1
+
+
+func _prefetch_neighbors(tab: int) -> void:
+	## During Play, keep the whole tab warm (not just next 1–2) so swaps stay instant.
+	var entries := _entries_for_tab(tab)
+	if entries.is_empty():
+		return
+	var paths: Array = []
+	for entry in entries:
+		if entry is Dictionary:
+			_collect_prefetch_paths(entry as Dictionary, tab, paths)
+	if not paths.is_empty():
+		_AssetCache.prefetch_paths(paths)
+	for p in paths:
+		var s := str(p)
+		if s.to_lower().ends_with(".gif") and not MediaImport.gif_cached(s):
+			MediaImport.prefetch_gif(s)
+
+
+func _collect_prefetch_paths(entry: Dictionary, tab: int, out: Array) -> void:
+	var role := "environment"
+	match tab:
+		TAB_MAIN:
+			role = "centerpiece"
+		TAB_SCATTER:
+			role = "scatter"
+		TAB_LIGHT:
+			role = "lighting"
+	var cfg: Dictionary = FlythroughAssetCatalog.layer_config_from_entry(entry, role)
+	var path := str(cfg.get("path", cfg.get("source", cfg.get("hdri_path", "")))).strip_edges()
+	if not path.is_empty() and not path.begins_with("primitive:"):
+		out.append(path)
+	var hdri := str(cfg.get("hdri_path", "")).strip_edges()
+	if not hdri.is_empty():
+		out.append(hdri)
 
 
 func _resolve_selection_after_apply(entries: Array[Dictionary], force_sel: int, cfg: Dictionary, role: String) -> int:
@@ -569,12 +655,25 @@ func _duration_for_tab(tab: int) -> float:
 func _toggle_tab_autoplay(tab: int) -> void:
 	_ensure_stage()
 	if _autoplay[tab]:
+		_pending_play_tab = -1
 		_set_tab_autoplay(tab, false)
 		return
 	var entries := _entries_for_tab(tab)
 	if entries.is_empty():
 		status_label.text = "Nothing to play in this tab"
 		return
+	if _warming:
+		_pending_play_tab = tab
+		status_label.text = "Caching… %d/%d" % [_warm_done, maxi(_warm_total, 1)]
+		return
+	if not _warm_ready:
+		_pending_play_tab = tab
+		_start_warm_all(tab)
+		return
+	_begin_tab_play(tab)
+
+
+func _begin_tab_play(tab: int) -> void:
 	# Advance immediately so Play is visibly cycling (avoids "stuck on current" for a full timer).
 	_step_tab(tab, 1)
 	_set_tab_autoplay(tab, true)
@@ -587,6 +686,101 @@ func _set_tab_autoplay(tab: int, playing: bool) -> void:
 	if ShowDirector.autoplay:
 		ShowDirector.set_autoplay(false)
 	_update_play_button(tab)
+	if playing:
+		_prefetch_neighbors(tab)
+
+
+func _collect_all_playlist_paths() -> Array:
+	var paths: Array = []
+	var seen: Dictionary = {}
+	for tab in [TAB_ENV, TAB_MAIN, TAB_SCATTER, TAB_LIGHT]:
+		for entry in _entries_for_tab(tab):
+			if not (entry is Dictionary):
+				continue
+			var chunk: Array = []
+			_collect_prefetch_paths(entry as Dictionary, tab, chunk)
+			for p in chunk:
+				var key := str(p).replace("\\", "/").strip_edges()
+				if key.is_empty() or seen.has(key):
+					continue
+				seen[key] = true
+				paths.append(key)
+	return paths
+
+
+func _start_warm_all(then_play_tab: int = -1) -> void:
+	## Eager-load every Env/Main/Scatter/Lighting asset before Play timers start.
+	if then_play_tab >= 0:
+		_pending_play_tab = then_play_tab
+	var paths := _collect_all_playlist_paths()
+	_warm_paths = paths
+	_warm_total = paths.size()
+	_warm_done = 0
+	_warm_elapsed = 0.0
+	_warm_ready = false
+	if paths.is_empty():
+		_warming = false
+		_warm_ready = true
+		_finish_warm()
+		return
+	_warming = true
+	# Kick threaded scene/HDRI loads immediately.
+	_AssetCache.warm_paths(paths)
+	status_label.text = "Caching… 0/%d" % _warm_total
+	_update_all_play_buttons()
+
+
+func _tick_warm(delta: float) -> void:
+	_warm_elapsed += delta
+	_AssetCache.poll()
+	# Decode a few GIF/still media items per frame (main-thread but spread out).
+	var media_left := MediaImport.warm_paths_sync_media(_warm_paths, WARM_GIF_PER_FRAME)
+	var inflight := _AssetCache.inflight_count()
+	var cached := 0
+	for p in _warm_paths:
+		if _path_is_warmed(str(p)):
+			cached += 1
+	_warm_done = cached
+	status_label.text = "Caching… %d/%d" % [_warm_done, maxi(_warm_total, 1)]
+	var timed_out := _warm_elapsed >= WARM_TIMEOUT_SEC
+	# Finish when threaded jobs + media queue are drained (failed loads won't block forever).
+	if (media_left <= 0 and inflight <= 0) or timed_out:
+		if not timed_out:
+			MediaImport.warm_paths_sync_media(_warm_paths, 128)
+		_warming = false
+		_warm_ready = true
+		_finish_warm()
+
+
+func _path_is_warmed(path: String) -> bool:
+	var s := path.strip_edges()
+	if s.is_empty():
+		return true
+	var t := MediaImport.detect_type(s)
+	match t:
+		"gif":
+			return MediaImport.gif_cached(s)
+		"image":
+			return MediaImport.texture_cached(s)
+		"hdri":
+			return _AssetCache.has_texture(s)
+		"scene3d":
+			return _AssetCache.has_scene(s)
+		"video":
+			return true
+		_:
+			return true
+
+
+func _finish_warm() -> void:
+	_update_all_play_buttons()
+	if _pending_play_tab >= 0:
+		var tab := _pending_play_tab
+		_pending_play_tab = -1
+		status_label.text = "Cache ready"
+		_begin_tab_play(tab)
+	elif status_label:
+		status_label.text = "Cache ready (%d assets)" % _warm_total
 
 
 func _update_all_play_buttons() -> void:
@@ -598,7 +792,12 @@ func _update_play_button(tab: int) -> void:
 	var btn := _play_btn_for_tab(tab)
 	if btn == null:
 		return
-	btn.text = "■ Stop" if _autoplay[tab] else "▶ Play"
+	if _warming and _pending_play_tab == tab:
+		btn.text = "Caching…"
+	elif _autoplay[tab]:
+		btn.text = "■ Stop"
+	else:
+		btn.text = "▶ Play"
 
 
 func _play_btn_for_tab(tab: int) -> Button:
@@ -980,17 +1179,23 @@ func _on_layer_files_selected(paths: PackedStringArray) -> void:
 
 	if pick == "replace" and replace_tab >= 0 and replace_index >= 0:
 		var first := MediaImport.to_project_or_absolute(paths[0])
+		MediaImport.warm_path(first)
+		_AssetCache.prefetch_paths([first])
 		_replace_entry_with_file(replace_tab, replace_index, first, paths[0].get_file().get_basename())
 		for i in range(1, paths.size()):
 			_append_user_file(replace_tab, paths[i], false)
 		_rebuild_all_lists()
 		_schedule_autosave()
+		_warm_ready = false
+		_start_warm_all(-1)
 		return
 
 	if pick == "lighting":
 		var last_entry: Dictionary = {}
 		for path in paths:
 			var resolved := MediaImport.to_project_or_absolute(path)
+			MediaImport.warm_path(resolved)
+			_AssetCache.prefetch_paths([resolved])
 			var label := path.get_file().get_basename()
 			var light_entry := {
 				"id": "user_hdri_%s" % label,
@@ -1007,6 +1212,8 @@ func _on_layer_files_selected(paths: PackedStringArray) -> void:
 			_sel_light = _light_entries.size() - 1
 			_rebuild_all_lists()
 			_apply_lighting(last_entry, _sel_light)
+		_warm_ready = false
+		_start_warm_all(-1)
 		return
 
 	var tab := TAB_ENV
@@ -1021,10 +1228,15 @@ func _on_layer_files_selected(paths: PackedStringArray) -> void:
 			return
 	var last_idx := -1
 	for path in paths:
+		var resolved_pre := MediaImport.to_project_or_absolute(path)
+		MediaImport.warm_path(resolved_pre)
+		_AssetCache.prefetch_paths([resolved_pre])
 		last_idx = _append_user_file(tab, path, false)
 	if last_idx >= 0:
 		_rebuild_all_lists()
 		_play_entry_at(tab, last_idx)
+	_warm_ready = false
+	_start_warm_all(-1)
 
 
 func _append_user_file(tab: int, path: String, rebuild_and_play: bool = true) -> int:

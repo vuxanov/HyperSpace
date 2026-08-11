@@ -4,12 +4,13 @@ extends Node
 
 signal settings_changed
 
-var enabled: bool = true
-var affect_scale: bool = true
+## Defaults: everything OFF on first open / new install (session may restore later).
+var enabled: bool = false
+var affect_scale: bool = false
 var scale_x: bool = true
 var scale_y: bool = true
 var scale_z: bool = true
-var affect_light: bool = true
+var affect_light: bool = false
 ## Off by default — emission drive washes authored textures on hero/scatter/env models.
 var affect_emission: bool = false
 ## Off by default — rotation amount is easy to overdrive on hero / env meshes.
@@ -20,6 +21,8 @@ var rotation_z: bool = true
 ## Peak spin strength (UI: Rotation Amount). Scales reactive angular rate.
 var rotation_amount: float = 1.0
 var affect_noise: bool = false
+## When true, Camera motion section also drives camera look via rotation amount/axes.
+var affect_camera_rotation: bool = false
 var scale_amount: float = 25.0
 ## World-unit displace strength (UI: Displace Strength).
 var noise_amount: float = 28.0

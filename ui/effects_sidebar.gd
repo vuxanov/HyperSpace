@@ -61,14 +61,22 @@ const FX_IDS := ["ascii", "particles", "feedback", "glitch", "chromatic", "pixel
 @onready var noise_schedule: CheckButton = $Margin/Scroll/Column/Targets/NoiseSchedule
 @onready var noise_schedule_host: VBoxContainer = $Margin/Scroll/Column/Targets/NoiseScheduleHost
 @onready var target_option: OptionButton = $Margin/Scroll/Column/Targets/TargetOption
-@onready var camera_preset: OptionButton = $Margin/Scroll/Column/Targets/CameraPreset
-@onready var camera_rate: HSlider = $Margin/Scroll/Column/Targets/CameraRate
-@onready var camera_depth: HSlider = $Margin/Scroll/Column/Targets/CameraDepth
+@onready var camera_motion_toggle: CheckButton = $Margin/Scroll/Column/Targets/CameraMotionToggle
+@onready var camera_body: VBoxContainer = $Margin/Scroll/Column/Targets/CameraBody
+@onready var camera_preset: OptionButton = $Margin/Scroll/Column/Targets/CameraBody/CameraPreset
+@onready var camera_rate: HSlider = $Margin/Scroll/Column/Targets/CameraBody/CameraRate
+@onready var camera_depth: HSlider = $Margin/Scroll/Column/Targets/CameraBody/CameraDepth
+@onready var camera_rotation_toggle: CheckButton = $Margin/Scroll/Column/Targets/CameraBody/CameraRotationToggle
+@onready var camera_rotation_body: VBoxContainer = $Margin/Scroll/Column/Targets/CameraBody/CameraRotationBody
 
 @onready var play_all_toggle: CheckButton = $Margin/Scroll/Column/FxSection/PlayAllToggle
 @onready var play_all_body: VBoxContainer = $Margin/Scroll/Column/FxSection/PlayAllBody
 @onready var play_cycle_slider: HSlider = $Margin/Scroll/Column/FxSection/PlayAllBody/PlayCycleSlider
 @onready var play_active_slider: HSlider = $Margin/Scroll/Column/FxSection/PlayAllBody/PlayActiveSlider
+@onready var play_mode: OptionButton = $Margin/Scroll/Column/FxSection/PlayAllBody/PlayMode
+@onready var play_speed_slider: HSlider = $Margin/Scroll/Column/FxSection/PlayAllBody/PlaySpeedSlider
+@onready var play_audio_reactive: CheckButton = $Margin/Scroll/Column/FxSection/PlayAllBody/PlayAudioReactive
+@onready var play_schedule_host: VBoxContainer = $Margin/Scroll/Column/FxSection/PlayAllBody/PlayScheduleHost
 
 @onready var ascii_toggle: CheckButton = $Margin/Scroll/Column/FxSection/AsciiToggle
 @onready var ascii_body: VBoxContainer = $Margin/Scroll/Column/FxSection/AsciiBody
@@ -149,9 +157,19 @@ var _ascii_lfo_wave: OptionButton
 var _ascii_lfo_rate: HSlider
 var _ascii_lfo_wave_label: Label
 var _ascii_lfo_rate_label: Label
+## Accordion bodies created at runtime so each effect's controls nest under its toggle.
+var _scale_body: VBoxContainer
+var _light_body: VBoxContainer
+var _emission_body: VBoxContainer
+var _rotation_body: VBoxContainer
+var _noise_body: VBoxContainer
+
+const PLAY_MODE_IDS := ["cycle", "random", "audio"]
+const PLAY_MODE_LABELS := ["Cycle", "Random", "Audio"]
 
 
 func _ready() -> void:
+	_nest_react_bodies()
 	for preset_name in AsciiEffect.PRESETS.keys():
 		ascii_preset.add_item(str(preset_name))
 	target_option.clear()
@@ -179,12 +197,16 @@ func _ready() -> void:
 	camera_preset.clear()
 	for p in CAMERA_PRESETS:
 		camera_preset.add_item(p)
-	reactivity_toggle.button_pressed = bool(RH.get_field("enabled", true))
-	affect_scale.button_pressed = bool(RH.get_field("affect_scale", true))
+	play_mode.clear()
+	for label in PLAY_MODE_LABELS:
+		play_mode.add_item(label)
+	play_mode.select(0)
+	reactivity_toggle.button_pressed = bool(RH.get_field("enabled", false))
+	affect_scale.button_pressed = bool(RH.get_field("affect_scale", false))
 	scale_x.button_pressed = bool(RH.get_field("scale_x", true))
 	scale_y.button_pressed = bool(RH.get_field("scale_y", true))
 	scale_z.button_pressed = bool(RH.get_field("scale_z", true))
-	affect_light.button_pressed = bool(RH.get_field("affect_light", true))
+	affect_light.button_pressed = bool(RH.get_field("affect_light", false))
 	affect_emission.button_pressed = bool(RH.get_field("affect_emission", false))
 	affect_rotation.button_pressed = bool(RH.get_field("affect_rotation", false))
 	affect_noise.button_pressed = bool(RH.get_field("affect_noise", false))
@@ -205,6 +227,8 @@ func _ready() -> void:
 	_select_driver(light_source, str(RH.get_field("light_source", "energy")))
 	_select_driver(noise_source, str(RH.get_field("noise_source", "bass")))
 	_select_camera_preset(str(RH.get_field("camera_preset", "Off")))
+	camera_motion_toggle.button_pressed = str(RH.get_field("camera_preset", "Off")) != "Off"
+	camera_rotation_toggle.button_pressed = bool(RH.get_field("affect_camera_rotation", false))
 	# Camera rate/depth UI are 1–100 ints; settings store float rate and 0–1 depth.
 	camera_rate.value = clampf(float(RH.get_field("camera_rate", 1.0)) * 20.0, 1.0, 100.0)
 	camera_depth.value = clampf(float(RH.get_field("camera_depth", 0.55)) * 100.0, 0.0, 100.0)
@@ -229,6 +253,7 @@ func _ready() -> void:
 	rotation_target.add_item("Scatter", 2)
 	rotation_target.add_item("Environment", 3)
 	rotation_target.add_item("Lights", 4)
+	rotation_target.add_item("Camera", 5)
 	_select_rotation_target(str(RH.get_field("rotation_target", "all")))
 
 	reactivity_toggle.toggled.connect(_on_reactivity_toggled)
@@ -263,12 +288,17 @@ func _ready() -> void:
 	emission_schedule.toggled.connect(func(v: bool) -> void: _on_react_schedule("emission", v))
 	rotation_schedule.toggled.connect(func(v: bool) -> void: _on_react_schedule("rotation", v))
 	noise_schedule.toggled.connect(func(v: bool) -> void: _on_react_schedule("noise", v))
+	camera_motion_toggle.toggled.connect(_on_camera_motion_toggled)
+	camera_rotation_toggle.toggled.connect(_on_camera_rotation_toggled)
 	camera_preset.item_selected.connect(_on_camera_preset)
 	camera_rate.value_changed.connect(func(v: float) -> void: RH.set_field("camera_rate", v / 20.0))
 	camera_depth.value_changed.connect(func(v: float) -> void: RH.set_field("camera_depth", v / 100.0))
 	target_option.item_selected.connect(_on_target_selected)
 
 	play_all_toggle.toggled.connect(_on_play_all_toggled)
+	play_mode.item_selected.connect(_on_play_mode_selected)
+	play_speed_slider.value_changed.connect(_on_play_speed)
+	play_audio_reactive.toggled.connect(_on_play_audio_reactive)
 	style_switch_toggle.toggled.connect(_on_style_switch_toggled)
 	style_interval_slider.value_changed.connect(_on_style_interval)
 	style_jitter_toggle.toggled.connect(_on_style_jitter)
@@ -337,6 +367,95 @@ func _ready() -> void:
 	_sync_ascii_lfo_ui()
 
 
+func _nest_react_bodies() -> void:
+	## Nest each Targets effect's controls under a Body VBox (accordion pattern like FX).
+	var targets_node: VBoxContainer = targets
+	_scale_body = _make_nested_body(targets_node, affect_scale, "ScaleBody")
+	_reparent_into(_scale_body, [
+		$Margin/Scroll/Column/AudioSection/ReactivityBody/ScaleAmountLabel,
+		scale_amount_spin,
+		scale_source,
+		$Margin/Scroll/Column/Targets/AxisRow,
+		scale_schedule,
+		scale_schedule_host,
+	])
+	# Mode label for Scale source (matches FX Mode pattern).
+	var scale_mode_lbl := Label.new()
+	scale_mode_lbl.text = "Mode"
+	_scale_body.add_child(scale_mode_lbl)
+	_scale_body.move_child(scale_mode_lbl, scale_source.get_index())
+
+	_light_body = _make_nested_body(targets_node, affect_light, "LightBody")
+	_reparent_into(_light_body, [light_source, light_schedule, light_schedule_host])
+	var light_mode_lbl := Label.new()
+	light_mode_lbl.text = "Mode"
+	_light_body.add_child(light_mode_lbl)
+	_light_body.move_child(light_mode_lbl, light_source.get_index())
+
+	_emission_body = _make_nested_body(targets_node, affect_emission, "EmissionBody")
+	_reparent_into(_emission_body, [emission_source, emission_schedule, emission_schedule_host])
+	var emission_mode_lbl := Label.new()
+	emission_mode_lbl.text = "Mode"
+	_emission_body.add_child(emission_mode_lbl)
+	_emission_body.move_child(emission_mode_lbl, emission_source.get_index())
+
+	_rotation_body = _make_nested_body(targets_node, affect_rotation, "RotationBody")
+	_reparent_into(_rotation_body, [
+		rotation_source,
+		$Margin/Scroll/Column/Targets/RotationTargetLabel,
+		rotation_target,
+		$Margin/Scroll/Column/Targets/RotationAmountLabel,
+		rotation_amount_spin,
+		$Margin/Scroll/Column/Targets/RotationAxisRow,
+		rotation_schedule,
+		rotation_schedule_host,
+	])
+	var rot_mode_lbl := Label.new()
+	rot_mode_lbl.text = "Mode"
+	_rotation_body.add_child(rot_mode_lbl)
+	_rotation_body.move_child(rot_mode_lbl, rotation_source.get_index())
+
+	_noise_body = _make_nested_body(targets_node, affect_noise, "NoiseBody")
+	_reparent_into(_noise_body, [
+		noise_source,
+		$Margin/Scroll/Column/Targets/NoiseTargetLabel,
+		noise_target,
+		$Margin/Scroll/Column/Targets/NoiseAmountLabel,
+		noise_amount,
+		$Margin/Scroll/Column/Targets/NoiseScaleLabel,
+		noise_scale,
+		$Margin/Scroll/Column/Targets/NoiseAxisRow,
+		noise_schedule,
+		noise_schedule_host,
+	])
+	var noise_mode_lbl := Label.new()
+	noise_mode_lbl.text = "Mode"
+	_noise_body.add_child(noise_mode_lbl)
+	_noise_body.move_child(noise_mode_lbl, noise_source.get_index())
+
+
+func _make_nested_body(parent: Node, after: Control, body_name: String) -> VBoxContainer:
+	var body := VBoxContainer.new()
+	body.name = body_name
+	body.visible = false
+	body.add_theme_constant_override("separation", 4)
+	parent.add_child(body)
+	parent.move_child(body, after.get_index() + 1)
+	return body
+
+
+func _reparent_into(body: VBoxContainer, nodes: Array) -> void:
+	for n in nodes:
+		if n == null:
+			continue
+		var node: Node = n as Node
+		if node == null or not is_instance_valid(node):
+			continue
+		var idx := body.get_child_count()
+		node.reparent(body)
+		body.move_child(node, idx)
+
+
 func _setup_ascii_lfo_controls() -> void:
 	_ascii_lfo_wave_label = Label.new()
 	_ascii_lfo_wave_label.text = "Density LFO wave"
@@ -374,16 +493,14 @@ func _setup_dual_ranges() -> void:
 	_density_range.range_changed.connect(_on_density_range_changed)
 	ascii_density_host.add_child(_density_range)
 
-	var play_lbl := Label.new()
-	play_lbl.text = "Default schedule"
-	play_all_body.add_child(play_lbl)
 	_play_schedule_range = ScheduleSecondsPairScr.new()
 	_play_schedule_range.min_value = 1.0
 	_play_schedule_range.max_value = 60.0
 	_play_schedule_range.step = 1.0
 	_play_schedule_range.set_range_values(4.0, 4.0)
 	_play_schedule_range.range_changed.connect(_on_play_schedule_range)
-	play_all_body.add_child(_play_schedule_range)
+	play_schedule_host.add_child(_play_schedule_range)
+	play_schedule_host.custom_minimum_size = Vector2(0, 96)
 
 	var hosts := {
 		"ascii": ascii_schedule_host,
@@ -482,12 +599,18 @@ func _select_camera_preset(preset: String) -> void:
 
 func _on_camera_preset(index: int) -> void:
 	RH.set_field("camera_preset", CAMERA_PRESETS[index])
+	# Keep Camera motion toggle in sync with Off / non-Off.
+	var want_on := index > 0
+	if camera_motion_toggle.button_pressed != want_on:
+		camera_motion_toggle.set_pressed_no_signal(want_on)
 	_sync_conditional_ui()
 
 
 func _on_audio(state: AudioState) -> void:
 	energy_bar.value = clampf(state.energy, 0.0, 1.0)
 	bass_bar.value = clampf(state.bass, 0.0, 1.0)
+	if play_all_toggle.button_pressed and play_audio_reactive.button_pressed:
+		ShowDirector.fx_automation.set_play_all_audio_energy(clampf(state.energy, 0.0, 1.0))
 
 
 func _on_reactivity_toggled(enabled: bool) -> void:
@@ -502,48 +625,33 @@ func _sync_conditional_ui() -> void:
 	targets.visible = react_on
 
 	var scale_on := react_on and affect_scale.button_pressed
-	scale_source.visible = scale_on
-	$Margin/Scroll/Column/Targets/AxisRow.visible = scale_on
-	scale_schedule.visible = scale_on
+	if _scale_body:
+		_scale_body.visible = scale_on
 	scale_schedule_host.visible = scale_on and scale_schedule.button_pressed
 
 	var light_on := react_on and affect_light.button_pressed
-	light_source.visible = light_on
-	light_schedule.visible = light_on
+	if _light_body:
+		_light_body.visible = light_on
 	light_schedule_host.visible = light_on and light_schedule.button_pressed
 
 	var emission_on := react_on and affect_emission.button_pressed
-	emission_source.visible = emission_on
-	emission_schedule.visible = emission_on
+	if _emission_body:
+		_emission_body.visible = emission_on
 	emission_schedule_host.visible = emission_on and emission_schedule.button_pressed
 
 	var rotation_on := react_on and affect_rotation.button_pressed
-	rotation_source.visible = rotation_on
-	$Margin/Scroll/Column/Targets/RotationTargetLabel.visible = rotation_on
-	rotation_target.visible = rotation_on
-	$Margin/Scroll/Column/Targets/RotationAmountLabel.visible = rotation_on
-	rotation_amount_spin.visible = rotation_on
-	$Margin/Scroll/Column/Targets/RotationAxisRow.visible = rotation_on
-	rotation_schedule.visible = rotation_on
+	if _rotation_body:
+		_rotation_body.visible = rotation_on
 	rotation_schedule_host.visible = rotation_on and rotation_schedule.button_pressed
 
 	var noise_on := react_on and affect_noise.button_pressed
-	noise_source.visible = noise_on
-	$Margin/Scroll/Column/Targets/NoiseTargetLabel.visible = noise_on
-	noise_target.visible = noise_on
-	$Margin/Scroll/Column/Targets/NoiseAmountLabel.visible = noise_on
-	noise_amount.visible = noise_on
-	$Margin/Scroll/Column/Targets/NoiseScaleLabel.visible = noise_on
-	noise_scale.visible = noise_on
-	$Margin/Scroll/Column/Targets/NoiseAxisRow.visible = noise_on
-	noise_schedule.visible = noise_on
+	if _noise_body:
+		_noise_body.visible = noise_on
 	noise_schedule_host.visible = noise_on and noise_schedule.button_pressed
 
-	var cam_on := react_on and camera_preset.selected > 0
-	$Margin/Scroll/Column/Targets/CameraRateLabel.visible = cam_on
-	camera_rate.visible = cam_on
-	$Margin/Scroll/Column/Targets/CameraDepthLabel.visible = cam_on
-	camera_depth.visible = cam_on
+	var cam_on := react_on and camera_motion_toggle.button_pressed
+	camera_body.visible = cam_on
+	camera_rotation_body.visible = cam_on and camera_rotation_toggle.button_pressed
 
 	ascii_body.visible = ascii_toggle.button_pressed
 	style_switch_body.visible = ascii_toggle.button_pressed and style_switch_toggle.button_pressed
@@ -619,6 +727,8 @@ func _select_rotation_target(t: String) -> void:
 			rotation_target.select(3)
 		"lights", "light":
 			rotation_target.select(4)
+		"camera", "cam":
+			rotation_target.select(5)
 		_:
 			rotation_target.select(0)
 
@@ -670,7 +780,36 @@ func _on_rotation_target_selected(index: int) -> void:
 			t = "environment"
 		4:
 			t = "lights"
+		5:
+			t = "camera"
 	RH.set_field("rotation_target", t)
+
+
+func _on_camera_motion_toggled(on: bool) -> void:
+	if on:
+		if camera_preset.selected <= 0:
+			camera_preset.select(1)  # Pitch rock
+			RH.set_field("camera_preset", CAMERA_PRESETS[1])
+	else:
+		camera_preset.select(0)
+		RH.set_field("camera_preset", "Off")
+		RH.set_field("affect_camera_rotation", false)
+		camera_rotation_toggle.button_pressed = false
+	_sync_conditional_ui()
+
+
+func _on_camera_rotation_toggled(on: bool) -> void:
+	RH.set_field("affect_camera_rotation", on)
+	if on:
+		# Ensure amount / axes / source are reachable — soft-open Rotation if needed.
+		if not affect_rotation.button_pressed:
+			affect_rotation.button_pressed = true
+			RH.set_field("affect_rotation", true)
+		var cur := str(RH.get_field("rotation_target", "all"))
+		if cur != "all" and cur != "camera":
+			_select_rotation_target("camera")
+			RH.set_field("rotation_target", "camera")
+	_sync_conditional_ui()
 
 
 func _on_affect_scale(enabled: bool) -> void:
@@ -847,6 +986,8 @@ func _feedback_params() -> Dictionary:
 		"persistence": feedback_persist_slider.value / 100.0,
 		"drive_mode": _fx_drive_mode(feedback_drive),
 		"audio_sensitivity": feedback_sens_slider.value / 100.0,
+		# UI 1–100 → ~0.05–5 Hz; independent of Camera motion Speed.
+		"lfo_rate": clampf(feedback_lfo_rate.value / 20.0, 0.05, 5.0),
 	}
 
 
@@ -866,10 +1007,8 @@ func _on_feedback_drive_changed(_i: int = 0) -> void:
 	_refresh_effect_if_on("feedback")
 
 
-func _on_feedback_lfo_rate(v: float) -> void:
-	# Shared LFO rate also drives camera when a preset is on — keep usable for FX LFO.
-	RH.set_field("camera_rate", clampf(v / 20.0, 0.05, 5.0))
-	camera_rate.value = v
+func _on_feedback_lfo_rate(_v: float) -> void:
+	# Feedback-only rate — must not overwrite Camera motion Speed.
 	_refresh_effect_if_on("feedback")
 
 
@@ -960,6 +1099,8 @@ func _on_wireframe_toggled(enabled: bool) -> void:
 
 
 func _on_effect_schedule(effect_id: String, on: bool) -> void:
+	if _syncing_ui:
+		return
 	var active := 6.0
 	var inactive := 6.0
 	if _schedule_ranges.has(effect_id):
@@ -977,6 +1118,8 @@ func _on_effect_schedule(effect_id: String, on: bool) -> void:
 
 func _on_react_schedule(property: String, on: bool) -> void:
 	## Reactivity drives use react_<property> gate ids (same Active/Inactive model as post FX).
+	if _syncing_ui:
+		return
 	var gate_id := RH.schedule_gate_id(property)
 	var active := 6.0
 	var inactive := 6.0
@@ -990,6 +1133,8 @@ func _on_react_schedule(property: String, on: bool) -> void:
 
 
 func _on_effect_schedule_range(effect_id: String, active: float, inactive: float) -> void:
+	if _syncing_ui:
+		return
 	ShowDirector.fx_automation.set_gate_active_inactive(effect_id, active, inactive)
 	if ShowDirector.fx_automation.is_gate_enabled(effect_id):
 		# Post FX refresh; reactivity gates are read live via RH.property_active.
@@ -998,36 +1143,49 @@ func _on_effect_schedule_range(effect_id: String, active: float, inactive: float
 
 
 func _on_play_schedule_range(active: float, inactive: float) -> void:
+	## Play All schedule is a base hint only — never clone identical on/off onto every FX.
+	ShowDirector.fx_automation.set_gate_active_inactive("play_all", active, inactive)
+	if not play_all_toggle.button_pressed:
+		return
+	ShowDirector.fx_automation.configure_play_all(
+		_play_mode_id(),
+		float(play_speed_slider.value),
+		play_audio_reactive.button_pressed or _play_mode_id() == "audio",
+		active,
+		inactive
+	)
+	_apply_randomized_play_all_schedules(active, inactive)
 	for eid in FX_IDS:
-		ShowDirector.fx_automation.set_gate_active_inactive(eid, active, inactive)
-		if _schedule_ranges.has(eid):
-			_schedule_ranges[eid].set_range_values(active, inactive)
 		if ShowDirector.fx_automation.is_gate_enabled(eid):
 			ShowDirector.refresh_effect(eid)
-	# Also push onto any enabled reactivity schedules.
-	for prop in ["scale", "light", "emission", "rotation", "noise"]:
-		var gid := RH.schedule_gate_id(prop)
-		if ShowDirector.fx_automation.is_gate_enabled(gid):
-			ShowDirector.fx_automation.set_gate_active_inactive(gid, active, inactive)
-			if _schedule_ranges.has(gid):
-				_schedule_ranges[gid].set_range_values(active, inactive)
+
+
+func _apply_randomized_play_all_schedules(base_active: float, base_inactive: float) -> void:
+	## Roll unique Active/Inactive (+ phase stagger) per effect; sync schedule UI.
+	var rolled: Dictionary = ShowDirector.fx_automation.randomize_play_all_schedules(
+		base_active, base_inactive
+	)
+	_syncing_ui = true
+	for eid in FX_IDS:
+		var pair = rolled.get(eid, null)
+		if pair == null:
+			pair = ShowDirector.fx_automation.apply_independent_gate_schedule(
+				eid, base_active, base_inactive, true
+			)
+		if _schedule_ranges.has(eid):
+			_schedule_ranges[eid].set_range_values(float(pair.x), float(pair.y))
+	_syncing_ui = false
 
 
 func _on_play_all_toggled(on: bool) -> void:
 	_sync_conditional_ui()
 	if on:
-		# Bootstrap something meaningful if nothing is enabled yet.
-		if not ascii_toggle.button_pressed \
-				and not particles_toggle.button_pressed \
-				and not feedback_toggle.button_pressed \
-				and not glitch_toggle.button_pressed \
-				and not chromatic_toggle.button_pressed \
-				and not pixel_sort_toggle.button_pressed \
-				and not wireframe_toggle.button_pressed:
-			ascii_toggle.button_pressed = true
 		var active: float = float(_play_schedule_range.get_active()) if _play_schedule_range else 4.0
 		var inactive: float = float(_play_schedule_range.get_inactive()) if _play_schedule_range else 4.0
-		# Enable schedules on every currently-on effect (and sync Active/Inactive sliders).
+		var mode := _play_mode_id()
+		var speed := float(play_speed_slider.value)
+		var audio_on := play_audio_reactive.button_pressed or mode == "audio"
+		# Enable ALL visual effects + their schedules (Play All = everything).
 		var pairs := [
 			[ascii_toggle, ascii_schedule, "ascii"],
 			[particles_toggle, particles_schedule, "particles"],
@@ -1037,32 +1195,47 @@ func _on_play_all_toggled(on: bool) -> void:
 			[pixel_sort_toggle, pixel_sort_schedule, "pixel_sort"],
 			[wireframe_toggle, wireframe_schedule, "wireframe"],
 		]
-		var enabled_ids: Array = []
 		_syncing_ui = true
 		for sid in pairs:
 			var master: CheckButton = sid[0]
 			var sched: CheckButton = sid[1]
-			var eid: String = str(sid[2])
-			if master.button_pressed:
-				enabled_ids.append(eid)
-				sched.button_pressed = true
-				if _schedule_ranges.has(eid):
-					_schedule_ranges[eid].set_range_values(active, inactive)
-				ShowDirector.fx_automation.set_gate_active_inactive(eid, active, inactive)
-				ShowDirector.fx_automation.set_gate_enabled(eid, true)
-		if ascii_toggle.button_pressed:
-			style_switch_toggle.button_pressed = true
+			master.button_pressed = true
+			sched.button_pressed = true
+		style_switch_toggle.button_pressed = true
 		_syncing_ui = false
-		# Apply style + gates explicitly (UI toggles may no-op under _syncing_ui).
-		ShowDirector.fx_automation.set_style_interval(style_interval_slider.value)
-		ShowDirector.fx_automation.set_style_jitter(style_jitter_toggle.button_pressed)
-		ShowDirector.fx_automation.set_style_active(ascii_toggle.button_pressed)
+		# Apply each effect with current params (UI toggles may no-op under _syncing_ui).
+		ShowDirector.set_effect("ascii", true, _ascii_params())
+		ShowDirector.set_effect("particles", true, {
+			"intensity": intensity_slider.value,
+			"target": str(RH.get_field("particles_target", "all")),
+			"drive_mode": _fx_drive_mode(particles_drive),
+		})
+		ShowDirector.set_effect("feedback", true, _feedback_params())
+		ShowDirector.set_effect("glitch", true, _glitch_params())
+		ShowDirector.set_effect("chromatic", true, _chromatic_params())
+		ShowDirector.set_effect("pixel_sort", true, _pixel_sort_params())
+		ShowDirector.set_effect("wireframe", true, _wireframe_params())
+		ShowDirector.fx_automation.set_style_interval(maxf(0.5, style_interval_slider.value / maxf(speed, 0.25)))
+		ShowDirector.fx_automation.set_style_jitter(style_jitter_toggle.button_pressed or mode == "random")
+		ShowDirector.fx_automation.set_style_active(true)
+		ShowDirector.fx_automation.configure_play_all(mode, speed, audio_on, active, inactive)
+		# enable_play_all rolls independent Active/Inactive + phase stagger per FX.
 		ShowDirector.set_play_all_effects(true, active + inactive, active)
-		for eid2 in enabled_ids:
+		# Reflect rolled schedules in per-effect UI (manual edits still work afterward).
+		_syncing_ui = true
+		for eid_ui in FX_IDS:
+			if _schedule_ranges.has(eid_ui):
+				_schedule_ranges[eid_ui].set_range_values(
+					ShowDirector.fx_automation.get_gate_active(eid_ui),
+					ShowDirector.fx_automation.get_gate_inactive(eid_ui)
+				)
+		_syncing_ui = false
+		for eid2 in FX_IDS:
 			ShowDirector.refresh_effect(str(eid2))
 		_sync_conditional_ui()
 	else:
 		ShowDirector.set_play_all_effects(false)
+		ShowDirector.fx_automation.configure_play_all("cycle", 1.0, false, 4.0, 4.0)
 		_syncing_ui = true
 		ascii_schedule.button_pressed = false
 		particles_schedule.button_pressed = false
@@ -1072,12 +1245,50 @@ func _on_play_all_toggled(on: bool) -> void:
 		pixel_sort_schedule.button_pressed = false
 		wireframe_schedule.button_pressed = false
 		style_switch_toggle.button_pressed = false
+		# Leave effect master toggles as-user — only clear Play All scheduling.
 		_syncing_ui = false
 		ShowDirector.fx_automation.set_style_active(false)
 		for eid3 in FX_IDS:
 			ShowDirector.fx_automation.set_gate_enabled(eid3, false)
 			ShowDirector.refresh_effect(eid3)
 		_sync_conditional_ui()
+
+
+func _play_mode_id() -> String:
+	var i := play_mode.selected
+	if i < 0 or i >= PLAY_MODE_IDS.size():
+		return "cycle"
+	return PLAY_MODE_IDS[i]
+
+
+func _on_play_mode_selected(index: int) -> void:
+	if not play_all_toggle.button_pressed:
+		return
+	var mode: String = "cycle"
+	if index >= 0 and index < PLAY_MODE_IDS.size():
+		mode = str(PLAY_MODE_IDS[index])
+	if mode == "audio":
+		play_audio_reactive.button_pressed = true
+	ShowDirector.fx_automation.configure_play_all(
+		mode,
+		float(play_speed_slider.value),
+		play_audio_reactive.button_pressed or mode == "audio",
+		float(_play_schedule_range.get_active()) if _play_schedule_range else 4.0,
+		float(_play_schedule_range.get_inactive()) if _play_schedule_range else 4.0
+	)
+
+
+func _on_play_speed(v: float) -> void:
+	ShowDirector.fx_automation.set_play_all_speed(v)
+	if play_all_toggle.button_pressed:
+		ShowDirector.fx_automation.set_style_interval(maxf(0.5, style_interval_slider.value / maxf(v, 0.25)))
+
+
+func _on_play_audio_reactive(on: bool) -> void:
+	ShowDirector.fx_automation.set_play_all_audio_reactive(on)
+	if on and play_mode.selected != 2:
+		# Prefer Audio mode when the dedicated toggle is on.
+		pass
 
 
 func _on_style_switch_toggled(on: bool) -> void:
