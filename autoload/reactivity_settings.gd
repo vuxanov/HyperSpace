@@ -31,11 +31,28 @@ var noise_scale: float = 4.0
 var noise_x: bool = true
 var noise_y: bool = true
 var noise_z: bool = true
-var target: String = "all"  # centerpiece | scatter | environment | lights | all
-var particles_target: String = "all"
-var noise_target: String = "all"
-## Which layers reactive rotation influences (independent of global target).
-var rotation_target: String = "all"
+## Multi-select "What reacts" layers (everything = all checked; default none).
+var target_main: bool = false
+var target_scatter: bool = false
+var target_environment: bool = false
+var target_lights: bool = false
+## Particles affect (independent of global What reacts).
+var particles_target_main: bool = false
+var particles_target_scatter: bool = false
+var particles_target_environment: bool = false
+var particles_target_lights: bool = false
+var particles_target_media: bool = false
+## Noise displace affect (independent of global What reacts).
+var noise_target_main: bool = false
+var noise_target_scatter: bool = false
+var noise_target_environment: bool = false
+var noise_target_lights: bool = false
+## Which layers reactive rotation influences (independent of global What reacts).
+var rotation_target_main: bool = false
+var rotation_target_scatter: bool = false
+var rotation_target_environment: bool = false
+var rotation_target_lights: bool = false
+var rotation_target_camera: bool = false
 
 ## Per-property drivers: off | bass | mids | highs | kick | energy | lfo
 var scale_source: String = "bass"
@@ -88,12 +105,63 @@ func set_enabled(value: bool) -> void:
 
 
 func set_scale_amount(value: float) -> void:
-	scale_amount = maxf(value, 0.0)
+	scale_amount = clampf(value, -1.0e6, 1.0e6)
 	settings_changed.emit()
 
 
 func set_rotation_amount(value: float) -> void:
-	rotation_amount = maxf(value, 0.0)
+	rotation_amount = clampf(value, -1.0e6, 1.0e6)
+	settings_changed.emit()
+
+
+func reset_to_defaults() -> void:
+	## True factory defaults for Deform + reactivity (left Effects column).
+	enabled = false
+	affect_scale = false
+	scale_x = true
+	scale_y = true
+	scale_z = true
+	affect_light = false
+	affect_emission = false
+	affect_rotation = false
+	rotation_x = true
+	rotation_y = true
+	rotation_z = true
+	rotation_amount = 1.0
+	affect_noise = false
+	affect_camera_rotation = false
+	scale_amount = 25.0
+	noise_amount = 28.0
+	noise_scale = 4.0
+	noise_x = true
+	noise_y = true
+	noise_z = true
+	target_main = false
+	target_scatter = false
+	target_environment = false
+	target_lights = false
+	particles_target_main = false
+	particles_target_scatter = false
+	particles_target_environment = false
+	particles_target_lights = false
+	particles_target_media = false
+	noise_target_main = false
+	noise_target_scatter = false
+	noise_target_environment = false
+	noise_target_lights = false
+	rotation_target_main = false
+	rotation_target_scatter = false
+	rotation_target_environment = false
+	rotation_target_lights = false
+	rotation_target_camera = false
+	scale_source = "bass"
+	emission_source = "mids"
+	rotation_source = "highs"
+	light_source = "energy"
+	noise_source = "bass"
+	camera_preset = "Off"
+	camera_rate = 1.0
+	camera_depth = 0.55
 	settings_changed.emit()
 
 

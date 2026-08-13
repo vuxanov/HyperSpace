@@ -11,6 +11,7 @@ signal autoplay_changed(playing: bool)
 signal element_step_changed(step_index: int, step_count: int)
 signal effect_style_advanced(preset_name: String)
 signal effect_gate_changed(effect_id: String, open: bool)
+signal stage_defaults_restored()
 
 var show_data: Dictionary = {}
 var items: Array[PlaylistItem] = []
@@ -43,6 +44,7 @@ func _ready() -> void:
 	fx_automation.configure_style_presets(preset_names)
 	fx_automation.style_advanced.connect(_on_fx_style_advanced)
 	fx_automation.gate_changed.connect(_on_fx_gate_changed)
+	fx_automation.play_all_randomize_tick.connect(_on_play_all_randomize_tick)
 
 
 func load_show(show_path: String) -> bool:
@@ -185,7 +187,7 @@ func set_play_all_effects(on: bool, cycle_sec: float = 20.0, active_sec: float =
 	if on:
 		# Play All always drives every known visual effect id.
 		var ids: Array = []
-		for eid in ["ascii", "particles", "feedback", "glitch", "chromatic", "pixel_sort", "wireframe"]:
+		for eid in ["ascii", "feedback", "glitch", "chromatic", "rd", "wireframe", "point_cloud", "camera_fx"]:
 			ids.append(eid)
 			_effect_user_enabled[eid] = true
 		fx_automation.enable_play_all(ids, cycle_sec, active_sec)
@@ -252,12 +254,12 @@ func _on_fx_style_advanced(preset_name: String) -> void:
 		params.erase("density")
 		if prev.has("invert"):
 			params["invert"] = prev["invert"]
-		if prev.has("drive_mode"):
-			params["drive_mode"] = prev["drive_mode"]
-		if prev.has("lfo_wave"):
-			params["lfo_wave"] = prev["lfo_wave"]
-		if prev.has("lfo_rate"):
-			params["lfo_rate"] = prev["lfo_rate"]
+		FxAutomation.copy_driven_params(prev, params)
+		if not (params.get("style_index") is String):
+			var names: Array = AsciiEffect.PRESETS.keys()
+			var si := names.find(preset_name)
+			if si >= 0:
+				params["style_index"] = float(si)
 		if prev.has("density_min"):
 			params["density_min"] = prev["density_min"]
 		if prev.has("density_max"):
@@ -274,7 +276,116 @@ func _on_fx_gate_changed(effect_id: String, open: bool) -> void:
 	# Reactivity schedules (react_*) gate audio drives via ReactivityHub — not EffectStack layers.
 	if str(effect_id).begins_with("react_"):
 		return
+	# Master Play All Active/Inactive — mute/unmute every Play-All FX (not a stack layer).
+	if str(effect_id) == "play_all":
+		for eid in fx_automation.get_play_all_ids():
+			_apply_effect_effective(str(eid))
+		return
 	_apply_effect_effective(effect_id)
+
+
+func _on_play_all_randomize_tick() -> void:
+	## Random mode: reshuffle params/styles for currently selected Play-All FX.
+	if not _play_all_active or fx_automation.play_all_mode != "random":
+		return
+	if not fx_automation.is_play_all_window_open():
+		return
+	for eid_any in fx_automation.get_play_all_ids():
+		var eid := str(eid_any)
+		if not fx_automation.is_gate_open(eid):
+			# Still clear stale params apply path via refresh (stays off).
+			_apply_effect_effective(eid)
+			continue
+		var prev_keep: Dictionary = (_effect_user_params.get(eid, {}) as Dictionary).duplicate(true)
+		var rolled: Dictionary = _make_random_effect_params(eid)
+		FxAutomation.copy_driven_params(prev_keep, rolled)
+		_effect_user_params[eid] = rolled
+		_apply_effect_effective(eid)
+
+
+func _make_random_effect_params(effect_id: String) -> Dictionary:
+	## Runtime random params for Play All Random (does not rewrite sidebar sliders).
+	var prev: Dictionary = (_effect_user_params.get(effect_id, {}) as Dictionary).duplicate(true)
+	match effect_id:
+		"ascii":
+			var keys: Array = AsciiEffect.PRESETS.keys()
+			var preset_name := str(keys[randi() % keys.size()]) if not keys.is_empty() else "classic"
+			var params: Dictionary = AsciiEffect.PRESETS.get(preset_name, {}).duplicate()
+			params.erase("density")
+			var dmin := float(prev.get("density_min", 40.0))
+			var dmax := float(prev.get("density_max", 120.0))
+			if dmax < dmin:
+				var tmp := dmin
+				dmin = dmax
+				dmax = tmp
+			params["density_min"] = dmin
+			params["density_max"] = dmax
+			params["density"] = lerpf(dmin, dmax, randf())
+			params["invert"] = bool(prev.get("invert", false))
+			var si := keys.find(preset_name)
+			if si >= 0:
+				params["style_index"] = float(si)
+			return params
+		"feedback":
+			var fb_op := randf_range(0.15, 0.85)
+			return {
+				"intensity": 1.0,
+				"mix_amount": fb_op,
+				"opacity": fb_op,
+				"persistence": randf_range(0.35, 1.0),
+			}
+		"glitch":
+			return {
+				"intensity": randf_range(0.4, 3.2),
+				"rate": randf_range(2.0, 28.0),
+				"h_size": randf_range(0.15, 0.95),
+				"rgb_split": randf_range(0.05, 0.9),
+				"slice_chaos": randf_range(0.1, 1.0),
+			}
+		"chromatic":
+			return {
+				"intensity": 1.0,
+				"amount": randf_range(0.2, 3.0),
+			}
+		"rd":
+			var names: Array = ["Coral", "Mitosis", "Spots", "Worms", "Waves"]
+			var pick := str(names[randi() % names.size()])
+			var rd_presets := {
+				"Coral": {"feed": 0.0545, "kill": 0.062},
+				"Mitosis": {"feed": 0.0367, "kill": 0.0649},
+				"Spots": {"feed": 0.035, "kill": 0.065},
+				"Worms": {"feed": 0.046, "kill": 0.063},
+				"Waves": {"feed": 0.025, "kill": 0.06},
+			}
+			var fk: Dictionary = rd_presets.get(pick, {})
+			return {
+				"preset": pick,
+				"feed": float(fk.get("feed", 0.0545)),
+				"kill": float(fk.get("kill", 0.062)),
+				"speed": randf_range(0.6, 1.8),
+				"mix_amount": randf_range(0.25, 0.75),
+			}
+		"wireframe":
+			return {
+				"intensity": 1.0,
+			}
+		"point_cloud":
+			return {
+				"point_size": randf_range(3.0, 14.0),
+				"target_environment": bool(prev.get("target_environment", true)),
+				"target_main": bool(prev.get("target_main", true)),
+				"target_scatter": bool(prev.get("target_scatter", true)),
+			}
+		"camera_fx":
+			return {
+				"focal_length": randf_range(8.0, 160.0),
+				"aperture": randf_range(1.4, 8.0),
+				"focus_distance": randf_range(2.0, 18.0),
+				"bokeh": randf_range(0.25, 1.0),
+				"lens_distortion": randf_range(0.0, 0.8),
+			}
+		_:
+			return prev
 
 
 func _unique_id(prefix: String) -> String:
@@ -354,6 +465,25 @@ func set_effect(effect_id: String, enabled: bool, params: Dictionary = {}) -> vo
 	_apply_effect_effective(effect_id)
 
 
+func export_fx_state() -> Dictionary:
+	return {
+		"enabled": _effect_user_enabled.duplicate(true),
+		"params": _effect_user_params.duplicate(true),
+	}
+
+
+func import_fx_state(data: Dictionary) -> void:
+	if data.is_empty():
+		return
+	var en: Variant = data.get("enabled", {})
+	var pr: Variant = data.get("params", {})
+	if en is Dictionary:
+		_effect_user_enabled = (en as Dictionary).duplicate(true)
+	if pr is Dictionary:
+		_effect_user_params = (pr as Dictionary).duplicate(true)
+	for eid in _effect_user_enabled.keys():
+		_apply_effect_effective(str(eid))
+
 
 func _execute_action(action: CueAction) -> void:
 	match action.op:
@@ -416,6 +546,51 @@ func set_flythrough_layer(layer_id: String, config: Dictionary, index: int = -1)
 		if idx == current_index:
 			play_index(idx, Transition.Mode.CUT, 0.0)
 	playlist_changed.emit()
+
+
+func restore_reactive_poses() -> void:
+	## Snap env/hero/scatter/camera back after rotation / reactivity toggles off.
+	if current_item_node != null and current_item_node.has_method("restore_reactive_poses"):
+		current_item_node.call("restore_reactive_poses")
+
+
+func reset_stage_to_defaults() -> void:
+	## Full reset: poses + reactivity leftovers + all visual FX off (keeps playlist assets).
+	const FX_IDS := ["ascii", "feedback", "glitch", "chromatic", "rd", "wireframe", "point_cloud", "camera_fx"]
+	# Clear user-enabled FX first so gate/play-all teardown cannot re-open layers.
+	set_play_all_effects(false)
+	for eid in FX_IDS:
+		set_effect(str(eid), false)
+	fx_automation.clear_all_automation()
+	_effect_user_params.clear()
+	var rs := get_node_or_null("/root/ReactivitySettings")
+	if rs:
+		if rs.has_method("reset_to_defaults"):
+			rs.call("reset_to_defaults")
+		else:
+			if rs.has_method("set_enabled"):
+				rs.call("set_enabled", false)
+			else:
+				rs.set("enabled", false)
+			rs.set("affect_rotation", false)
+			rs.set("affect_camera_rotation", false)
+			rs.set("affect_noise", false)
+			rs.set("affect_scale", false)
+			rs.set("affect_emission", false)
+			rs.set("affect_light", false)
+			rs.set("camera_preset", "Off")
+			if rs.has_method("notify_changed"):
+				rs.call("notify_changed")
+	if current_item_node != null and current_item_node.has_method("reset_stage_to_defaults"):
+		current_item_node.call("reset_stage_to_defaults")
+	elif current_item_node != null and current_item_node.has_method("restore_reactive_poses"):
+		current_item_node.call("restore_reactive_poses")
+	if current_index >= 0 and current_index < items.size():
+		var item: PlaylistItem = items[current_index]
+		item.params["speed"] = 2.0
+		item.params["fly_speed"] = 2.0
+	set_active_cue_param("fly_speed", 2.0)
+	stage_defaults_restored.emit()
 
 
 func get_element_sequence(index: int = -1) -> Array:
@@ -643,16 +818,10 @@ func _process(delta: float) -> void:
 			current_item_node.call("apply_audio_state", audio_state)
 		if current_item_node.has_method("apply_kinect_state"):
 			current_item_node.call("apply_kinect_state", kinect_state)
-	var lfo01 := 0.0
-	var react := get_tree().root.get_node_or_null("ReactivitySettings")
-	if react:
-		lfo01 = float(react.get("lfo_mod01"))
 	for effect_id in _active_effects:
 		var effect: EffectLayer = _active_effects[effect_id] as EffectLayer
 		if effect != null and effect.enabled:
 			effect.apply_audio_state(audio_state)
-			if effect.has_method("apply_modulator"):
-				effect.call("apply_modulator", lfo01)
 	_check_kinect_gestures(kinect_state)
 
 

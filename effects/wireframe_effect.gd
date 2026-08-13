@@ -12,39 +12,24 @@ func _ready() -> void:
 
 func set_active(is_on: bool) -> void:
 	enabled = is_on
-	visible = false  # no 2D overlay — drives SubViewport debug draw
-	_push_to_scene()
+	visible = false
+	_set_wireframe(is_on)
 
 
 func apply_params(params: Dictionary) -> void:
 	super.apply_params(params)
-	_push_to_scene()
+	_set_wireframe(enabled)
 
 
-func apply_audio_state(state: AudioState) -> void:
-	if not enabled:
-		_set_wireframe(false)
-		return
-	match normalize_drive_mode(drive_mode):
-		"auto", "manual":
-			_set_wireframe(true)
-		"lfo":
-			_set_wireframe(_last_lfo > 0.45)
-		_:
-			_set_wireframe(resolve_drive(state.energy) > 0.25)
+func apply_audio_state(_state: AudioState) -> void:
+	_set_wireframe(enabled)
 
 
-func apply_modulator(mod01: float) -> void:
-	super.apply_modulator(mod01)
-	if enabled and normalize_drive_mode(drive_mode) == "lfo":
-		_set_wireframe(mod01 > 0.45)
+func apply_modulator(_mod01: float) -> void:
+	pass
 
 
 func _on_params_changed(_params: Dictionary) -> void:
-	_push_to_scene()
-
-
-func _push_to_scene() -> void:
 	_set_wireframe(enabled)
 
 

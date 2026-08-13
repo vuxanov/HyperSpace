@@ -91,6 +91,8 @@ static func _spawn_flat_plane(parent: Node3D) -> void:
 	var ground := MeshInstance3D.new()
 	var plane := PlaneMesh.new()
 	plane.size = Vector2(120, 120)
+	plane.subdivide_width = 32
+	plane.subdivide_depth = 32
 	ground.mesh = plane
 	ground.material_override = make_material(Color(0.18, 0.22, 0.18))
 	ground.position = Vector3(0, 0, -40)

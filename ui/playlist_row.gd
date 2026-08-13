@@ -3,6 +3,8 @@ class_name PlaylistRow
 
 ## One playlist row: drag to reorder, click name to replace, play / duration / delete.
 
+const SliderSpinLinkScr := preload("res://ui/slider_spin_link.gd")
+
 signal play_pressed(index: int)
 signal replace_pressed(index: int)
 signal delete_pressed(index: int)
@@ -13,7 +15,7 @@ signal files_dropped_on_row(index: int, paths: PackedStringArray)
 var index: int = -1
 var _item_btn: Button
 var _play_btn: Button
-var _dur: SpinBox
+var _dur_slider: HSlider
 var _del_btn: Button
 var _handle: Label
 
@@ -47,15 +49,18 @@ func setup(row_index: int, title: String, duration: float, selected: bool) -> vo
 	_play_btn.pressed.connect(func() -> void: play_pressed.emit(index))
 	add_child(_play_btn)
 
-	_dur = SpinBox.new()
-	_dur.min_value = 1.0
-	_dur.max_value = 600.0
-	_dur.step = 1.0
-	_dur.custom_minimum_size = Vector2(72, 0)
-	_dur.suffix = "s"
-	_dur.value = roundf(duration)
-	_dur.value_changed.connect(func(v: float) -> void: duration_changed.emit(index, v))
-	add_child(_dur)
+	_dur_slider = HSlider.new()
+	_dur_slider.min_value = 0.0
+	_dur_slider.max_value = 120.0
+	_dur_slider.step = 0.01
+	_dur_slider.value = duration
+	_dur_slider.custom_minimum_size = Vector2(72, 0)
+	_dur_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_dur_slider.tooltip_text = "Item duration (sec). Type bass * 10 or pick Driver."
+	add_child(_dur_slider)
+	SliderSpinLinkScr.attach_driven(_dur_slider, func(_v: float = 0.0) -> void:
+		duration_changed.emit(index, SliderSpinLinkScr.eval_of(_dur_slider, duration))
+	, 1.0)
 
 	_del_btn = Button.new()
 	_del_btn.text = "✕"

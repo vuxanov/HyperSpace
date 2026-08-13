@@ -4,11 +4,14 @@ extends RefCounted
 ## Shared path → resource cache with threaded loads for models / HDRIs / textures.
 ## Keeps previous frames live while new assets finish off the main thread.
 
+const _SceneMeshFx := preload("res://core/scene_mesh_fx.gd")
+
 enum Status { IDLE, LOADING, READY, FAILED }
 
 static var _scenes: Dictionary = {}  # path_key -> PackedScene
 static var _textures: Dictionary = {}  # path_key -> Texture2D
 static var _inflight: Dictionary = {}  # path_key -> true
+static var _failed: Dictionary = {}  # path_key -> true
 static var _pending_cb: Dictionary = {}  # path_key -> Array[Callable]
 static var _thread_jobs: Dictionary = {}  # path_key -> Dictionary
 static var _ready_queue: Array = []
@@ -22,6 +25,7 @@ static func clear() -> void:
 	_scenes.clear()
 	_textures.clear()
 	_inflight.clear()
+	_failed.clear()
 	_pending_cb.clear()
 	_thread_jobs.clear()
 	_queue_mutex.lock()
@@ -46,7 +50,12 @@ static func normalize_key(path: String) -> String:
 	if n.begins_with("res://") or n.begins_with("user://"):
 		return n
 	var project_root := ProjectSettings.globalize_path("res://").replace("\\", "/")
+	if not project_root.ends_with("/"):
+		project_root += "/"
 	if n.begins_with(project_root):
+		return "res://" + n.substr(project_root.length()).lstrip("/")
+	# Windows paths may differ only by drive-letter case.
+	if n.to_lower().begins_with(project_root.to_lower()):
 		return "res://" + n.substr(project_root.length()).lstrip("/")
 	return n
 
@@ -86,6 +95,7 @@ static func instantiate_scene(path: String, parent: Node) -> Node3D:
 		return null
 	var instance: Node = packed.instantiate()
 	parent.add_child(instance)
+	_SceneMeshFx.ensure_mesh_tangents(instance)
 	if instance is Node3D:
 		return instance as Node3D
 	instance.queue_free()
@@ -108,12 +118,22 @@ static func request_scene(path: String, on_ready: Callable = Callable()) -> Stat
 		_ensure_poll_host()
 		return Status.LOADING
 	_inflight[key] = true
+	_failed.erase(key)
 	_ensure_poll_host()
 	if ResourceLoader.exists(key):
 		var err := ResourceLoader.load_threaded_request(key, "", true)
 		if err == OK:
 			_thread_jobs[key] = {"kind": "resource", "path": key}
 			return Status.LOADING
+		# Imported scene exists — never fall through to raw GLTFDocument.
+		var res: Resource = ResourceLoader.load(key)
+		_inflight.erase(key)
+		if res is PackedScene:
+			_store_scene(key, res as PackedScene)
+			_notify(key, Status.READY, res)
+			return Status.READY
+		_fail_key(key)
+		return Status.FAILED
 	var abs_path := _abs_path(key)
 	var lower := abs_path.to_lower()
 	if (lower.ends_with(".glb") or lower.ends_with(".gltf")) and FileAccess.file_exists(abs_path):
@@ -141,12 +161,23 @@ static func request_texture(path: String, on_ready: Callable = Callable()) -> St
 		_ensure_poll_host()
 		return Status.LOADING
 	_inflight[key] = true
+	_failed.erase(key)
 	_ensure_poll_host()
 	if ResourceLoader.exists(key):
 		var err := ResourceLoader.load_threaded_request(key, "", true)
 		if err == OK:
 			_thread_jobs[key] = {"kind": "resource_tex", "path": key}
 			return Status.LOADING
+		# Imported texture exists — never re-parse .hdr via Image.load_from_file
+		# (Godot's HDR loader warns on GAMMA/PRIMARIES/EXPOSURE headers).
+		var res: Resource = ResourceLoader.load(key)
+		_inflight.erase(key)
+		if res is Texture2D:
+			_store_texture(key, res as Texture2D)
+			_notify(key, Status.READY, res)
+			return Status.READY
+		_fail_key(key)
+		return Status.FAILED
 	var abs_path := _abs_path(key)
 	if FileAccess.file_exists(abs_path):
 		_thread_jobs[key] = {"kind": "image", "path": key, "abs": abs_path}
@@ -176,6 +207,36 @@ static func prefetch_paths(paths: Array) -> void:
 
 static func inflight_count() -> int:
 	return _inflight.size()
+
+
+static func is_inflight(path: String) -> bool:
+	return _inflight.has(normalize_key(path))
+
+
+static func has_failed(path: String) -> bool:
+	return _failed.has(normalize_key(path))
+
+
+static func threaded_progress(path: String) -> float:
+	## 0–1 for an in-flight ResourceLoader job; 0 if unknown / worker-thread.
+	var key := normalize_key(path)
+	if key.is_empty():
+		return 0.0
+	if _scenes.has(key) or _textures.has(key) or _failed.has(key):
+		return 1.0
+	if not _thread_jobs.has(key):
+		return 0.0
+	var job: Dictionary = _thread_jobs[key]
+	var kind := str(job.get("kind", ""))
+	if kind != "resource" and kind != "resource_tex":
+		return 0.0
+	var progress: Array = []
+	var st := ResourceLoader.load_threaded_get_status(str(job.get("path", key)), progress)
+	if st == ResourceLoader.THREAD_LOAD_LOADED:
+		return 1.0
+	if st == ResourceLoader.THREAD_LOAD_IN_PROGRESS and not progress.is_empty():
+		return clampf(float(progress[0]), 0.0, 0.99)
+	return 0.0
 
 
 static func is_path_cached(path: String) -> bool:
@@ -361,6 +422,7 @@ static func _trim_dict(d: Dictionary, max_n: int) -> void:
 static func _fail_key(key: String) -> void:
 	_inflight.erase(key)
 	_thread_jobs.erase(key)
+	_failed[key] = true
 	_notify(key, Status.FAILED, null)
 
 

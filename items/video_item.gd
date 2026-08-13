@@ -77,10 +77,7 @@ func apply_audio_state(state: AudioState) -> void:
 		scale = Vector2.ONE
 		return
 	if RH.affect_scale():
-		var reactive := state.bass * 1.2 + state.energy
-		if state.beat:
-			reactive *= 1.3
-		var amt := 1.0 + reactive * RH.scale_amount() * 0.12
+		var amt := RH.scale_multiplier()
 		var sx := amt if RH.scale_x() else 1.0
 		var sy := amt if RH.scale_y() else 1.0
 		scale = Vector2(sx, sy)

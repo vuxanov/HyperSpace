@@ -8,6 +8,7 @@ const LAYER_SCATTER := "scatter"
 const LAYER_CENTERPIECE := "centerpiece"
 const _MEDIA_PROP := preload("res://items/flythrough/media_prop.gd")
 const _AssetCache := preload("res://core/asset_cache.gd")
+const _SceneMeshFx := preload("res://core/scene_mesh_fx.gd")
 
 
 static func clear_root(root: Node3D) -> void:
@@ -36,6 +37,7 @@ static func load_asset_into(parent: Node3D, path: String, opts: Dictionary = {})
 	if cached != null:
 		var inst: Node = cached.instantiate()
 		parent.add_child(inst)
+		_SceneMeshFx.ensure_mesh_tangents(inst)
 		if inst is Node3D:
 			return inst as Node3D
 		inst.queue_free()
@@ -45,6 +47,7 @@ static func load_asset_into(parent: Node3D, path: String, opts: Dictionary = {})
 		if packed != null:
 			var instance: Node = packed.instantiate()
 			parent.add_child(instance)
+			_SceneMeshFx.ensure_mesh_tangents(instance)
 			if instance is Node3D:
 				return instance as Node3D
 			instance.queue_free()
@@ -58,6 +61,7 @@ static func load_asset_into(parent: Node3D, path: String, opts: Dictionary = {})
 		if packed2 != null:
 			var scene: Node = packed2.instantiate()
 			parent.add_child(scene)
+			_SceneMeshFx.ensure_mesh_tangents(scene)
 			if scene is Node3D:
 				return scene as Node3D
 			scene.queue_free()

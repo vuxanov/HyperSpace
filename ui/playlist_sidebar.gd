@@ -9,10 +9,15 @@ const TAB_MAIN := 1
 const TAB_SCATTER := 2
 const TAB_LIGHT := 3
 const _AssetCache := preload("res://core/asset_cache.gd")
+const _BootCache := preload("res://core/boot_cache.gd")
+const SliderSpinLinkScr := preload("res://ui/slider_spin_link.gd")
+const CycleRandomScr := preload("res://ui/cycle_random.gd")
 
 @onready var show_label: Label = $Margin/Column/Header/ShowLabel
 @onready var status_label: Label = $Margin/Column/Header/StatusLabel
 @onready var fly_speed: SpinBox = $Margin/Column/Header/FlyRow/FlySpeed
+@onready var path_style: OptionButton = $Margin/Column/Header/PathRow/PathStyle
+@onready var reset_defaults_btn: Button = $Margin/Column/Header/ResetDefaultsBtn
 @onready var asset_tabs: TabContainer = $Margin/Column/AssetTabs
 
 @onready var env_list: VBoxContainer = $Margin/Column/AssetTabs/Environments/EnvScroll/EnvList
@@ -33,6 +38,9 @@ const _AssetCache := preload("res://core/asset_cache.gd")
 @onready var env_scale: SpinBox = $Margin/Column/AssetTabs/Environments/EnvScaleRow/EnvScale
 @onready var main_duration: SpinBox = $"Margin/Column/AssetTabs/Main character/MainControls/MainDuration"
 @onready var scatter_duration: SpinBox = $Margin/Column/AssetTabs/Scattering/ScatterControls/ScatterDuration
+@onready var scatter_layout: OptionButton = $Margin/Column/AssetTabs/Scattering/ScatterLayoutRow/ScatterLayout
+@onready var scatter_density: SpinBox = $Margin/Column/AssetTabs/Scattering/ScatterDensityRow/ScatterDensity
+@onready var scatter_global_scale: SpinBox = $Margin/Column/AssetTabs/Scattering/ScatterGlobalScaleRow/ScatterGlobalScale
 @onready var light_duration: SpinBox = $Margin/Column/AssetTabs/Lighting/LightControls/LightDuration
 
 @onready var clear_button: Button = $Margin/Column/ClearButton
@@ -50,6 +58,7 @@ var _sel_scatter: int = -1
 var _sel_light: int = -1
 ## Independent autoplay per category.
 var _autoplay: Array[bool] = [false, false, false, false]
+var _shuffle_slots: Dictionary = {}
 var _elapsed: Array[float] = [0.0, 0.0, 0.0, 0.0]
 var _layer_pick: String = ""  # environment | scatter | centerpiece | replace_*
 var _replace_tab: int = -1
@@ -72,10 +81,29 @@ var _warm_ready: bool = false
 const WARM_GIF_PER_FRAME := 1
 const WARM_TIMEOUT_SEC := 90.0
 var _warm_elapsed: float = 0.0
+## Edit-item modal (rename / replace / scale).
+var _edit_dialog: AcceptDialog
+var _edit_name: LineEdit
+var _edit_asset_label: Label
+var _edit_replace_btn: Button
+var _edit_scale_row: HBoxContainer
+var _edit_scale_slider: HSlider
+var _edit_scale_spin: SpinBox
+var _edit_tab: int = -1
+var _edit_index: int = -1
+var _edit_scale_busy: bool = false
+var _edit_from_modal_replace: bool = false
+## Avoid scatter rebuild when restoring/syncing layout+density UI.
+var _scatter_settings_busy: bool = false
 
 
 func _ready() -> void:
 	clear_button.pressed.connect(_on_clear)
+	if reset_defaults_btn:
+		reset_defaults_btn.pressed.connect(_on_reset_to_defaults)
+	ShowDirector.stage_defaults_restored.connect(_sync_fly_speed_from_stage)
+	ShowDirector.stage_defaults_restored.connect(_sync_path_style_from_stage)
+	ShowDirector.stage_defaults_restored.connect(_sync_scatter_settings_from_stage)
 	env_file_btn.pressed.connect(func() -> void: _pick_layer_file("environment"))
 	main_file_btn.pressed.connect(func() -> void: _pick_layer_file("centerpiece"))
 	scatter_file_btn.pressed.connect(func() -> void: _pick_layer_file("scatter"))
@@ -88,25 +116,50 @@ func _ready() -> void:
 	main_play_btn.pressed.connect(func() -> void: _toggle_tab_autoplay(TAB_MAIN))
 	scatter_play_btn.pressed.connect(func() -> void: _toggle_tab_autoplay(TAB_SCATTER))
 	light_play_btn.pressed.connect(func() -> void: _toggle_tab_autoplay(TAB_LIGHT))
-	fly_speed.value_changed.connect(_on_fly_speed_changed)
-	env_scale.value_changed.connect(_on_env_scale_changed)
-	env_duration.value_changed.connect(func(_v: float) -> void: _schedule_autosave())
-	main_duration.value_changed.connect(func(_v: float) -> void: _schedule_autosave())
-	scatter_duration.value_changed.connect(func(_v: float) -> void: _schedule_autosave())
-	light_duration.value_changed.connect(func(_v: float) -> void: _schedule_autosave())
+	_fill_path_style_options()
+	_fill_scatter_layout_options()
+	_setup_preset_shuffles()
+	SliderSpinLinkScr.replace_spin_with_driven(fly_speed, func(_v: float = 0.0) -> void:
+		_on_fly_speed_changed(SliderSpinLinkScr.eval_spin(fly_speed))
+	, 1.0, 0.0, 40.0)
+	SliderSpinLinkScr.replace_spin_with_driven(env_scale, func(_v: float = 0.0) -> void:
+		_on_env_scale_changed(SliderSpinLinkScr.eval_spin(env_scale))
+	, 1.0, 0.0, 10.0)
+	if scatter_density:
+		SliderSpinLinkScr.replace_spin_with_driven(scatter_density, func(_v: float = 0.0) -> void:
+			_on_scatter_density_changed(SliderSpinLinkScr.eval_spin(scatter_density))
+		, 1.0, 1.0, 2000.0)
+	if scatter_global_scale:
+		SliderSpinLinkScr.replace_spin_with_driven(scatter_global_scale, func(_v: float = 0.0) -> void:
+			_on_scatter_global_scale_changed(SliderSpinLinkScr.eval_spin(scatter_global_scale))
+		, 1.0, 0.1, 5.0)
+	SliderSpinLinkScr.replace_spin_with_driven(env_duration, func(_v: float = 0.0) -> void: _schedule_autosave(), 1.0, 1.0, 60.0)
+	SliderSpinLinkScr.replace_spin_with_driven(main_duration, func(_v: float = 0.0) -> void: _schedule_autosave(), 1.0, 1.0, 60.0)
+	SliderSpinLinkScr.replace_spin_with_driven(scatter_duration, func(_v: float = 0.0) -> void: _schedule_autosave(), 1.0, 1.0, 60.0)
+	SliderSpinLinkScr.replace_spin_with_driven(light_duration, func(_v: float = 0.0) -> void: _schedule_autosave(), 1.0, 1.0, 60.0)
+	if status_label:
+		status_label.visible = false
+		status_label.text = ""
+	if path_style:
+		path_style.item_selected.connect(_on_path_style_selected)
+	if scatter_layout:
+		scatter_layout.item_selected.connect(_on_scatter_layout_selected)
 	layer_file_dialog.file_selected.connect(_on_layer_file_selected)
 	layer_file_dialog.files_selected.connect(_on_layer_files_selected)
 	ShowDirector.show_loaded.connect(_on_show_loaded)
 	ShowDirector.item_changed.connect(_on_item_changed)
 	ShowDirector.playlist_changed.connect(_on_playlist_changed)
 	_setup_autosave_timer()
+	_setup_edit_dialog()
 	_setup_tab_icons()
 	_load_catalog_entries()
 	_restore_sidebar_from_session()
 	_rebuild_all_lists()
 	_refresh_status()
 	_sync_fly_speed_from_stage()
+	_sync_path_style_from_stage()
 	_sync_env_scale_from_stage()
+	_sync_scatter_settings_from_stage()
 	_update_all_play_buttons()
 	_start_warm_all(-1)
 	set_process(true)
@@ -125,6 +178,320 @@ func _setup_autosave_timer() -> void:
 	_autosave_timer.one_shot = true
 	_autosave_timer.timeout.connect(_save_session_now)
 	add_child(_autosave_timer)
+
+
+func _setup_edit_dialog() -> void:
+	_edit_dialog = AcceptDialog.new()
+	_edit_dialog.title = "Edit item"
+	_edit_dialog.min_size = Vector2i(420, 260)
+	_edit_dialog.ok_button_text = "Done"
+	_edit_dialog.dialog_hide_on_ok = true
+	add_child(_edit_dialog)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 12)
+	margin.add_theme_constant_override("margin_right", 12)
+	margin.add_theme_constant_override("margin_top", 8)
+	margin.add_theme_constant_override("margin_bottom", 8)
+	_edit_dialog.add_child(margin)
+
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 10)
+	margin.add_child(col)
+
+	var name_lbl := Label.new()
+	name_lbl.text = "Name"
+	col.add_child(name_lbl)
+	_edit_name = LineEdit.new()
+	_edit_name.placeholder_text = "Display name"
+	col.add_child(_edit_name)
+
+	var asset_lbl := Label.new()
+	asset_lbl.text = "Asset"
+	col.add_child(asset_lbl)
+	var asset_row := HBoxContainer.new()
+	asset_row.add_theme_constant_override("separation", 8)
+	col.add_child(asset_row)
+	_edit_asset_label = Label.new()
+	_edit_asset_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_edit_asset_label.clip_text = true
+	_edit_asset_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	asset_row.add_child(_edit_asset_label)
+	_edit_replace_btn = Button.new()
+	_edit_replace_btn.text = "Replace…"
+	_edit_replace_btn.tooltip_text = "Choose another file for this item"
+	_edit_replace_btn.pressed.connect(_on_edit_replace_pressed)
+	asset_row.add_child(_edit_replace_btn)
+
+	_edit_scale_row = HBoxContainer.new()
+	_edit_scale_row.add_theme_constant_override("separation", 8)
+	col.add_child(_edit_scale_row)
+	var scale_lbl := Label.new()
+	scale_lbl.text = "Scale"
+	_edit_scale_row.add_child(scale_lbl)
+	_edit_scale_slider = HSlider.new()
+	_edit_scale_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_edit_scale_slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_edit_scale_slider.min_value = 0.1
+	_edit_scale_slider.max_value = 20.0
+	_edit_scale_slider.step = 0.1
+	_edit_scale_row.add_child(_edit_scale_slider)
+	SliderSpinLinkScr.attach_driven(_edit_scale_slider, func(_v: float = 0.0) -> void:
+		if _edit_scale_busy:
+			return
+		_commit_edit_scale()
+	, 1.0)
+
+	_edit_dialog.confirmed.connect(_on_edit_dialog_confirmed)
+	_edit_dialog.canceled.connect(_on_edit_dialog_closed)
+	_edit_dialog.visibility_changed.connect(func() -> void:
+		if _edit_dialog != null and not _edit_dialog.visible:
+			_commit_edit_scale()
+	)
+
+
+func _is_scale_expr(raw: Variant) -> bool:
+	if raw == null or not (raw is String):
+		return false
+	var t := str(raw).strip_edges()
+	return not t.is_empty() and not t.is_valid_float()
+
+
+func _eval_driven_value(raw: Variant, fallback: float = 1.0) -> float:
+	var hub := get_node_or_null("/root/DriverHub")
+	if hub != null and hub.has_method("eval_value"):
+		return float(hub.call("eval_value", raw, fallback))
+	if raw is float or raw is int:
+		return float(raw)
+	if raw is String and str(raw).strip_edges().is_valid_float():
+		return str(raw).strip_edges().to_float()
+	return fallback
+
+
+func _entry_scale_snapshot(entry: Dictionary) -> float:
+	if entry.has("user_scale") and not _is_scale_expr(entry["user_scale"]):
+		return maxf(float(entry["user_scale"]), 0.0)
+	var cfg: Dictionary = entry.get("config", {}) as Dictionary
+	if cfg.has("user_scale") and not _is_scale_expr(cfg["user_scale"]):
+		return maxf(float(cfg["user_scale"]), 0.0)
+	if cfg.has("scale"):
+		return maxf(float(cfg["scale"]), 0.0)
+	return 1.0
+
+
+func _entry_scale_expr(entry: Dictionary) -> String:
+	var e := ""
+	if entry.has("user_scale_expr"):
+		e = str(entry["user_scale_expr"]).strip_edges()
+	if e.is_empty():
+		var cfg: Dictionary = entry.get("config", {}) as Dictionary
+		if cfg.has("user_scale_expr"):
+			e = str(cfg["user_scale_expr"]).strip_edges()
+	if e.is_empty() and _is_scale_expr(entry.get("user_scale", null)):
+		e = str(entry["user_scale"]).strip_edges()
+	if e.is_empty():
+		var cfg2: Dictionary = entry.get("config", {}) as Dictionary
+		if _is_scale_expr(cfg2.get("user_scale", null)):
+			e = str(cfg2["user_scale"]).strip_edges()
+	if e.is_empty() or e.is_valid_float():
+		return ""
+	return e
+
+
+func _entry_scale_raw(entry: Dictionary) -> Variant:
+	var expr := _entry_scale_expr(entry)
+	if not expr.is_empty():
+		return expr
+	return _entry_scale_snapshot(entry)
+
+
+func _entry_user_scale(entry: Dictionary) -> float:
+	var snapshot := _entry_scale_snapshot(entry)
+	var expr := _entry_scale_expr(entry)
+	if not expr.is_empty():
+		return maxf(_eval_driven_value(expr, snapshot), 0.0)
+	return snapshot
+
+
+func _set_entry_user_scale(entry: Dictionary, scale_val: float, scale_raw: Variant = null) -> void:
+	var s := maxf(scale_val, 0.0)
+	entry["user_scale"] = s
+	var cfg: Dictionary = (entry.get("config", {}) as Dictionary).duplicate(true)
+	cfg["user_scale"] = s
+	var expr := ""
+	if scale_raw == null:
+		expr = _entry_scale_expr(entry)
+	elif _is_scale_expr(scale_raw):
+		expr = str(scale_raw).strip_edges()
+	if expr.is_empty():
+		entry.erase("user_scale_expr")
+		cfg.erase("user_scale_expr")
+	else:
+		entry["user_scale_expr"] = expr
+		cfg["user_scale_expr"] = expr
+	entry["config"] = cfg
+
+
+func _stamp_scale_on_cfg(cfg: Dictionary, entry: Dictionary, scale_val: float) -> void:
+	cfg["user_scale"] = maxf(scale_val, 0.0)
+	var expr := _entry_scale_expr(entry)
+	if expr.is_empty():
+		cfg.erase("user_scale_expr")
+	else:
+		cfg["user_scale_expr"] = expr
+
+
+func _entry_asset_caption(entry: Dictionary) -> String:
+	var cfg: Dictionary = entry.get("config", {}) as Dictionary
+	if cfg.has("path") and str(cfg["path"]).strip_edges() != "":
+		return str(cfg["path"]).get_file()
+	if cfg.has("hdri_path") and str(cfg["hdri_path"]).strip_edges() != "":
+		return str(cfg["hdri_path"]).get_file()
+	if cfg.has("source"):
+		return str(cfg["source"]).replace("primitive:", "")
+	if cfg.has("preset"):
+		return str(cfg["preset"]).replace("_", " ")
+	return str(entry.get("label", "Asset"))
+
+
+func _open_edit_item(tab: int, index: int) -> void:
+	var entries := _entries_for_tab(tab)
+	if index < 0 or index >= entries.size() or _edit_dialog == null:
+		return
+	_edit_tab = tab
+	_edit_index = index
+	var entry: Dictionary = entries[index]
+	_edit_name.text = str(entry.get("label", "Asset"))
+	_edit_asset_label.text = _entry_asset_caption(entry)
+	_edit_asset_label.tooltip_text = _edit_asset_label.text
+	var show_scale := tab != TAB_LIGHT
+	_edit_scale_row.visible = show_scale
+	if show_scale:
+		if tab == TAB_ENV:
+			_edit_scale_slider.min_value = 0.1
+			_edit_scale_slider.max_value = 200.0
+			_edit_scale_slider.step = 0.1
+		else:
+			_edit_scale_slider.min_value = 0.1
+			_edit_scale_slider.max_value = 200.0
+			_edit_scale_slider.step = 0.1
+		_edit_scale_busy = true
+		var raw: Variant = _entry_scale_raw(entry)
+		if raw is String:
+			SliderSpinLinkScr.set_expr(_edit_scale_slider, str(raw), false)
+		else:
+			SliderSpinLinkScr.set_expr(_edit_scale_slider, str(snappedf(float(raw), 0.001)), false)
+		_edit_scale_busy = false
+	_edit_dialog.popup_centered()
+
+
+func _on_edit_replace_pressed() -> void:
+	if _edit_tab < 0 or _edit_index < 0:
+		return
+	_edit_from_modal_replace = true
+	_pick_replace(_edit_tab, _edit_index)
+
+
+func _commit_edit_scale() -> void:
+	if _edit_tab < 0 or _edit_index < 0 or _edit_tab == TAB_LIGHT:
+		return
+	if _edit_scale_slider == null or not is_instance_valid(_edit_scale_slider):
+		return
+	var entries := _entries_for_tab(_edit_tab)
+	if _edit_index >= entries.size():
+		return
+	var entry: Dictionary = entries[_edit_index]
+	var raw: Variant = SliderSpinLinkScr.param_of(_edit_scale_slider)
+	var scale_val := maxf(SliderSpinLinkScr.eval_of(_edit_scale_slider), 0.0)
+	_set_entry_user_scale(entry, scale_val, raw)
+	# Live on stage when this row is the applied selection.
+	if _selection_for_tab(_edit_tab) == _edit_index:
+		_push_live_scale(_edit_tab, scale_val)
+	_schedule_autosave()
+
+
+func _push_live_scale(tab: int, scale_val: float) -> void:
+	var idx := _ensure_stage()
+	if idx < 0:
+		return
+	var expr := ""
+	var sel := _selection_for_tab(tab)
+	var entries := _entries_for_tab(tab)
+	if sel >= 0 and sel < entries.size():
+		expr = _entry_scale_expr(entries[sel])
+	match tab:
+		TAB_ENV:
+			if env_scale:
+				if expr.is_empty():
+					SliderSpinLinkScr.set_spin_driven(env_scale, scale_val)
+				else:
+					var sl := SliderSpinLinkScr.slider_of_spin(env_scale)
+					if sl == null or SliderSpinLinkScr.expr_of(sl) != expr:
+						SliderSpinLinkScr.set_spin_driven(env_scale, expr)
+			if idx < ShowDirector.items.size():
+				var params: Dictionary = ShowDirector.items[idx].params
+				var env_cfg: Dictionary = (params.get("environment", {}) as Dictionary).duplicate(true)
+				env_cfg["user_scale"] = scale_val
+				if expr.is_empty():
+					env_cfg.erase("user_scale_expr")
+				else:
+					env_cfg["user_scale_expr"] = expr
+				params["environment"] = env_cfg
+			ShowDirector.set_active_cue_param("env_scale", scale_val)
+		TAB_MAIN:
+			if idx < ShowDirector.items.size():
+				var params_m: Dictionary = ShowDirector.items[idx].params
+				var main_cfg: Dictionary = (params_m.get("centerpiece", {}) as Dictionary).duplicate(true)
+				main_cfg["user_scale"] = scale_val
+				if expr.is_empty():
+					main_cfg.erase("user_scale_expr")
+				else:
+					main_cfg["user_scale_expr"] = expr
+				params_m["centerpiece"] = main_cfg
+			ShowDirector.set_active_cue_param("centerpiece_scale", scale_val)
+		TAB_SCATTER:
+			if idx < ShowDirector.items.size():
+				var params_s: Dictionary = ShowDirector.items[idx].params
+				var sc_cfg: Dictionary = (params_s.get("scatter", {}) as Dictionary).duplicate(true)
+				sc_cfg["user_scale"] = scale_val
+				if expr.is_empty():
+					sc_cfg.erase("user_scale_expr")
+				else:
+					sc_cfg["user_scale_expr"] = expr
+				params_s["scatter"] = sc_cfg
+			ShowDirector.set_active_cue_param("scatter_scale", scale_val)
+
+
+func _on_edit_dialog_confirmed() -> void:
+	_commit_edit_scale()
+	if _edit_tab < 0 or _edit_index < 0:
+		_clear_edit_dialog_target()
+		return
+	var entries := _entries_for_tab(_edit_tab)
+	if _edit_index >= entries.size():
+		_clear_edit_dialog_target()
+		return
+	var entry: Dictionary = entries[_edit_index]
+	var new_name := _edit_name.text.strip_edges()
+	if new_name.is_empty():
+		new_name = str(entry.get("label", "Asset"))
+	if str(entry.get("label", "")) != new_name:
+		entry["label"] = new_name
+		_rebuild_all_lists()
+		_refresh_status()
+		_schedule_autosave()
+	_clear_edit_dialog_target()
+
+
+func _on_edit_dialog_closed() -> void:
+	_commit_edit_scale()
+	_clear_edit_dialog_target()
+
+
+func _clear_edit_dialog_target() -> void:
+	_edit_tab = -1
+	_edit_index = -1
+	_edit_from_modal_replace = false
 
 
 func _schedule_autosave() -> void:
@@ -150,19 +517,28 @@ func build_session_payload() -> Dictionary:
 	var light_dur := 8.0
 	var scale_val := 1.0
 	var speed_val := 12.0
+	var path_style_val := FlythroughPathBuilder.STYLE_AUTO
+	var scatter_layout_val := "random"
+	var scatter_density_val := 18
+	var scatter_global_scale_val := 1.0
 	var tab_idx := 0
 	if env_duration != null and is_instance_valid(env_duration):
-		env_dur = float(env_duration.value)
+		env_dur = SliderSpinLinkScr.eval_spin(env_duration, 8.0)
 	if main_duration != null and is_instance_valid(main_duration):
-		main_dur = float(main_duration.value)
+		main_dur = SliderSpinLinkScr.eval_spin(main_duration, 8.0)
 	if scatter_duration != null and is_instance_valid(scatter_duration):
-		scatter_dur = float(scatter_duration.value)
+		scatter_dur = SliderSpinLinkScr.eval_spin(scatter_duration, 8.0)
 	if light_duration != null and is_instance_valid(light_duration):
-		light_dur = float(light_duration.value)
+		light_dur = SliderSpinLinkScr.eval_spin(light_duration, 8.0)
 	if env_scale != null and is_instance_valid(env_scale):
-		scale_val = float(env_scale.value)
+		scale_val = SliderSpinLinkScr.eval_spin(env_scale, 1.0)
 	if fly_speed != null and is_instance_valid(fly_speed):
-		speed_val = float(fly_speed.value)
+		speed_val = SliderSpinLinkScr.eval_spin(fly_speed, 12.0)
+	if path_style != null and is_instance_valid(path_style) and path_style.selected >= 0:
+		path_style_val = _path_style_id_at(path_style.selected)
+	scatter_layout_val = _scatter_layout_id()
+	scatter_density_val = _scatter_density_value()
+	scatter_global_scale_val = _scatter_global_scale_value()
 	if asset_tabs != null and is_instance_valid(asset_tabs):
 		tab_idx = asset_tabs.current_tab
 	return {
@@ -176,20 +552,35 @@ func build_session_payload() -> Dictionary:
 			"sel_main": _sel_main,
 			"sel_scatter": _sel_scatter,
 			"sel_light": _sel_light,
-			"env_duration": env_dur,
-			"main_duration": main_dur,
-			"scatter_duration": scatter_dur,
-			"light_duration": light_dur,
-			"env_scale": scale_val,
-			"fly_speed": speed_val,
+			"env_duration": SliderSpinLinkScr.param_of_spin(env_duration) if env_duration else env_dur,
+			"main_duration": SliderSpinLinkScr.param_of_spin(main_duration) if main_duration else main_dur,
+			"scatter_duration": SliderSpinLinkScr.param_of_spin(scatter_duration) if scatter_duration else scatter_dur,
+			"light_duration": SliderSpinLinkScr.param_of_spin(light_duration) if light_duration else light_dur,
+			"env_scale": SliderSpinLinkScr.param_of_spin(env_scale) if env_scale else scale_val,
+			"fly_speed": SliderSpinLinkScr.param_of_spin(fly_speed) if fly_speed else speed_val,
+			"path_style": path_style_val,
+			"scatter_layout": scatter_layout_val,
+			"scatter_density": scatter_density_val,
+			"scatter_global_scale": SliderSpinLinkScr.param_of_spin(scatter_global_scale) if scatter_global_scale else scatter_global_scale_val,
 			"autoplay": [_autoplay[TAB_ENV], _autoplay[TAB_MAIN], _autoplay[TAB_SCATTER], _autoplay[TAB_LIGHT]],
 			"current_tab": tab_idx,
 		},
 		"items": ShowDirector.items_to_dicts(),
 		"current_index": ShowDirector.current_index,
 		"cues": ShowDirector.cues.duplicate(true) if ShowDirector.cues is Array else [],
-		"effects": ShowDirector.show_data.get("effects", ["ascii", "particles", "feedback", "glitch"]),
+		"effects": ShowDirector.show_data.get("effects", ["ascii", "feedback", "glitch"]),
+		"drivers": _serialize_drivers(),
+		"fx": ShowDirector.export_fx_state() if ShowDirector else {},
 	}
+
+
+func _serialize_drivers() -> Dictionary:
+	var n := get_node_or_null("/root/DriverHub")
+	if n != null and n.has_method("serialize"):
+		var d: Variant = n.call("serialize")
+		if d is Dictionary:
+			return d as Dictionary
+	return {}
 
 
 func _duplicate_entries(entries: Array[Dictionary]) -> Array:
@@ -232,17 +623,27 @@ func _restore_sidebar_from_session() -> void:
 	_sel_light = int(sb.get("sel_light", _sel_light))
 	_clamp_all_selections()
 	if env_duration:
-		env_duration.set_value_no_signal(clampf(float(sb.get("env_duration", env_duration.value)), 1.0, 600.0))
+		SliderSpinLinkScr.set_spin_driven(env_duration, sb.get("env_duration", 8.0))
 	if main_duration:
-		main_duration.set_value_no_signal(clampf(float(sb.get("main_duration", main_duration.value)), 1.0, 600.0))
+		SliderSpinLinkScr.set_spin_driven(main_duration, sb.get("main_duration", 8.0))
 	if scatter_duration:
-		scatter_duration.set_value_no_signal(clampf(float(sb.get("scatter_duration", scatter_duration.value)), 1.0, 600.0))
+		SliderSpinLinkScr.set_spin_driven(scatter_duration, sb.get("scatter_duration", 8.0))
 	if light_duration:
-		light_duration.set_value_no_signal(clampf(float(sb.get("light_duration", light_duration.value)), 1.0, 600.0))
+		SliderSpinLinkScr.set_spin_driven(light_duration, sb.get("light_duration", 8.0))
 	if env_scale and sb.has("env_scale"):
-		env_scale.set_value_no_signal(clampf(roundf(float(sb["env_scale"])), 1.0, 50.0))
+		SliderSpinLinkScr.set_spin_driven(env_scale, sb["env_scale"])
 	if fly_speed and sb.has("fly_speed"):
-		fly_speed.set_value_no_signal(roundf(float(sb["fly_speed"])))
+		SliderSpinLinkScr.set_spin_driven(fly_speed, sb["fly_speed"])
+	if path_style and (sb.has("path_style") or sb.has("camera_path")):
+		_select_path_style_no_signal(str(sb.get("path_style", sb.get("camera_path", "auto"))))
+	_scatter_settings_busy = true
+	if scatter_layout and sb.has("scatter_layout"):
+		_select_scatter_layout_no_signal(str(sb["scatter_layout"]))
+	if scatter_density and sb.has("scatter_density"):
+		SliderSpinLinkScr.set_spin_driven(scatter_density, sb["scatter_density"])
+	if scatter_global_scale and sb.has("scatter_global_scale"):
+		SliderSpinLinkScr.set_spin_driven(scatter_global_scale, sb["scatter_global_scale"])
+	_scatter_settings_busy = false
 	if asset_tabs and sb.has("current_tab"):
 		asset_tabs.current_tab = clampi(int(sb["current_tab"]), 0, asset_tabs.get_tab_count() - 1)
 	# Do not resume autoplay on boot — restore timers/lists only.
@@ -265,7 +666,29 @@ func _clamp_sel(index: int, count: int) -> int:
 	return mini(index, count - 1)
 
 
+func _setup_preset_shuffles() -> void:
+	var header: VBoxContainer = $Margin/Column/Header
+	var path_row: Node = $Margin/Column/Header/PathRow
+	if header and path_style:
+		_shuffle_slots["path"] = CycleRandomScr.attach_shuffle(header, path_row, "Shuffle path")
+		var piv: HSlider = _shuffle_slots["path"].get("interval")
+		if piv:
+			SliderSpinLinkScr.attach_driven(piv, Callable(), 1.0)
+	var scatter_tab: VBoxContainer = $Margin/Column/AssetTabs/Scattering
+	var layout_row: Node = $Margin/Column/AssetTabs/Scattering/ScatterLayoutRow
+	if scatter_tab and scatter_layout:
+		_shuffle_slots["scatter"] = CycleRandomScr.attach_shuffle(scatter_tab, layout_row, "Shuffle layout")
+		var siv: HSlider = _shuffle_slots["scatter"].get("interval")
+		if siv:
+			SliderSpinLinkScr.attach_driven(siv, Callable(), 1.0)
+
+
 func _process(delta: float) -> void:
+	_apply_live_playlist_drivers()
+	if CycleRandomScr.tick_slot(_shuffle_slots.get("path", {}), delta):
+		CycleRandomScr.advance_option(path_style)
+	if CycleRandomScr.tick_slot(_shuffle_slots.get("scatter", {}), delta):
+		CycleRandomScr.advance_option(scatter_layout)
 	if _warming:
 		_tick_warm(delta)
 	for tab in [TAB_ENV, TAB_MAIN, TAB_SCATTER, TAB_LIGHT]:
@@ -280,6 +703,62 @@ func _process(delta: float) -> void:
 			continue
 		_elapsed[tab] = 0.0
 		_step_tab(tab, 1)
+
+
+func _maybe_autosave_spin(spin: SpinBox) -> void:
+	var sl := SliderSpinLinkScr.slider_of_spin(spin)
+	if sl and SliderSpinLinkScr.looks_driven_expr(sl):
+		return
+	_schedule_autosave()
+
+
+func _apply_live_playlist_drivers() -> void:
+	## Re-eval expressions every frame for live visuals; scatter count only on integer change.
+	var fly_sl := SliderSpinLinkScr.slider_of_spin(fly_speed)
+	if fly_sl and SliderSpinLinkScr.looks_driven_expr(fly_sl):
+		_on_fly_speed_changed(SliderSpinLinkScr.eval_of(fly_sl))
+	var scale_sl := SliderSpinLinkScr.slider_of_spin(env_scale)
+	if scale_sl and SliderSpinLinkScr.looks_driven_expr(scale_sl):
+		_on_env_scale_changed(SliderSpinLinkScr.eval_of(scale_sl))
+	var dens_sl := SliderSpinLinkScr.slider_of_spin(scatter_density)
+	if dens_sl and SliderSpinLinkScr.looks_driven_expr(dens_sl):
+		_on_scatter_density_changed(SliderSpinLinkScr.eval_of(dens_sl))
+	var gscale_sl := SliderSpinLinkScr.slider_of_spin(scatter_global_scale)
+	if gscale_sl and SliderSpinLinkScr.looks_driven_expr(gscale_sl):
+		_on_scatter_global_scale_changed(SliderSpinLinkScr.eval_of(gscale_sl))
+	if _edit_scale_slider and _edit_dialog and _edit_dialog.visible \
+			and SliderSpinLinkScr.looks_driven_expr(_edit_scale_slider):
+		_commit_edit_scale()
+	# Keep per-item scale drivers alive after the Edit popup closes.
+	_tick_entry_scale_driver(TAB_ENV)
+	_tick_entry_scale_driver(TAB_MAIN)
+	_tick_entry_scale_driver(TAB_SCATTER)
+
+
+func _tick_entry_scale_driver(tab: int) -> void:
+	if _edit_dialog != null and _edit_dialog.visible and _edit_tab == tab:
+		return
+	var sel := _selection_for_tab(tab)
+	var entries := _entries_for_tab(tab)
+	if sel < 0 or sel >= entries.size():
+		return
+	var entry: Dictionary = entries[sel]
+	var expr := _entry_scale_expr(entry)
+	if expr.is_empty():
+		return
+	if tab == TAB_ENV and env_scale:
+		var sl := SliderSpinLinkScr.slider_of_spin(env_scale)
+		if sl != null and SliderSpinLinkScr.expr_of(sl) == expr:
+			# Header Env scale already has this driver; that path ticks it.
+			return
+	var scale_val := maxf(_eval_driven_value(expr, _entry_scale_snapshot(entry)), 0.0)
+	entry["user_scale"] = scale_val
+	var cfg: Dictionary = entry.get("config", {}) as Dictionary
+	if not cfg.is_empty():
+		cfg["user_scale"] = scale_val
+		if not cfg.has("user_scale_expr"):
+			cfg["user_scale_expr"] = expr
+	_push_live_scale(tab, scale_val)
 
 
 func _any_tab_autoplaying() -> bool:
@@ -383,7 +862,9 @@ func _on_show_loaded(show_name: String) -> void:
 	_rebuild_all_lists()
 	_refresh_status()
 	_sync_fly_speed_from_stage()
+	_sync_path_style_from_stage()
 	_sync_env_scale_from_stage()
+	_sync_scatter_settings_from_stage()
 	_schedule_autosave()
 	_start_warm_all(-1)
 
@@ -398,7 +879,9 @@ func _on_item_changed(_item_id: String, _index: int) -> void:
 	_rebuild_all_lists()
 	_refresh_status()
 	_sync_fly_speed_from_stage()
+	_sync_path_style_from_stage()
 	_sync_env_scale_from_stage()
+	_sync_scatter_settings_from_stage()
 	_schedule_autosave()
 
 
@@ -410,7 +893,9 @@ func _on_playlist_changed() -> void:
 	_rebuild_all_lists()
 	_refresh_status()
 	_sync_fly_speed_from_stage()
+	_sync_path_style_from_stage()
 	_sync_env_scale_from_stage()
+	_sync_scatter_settings_from_stage()
 	_schedule_autosave()
 
 
@@ -422,6 +907,48 @@ func _on_fly_speed_changed(value: float) -> void:
 	# Also keep the playlist alias used by configure_from_params.
 	if idx < ShowDirector.items.size():
 		ShowDirector.items[idx].params["speed"] = value
+	_maybe_autosave_spin(fly_speed)
+
+
+func _fill_path_style_options() -> void:
+	if path_style == null:
+		return
+	path_style.clear()
+	for i in FlythroughPathBuilder.STYLE_IDS.size():
+		path_style.add_item(FlythroughPathBuilder.STYLE_LABELS[i])
+		path_style.set_item_metadata(i, FlythroughPathBuilder.STYLE_IDS[i])
+	path_style.select(0)
+
+
+func _path_style_id_at(index: int) -> String:
+	if path_style == null or index < 0 or index >= path_style.item_count:
+		return FlythroughPathBuilder.STYLE_AUTO
+	var meta: Variant = path_style.get_item_metadata(index)
+	if meta == null:
+		return FlythroughPathBuilder.normalize_style(path_style.get_item_text(index))
+	return FlythroughPathBuilder.normalize_style(str(meta))
+
+
+func _select_path_style_no_signal(style: String) -> void:
+	if path_style == null:
+		return
+	var id := FlythroughPathBuilder.normalize_style(style)
+	var idx := 0
+	for i in path_style.item_count:
+		if _path_style_id_at(i) == id:
+			idx = i
+			break
+	path_style.select(idx)
+
+
+func _on_path_style_selected(index: int) -> void:
+	var idx := _ensure_stage()
+	if idx < 0:
+		return
+	var style_id := _path_style_id_at(index)
+	ShowDirector.set_active_cue_param("path_style", style_id)
+	if idx < ShowDirector.items.size():
+		ShowDirector.items[idx].params["camera_path"] = style_id
 	_schedule_autosave()
 
 
@@ -429,15 +956,24 @@ func _on_env_scale_changed(value: float) -> void:
 	var idx := _ensure_stage()
 	if idx < 0:
 		return
-	var scale_val := clampf(roundf(value), 1.0, 50.0)
+	var scale_val := maxf(value, 0.01)
 	if idx < ShowDirector.items.size():
 		var params: Dictionary = ShowDirector.items[idx].params
 		var env_cfg: Dictionary = (params.get("environment", {}) as Dictionary).duplicate(true)
 		env_cfg["user_scale"] = scale_val
+		var raw: Variant = SliderSpinLinkScr.param_of_spin(env_scale) if env_scale else scale_val
+		if _is_scale_expr(raw):
+			env_cfg["user_scale_expr"] = str(raw).strip_edges()
+		else:
+			env_cfg.erase("user_scale_expr")
 		params["environment"] = env_cfg
+	# Keep selected list entry in sync with header Env scale (number or expression).
+	if _sel_env >= 0 and _sel_env < _env_entries.size():
+		var entry_raw: Variant = SliderSpinLinkScr.param_of_spin(env_scale) if env_scale else scale_val
+		_set_entry_user_scale(_env_entries[_sel_env], scale_val, entry_raw)
 	# Live scale only — avoid full env reload.
 	ShowDirector.set_active_cue_param("env_scale", scale_val)
-	_schedule_autosave()
+	_maybe_autosave_spin(env_scale)
 
 
 func _sync_fly_speed_from_stage() -> void:
@@ -451,24 +987,187 @@ func _sync_fly_speed_from_stage() -> void:
 			speed_val = float(params["fly_speed"])
 		elif params.has("speed"):
 			speed_val = float(params["speed"])
-	fly_speed.set_value_no_signal(roundf(speed_val))
+	SliderSpinLinkScr.set_spin_driven(fly_speed, speed_val)
+
+
+func _sync_path_style_from_stage() -> void:
+	if path_style == null:
+		return
+	var idx := _stage_index()
+	var style_val := FlythroughPathBuilder.STYLE_AUTO
+	if idx >= 0 and idx < ShowDirector.items.size():
+		var params: Dictionary = ShowDirector.items[idx].params
+		if params.has("path_style"):
+			style_val = FlythroughPathBuilder.normalize_style(str(params["path_style"]))
+		elif params.has("camera_path"):
+			style_val = FlythroughPathBuilder.normalize_style(str(params["camera_path"]))
+	_select_path_style_no_signal(style_val)
 
 
 func _sync_env_scale_from_stage() -> void:
 	if env_scale == null:
 		return
+	if _sel_env >= 0 and _sel_env < _env_entries.size():
+		var expr := _entry_scale_expr(_env_entries[_sel_env])
+		if not expr.is_empty():
+			SliderSpinLinkScr.set_spin_driven(env_scale, expr)
+			return
 	var idx := _stage_index()
 	var scale_val := 1.0
 	if idx >= 0 and idx < ShowDirector.items.size():
 		var params: Dictionary = ShowDirector.items[idx].params
 		var env_cfg: Dictionary = params.get("environment", {}) as Dictionary
+		if env_cfg.has("user_scale_expr") and _is_scale_expr(env_cfg["user_scale_expr"]):
+			SliderSpinLinkScr.set_spin_driven(env_scale, str(env_cfg["user_scale_expr"]))
+			return
 		if env_cfg.has("user_scale"):
 			scale_val = float(env_cfg["user_scale"])
 		elif env_cfg.has("scale"):
 			scale_val = float(env_cfg["scale"])
 		elif params.has("env_scale"):
 			scale_val = float(params["env_scale"])
-	env_scale.set_value_no_signal(roundf(scale_val))
+	SliderSpinLinkScr.set_spin_driven(env_scale, scale_val)
+
+
+func _fill_scatter_layout_options() -> void:
+	if scatter_layout == null:
+		return
+	scatter_layout.clear()
+	var ids := ["random", "grid", "circular"]
+	var labels := ["Random", "Grid", "Circular"]
+	for i in ids.size():
+		scatter_layout.add_item(labels[i])
+		scatter_layout.set_item_metadata(i, ids[i])
+	scatter_layout.select(0)
+	scatter_layout.tooltip_text = "Grid = 3D lattice filling a volume cube. Random = random points in that cube. Circular = stacked concentric rings."
+	if scatter_density:
+		scatter_density.tooltip_text = "How many scatter props to spawn (1–2000). GPU-instanced. GIF/video share one decoder."
+	if scatter_global_scale:
+		scatter_global_scale.tooltip_text = "Scale the whole scatter formation (spacing + volume cube). Per-item size stays in ✎ Edit."
+	var hint: Label = get_node_or_null("Margin/Column/AssetTabs/Scattering/ScatterHint") as Label
+	if hint:
+		hint.text = "Fill a volume cube (up to 2000 instances). Layout picks the pattern; density is count. Global scale grows or shrinks the whole cluster. Per-item size is ✎ Edit."
+
+
+func _scatter_layout_id() -> String:
+	if scatter_layout == null or scatter_layout.selected < 0:
+		return "random"
+	var meta: Variant = scatter_layout.get_item_metadata(scatter_layout.selected)
+	if meta == null:
+		return FlythroughAssetCatalog.normalize_scatter_layout(scatter_layout.get_item_text(scatter_layout.selected))
+	return FlythroughAssetCatalog.normalize_scatter_layout(str(meta))
+
+
+func _scatter_density_value() -> int:
+	if scatter_density == null:
+		return 18
+	return clampi(int(round(SliderSpinLinkScr.eval_spin(scatter_density, 18.0))), 1, 2000)
+
+
+func _scatter_global_scale_value() -> float:
+	if scatter_global_scale == null:
+		return 1.0
+	return clampf(SliderSpinLinkScr.eval_spin(scatter_global_scale, 1.0), 0.01, 100.0)
+
+
+func _select_scatter_layout_no_signal(layout: String) -> void:
+	if scatter_layout == null:
+		return
+	var id := FlythroughAssetCatalog.normalize_scatter_layout(layout)
+	var idx := 0
+	for i in scatter_layout.item_count:
+		var meta: Variant = scatter_layout.get_item_metadata(i)
+		var mid := FlythroughAssetCatalog.normalize_scatter_layout(str(meta) if meta != null else scatter_layout.get_item_text(i))
+		if mid == id:
+			idx = i
+			break
+	scatter_layout.select(idx)
+
+
+func _sync_scatter_settings_from_stage() -> void:
+	_scatter_settings_busy = true
+	var layout_val := "random"
+	var density_val := 18
+	var global_scale_val := 1.0
+	var idx := _stage_index()
+	if idx >= 0 and idx < ShowDirector.items.size():
+		var params: Dictionary = ShowDirector.items[idx].params
+		var sc_cfg: Dictionary = params.get("scatter", {}) as Dictionary
+		if sc_cfg.has("layout") or sc_cfg.has("mode"):
+			layout_val = FlythroughAssetCatalog.normalize_scatter_layout(sc_cfg.get("layout", sc_cfg.get("mode", "random")))
+		if sc_cfg.has("count"):
+			density_val = clampi(int(sc_cfg["count"]), 1, 2000)
+		if sc_cfg.has("global_scale"):
+			global_scale_val = clampf(float(sc_cfg["global_scale"]), 0.01, 100.0)
+		elif params.has("scatter_global_scale"):
+			global_scale_val = clampf(float(params["scatter_global_scale"]), 0.01, 100.0)
+	_select_scatter_layout_no_signal(layout_val)
+	if scatter_density:
+		SliderSpinLinkScr.set_spin_driven(scatter_density, float(density_val))
+	if scatter_global_scale:
+		SliderSpinLinkScr.set_spin_driven(scatter_global_scale, global_scale_val)
+	_scatter_settings_busy = false
+
+
+func _on_scatter_layout_selected(_index: int) -> void:
+	if _scatter_settings_busy or _restoring_session:
+		return
+	_push_live_scatter_settings()
+
+
+func _on_scatter_density_changed(_value: float) -> void:
+	if _scatter_settings_busy or _restoring_session:
+		return
+	_push_live_scatter_settings()
+
+
+func _on_scatter_global_scale_changed(_value: float) -> void:
+	if _scatter_settings_busy or _restoring_session:
+		return
+	_push_live_scatter_global_scale()
+
+
+func _push_live_scatter_settings() -> void:
+	## Rebuild scatter when layout/density change and a scatter asset is applied.
+	_maybe_autosave_spin(scatter_density)
+	var idx := _ensure_stage()
+	if idx < 0 or idx >= ShowDirector.items.size():
+		return
+	var params: Dictionary = ShowDirector.items[idx].params
+	var sc_cfg: Dictionary = (params.get("scatter", {}) as Dictionary).duplicate(true)
+	var density := _scatter_density_value()
+	var layout := _scatter_layout_id()
+	var gscale := _scatter_global_scale_value()
+	if FlythroughAssetCatalog.is_empty_layer_config(sc_cfg):
+		# Keep count at 0 so this stays empty; layout is stored for the next apply.
+		sc_cfg["layout"] = layout
+		sc_cfg["global_scale"] = gscale
+		params["scatter"] = sc_cfg
+		_schedule_autosave()
+		return
+	if int(sc_cfg.get("count", -1)) == density \
+			and FlythroughAssetCatalog.normalize_scatter_layout(sc_cfg.get("layout", "random")) == layout:
+		return
+	sc_cfg["count"] = density
+	sc_cfg["layout"] = layout
+	sc_cfg["global_scale"] = gscale
+	_suppress_playlist_ui = true
+	ShowDirector.set_flythrough_layer("scatter", sc_cfg, idx)
+	_suppress_playlist_ui = false
+
+
+func _push_live_scatter_global_scale() -> void:
+	## Scale the cluster live — no MultiMesh rebuild or asset re-import.
+	_maybe_autosave_spin(scatter_global_scale)
+	var idx := _ensure_stage()
+	if idx < 0 or idx >= ShowDirector.items.size():
+		return
+	var gscale := _scatter_global_scale_value()
+	var params: Dictionary = ShowDirector.items[idx].params
+	var sc_cfg: Dictionary = (params.get("scatter", {}) as Dictionary).duplicate(true)
+	sc_cfg["global_scale"] = gscale
+	params["scatter"] = sc_cfg
+	ShowDirector.set_active_cue_param("scatter_global_scale", gscale)
 
 
 func _apply_environment(entry: Dictionary, force_sel: int = -1) -> void:
@@ -476,8 +1175,24 @@ func _apply_environment(entry: Dictionary, force_sel: int = -1) -> void:
 	if idx < 0:
 		return
 	var cfg: Dictionary = FlythroughAssetCatalog.layer_config_from_entry(entry, "environment")
+	var scale_val := _entry_user_scale(entry)
+	var copied_header := false
+	if env_scale and not entry.has("user_scale") and not (cfg.has("user_scale") or cfg.has("scale")) \
+			and _entry_scale_expr(entry).is_empty():
+		scale_val = SliderSpinLinkScr.eval_spin(env_scale, 1.0)
+		copied_header = true
+	scale_val = maxf(scale_val, 0.01)
+	if copied_header:
+		_set_entry_user_scale(entry, scale_val, SliderSpinLinkScr.param_of_spin(env_scale))
+	else:
+		_set_entry_user_scale(entry, scale_val)
+	_stamp_scale_on_cfg(cfg, entry, scale_val)
 	if env_scale:
-		cfg["user_scale"] = float(env_scale.value)
+		var expr := _entry_scale_expr(entry)
+		if expr.is_empty():
+			SliderSpinLinkScr.set_spin_driven(env_scale, scale_val)
+		else:
+			SliderSpinLinkScr.set_spin_driven(env_scale, expr)
 	_suppress_playlist_ui = true
 	ShowDirector.set_flythrough_layer("environment", cfg, idx)
 	_suppress_playlist_ui = false
@@ -494,6 +1209,8 @@ func _apply_main(entry: Dictionary, force_sel: int = -1) -> void:
 	if idx < 0:
 		return
 	var cfg: Dictionary = FlythroughAssetCatalog.layer_config_from_entry(entry, "centerpiece")
+	var scale_val := _entry_user_scale(entry)
+	_stamp_scale_on_cfg(cfg, entry, scale_val)
 	_suppress_playlist_ui = true
 	ShowDirector.set_flythrough_layer("centerpiece", cfg, idx)
 	_suppress_playlist_ui = false
@@ -509,7 +1226,12 @@ func _apply_scatter(entry: Dictionary, force_sel: int = -1) -> void:
 	var idx := _ensure_stage()
 	if idx < 0:
 		return
-	var cfg: Dictionary = FlythroughAssetCatalog.layer_config_from_entry(entry, "scatter", 18)
+	var density := _scatter_density_value()
+	var cfg: Dictionary = FlythroughAssetCatalog.layer_config_from_entry(entry, "scatter", density)
+	cfg["count"] = density
+	cfg["layout"] = _scatter_layout_id()
+	cfg["global_scale"] = _scatter_global_scale_value()
+	_stamp_scale_on_cfg(cfg, entry, _entry_user_scale(entry))
 	_suppress_playlist_ui = true
 	ShowDirector.set_flythrough_layer("scatter", cfg, idx)
 	_suppress_playlist_ui = false
@@ -639,16 +1361,16 @@ func _duration_for_tab(tab: int) -> float:
 	match tab:
 		TAB_ENV:
 			if env_duration:
-				raw = float(env_duration.value)
+				raw = SliderSpinLinkScr.eval_spin(env_duration, 8.0)
 		TAB_MAIN:
 			if main_duration:
-				raw = float(main_duration.value)
+				raw = SliderSpinLinkScr.eval_spin(main_duration, 8.0)
 		TAB_SCATTER:
 			if scatter_duration:
-				raw = float(scatter_duration.value)
+				raw = SliderSpinLinkScr.eval_spin(scatter_duration, 8.0)
 		TAB_LIGHT:
 			if light_duration:
-				raw = float(light_duration.value)
+				raw = SliderSpinLinkScr.eval_spin(light_duration, 8.0)
 	return clampf(raw, 1.0, 600.0)
 
 
@@ -710,6 +1432,7 @@ func _collect_all_playlist_paths() -> Array:
 
 func _start_warm_all(then_play_tab: int = -1) -> void:
 	## Eager-load every Env/Main/Scatter/Lighting asset before Play timers start.
+	## Boot splash owns the big first warm — skip visible Caching when that finished.
 	if then_play_tab >= 0:
 		_pending_play_tab = then_play_tab
 	var paths := _collect_all_playlist_paths()
@@ -723,10 +1446,25 @@ func _start_warm_all(then_play_tab: int = -1) -> void:
 		_warm_ready = true
 		_finish_warm()
 		return
+	# Count what's already warm (BootLoader should have finished this set).
+	var already := 0
+	for p in paths:
+		if _path_is_warmed(str(p)):
+			already += 1
+	_warm_done = already
+	if already >= paths.size() and _AssetCache.inflight_count() <= 0:
+		_warming = false
+		_warm_ready = true
+		_finish_warm()
+		return
+	# Boot claimed full warm but a few leftovers remain (new files / misses) — warm quietly
+	# unless Play is waiting, or leftovers are more than trivial.
+	var leftovers := paths.size() - already
+	var quiet := _BootCache.full_warm_completed and leftovers <= 2 and then_play_tab < 0
 	_warming = true
-	# Kick threaded scene/HDRI loads immediately.
 	_AssetCache.warm_paths(paths)
-	status_label.text = "Caching… 0/%d" % _warm_total
+	if not quiet:
+		status_label.text = "Caching… %d/%d" % [_warm_done, maxi(_warm_total, 1)]
 	_update_all_play_buttons()
 
 
@@ -741,7 +1479,11 @@ func _tick_warm(delta: float) -> void:
 		if _path_is_warmed(str(p)):
 			cached += 1
 	_warm_done = cached
-	status_label.text = "Caching… %d/%d" % [_warm_done, maxi(_warm_total, 1)]
+	# Avoid flashing the big Caching X/Y after boot already did that pass.
+	var leftovers := _warm_total - _warm_done
+	var show_progress := (not _BootCache.full_warm_completed) or leftovers > 2 or _pending_play_tab >= 0
+	if show_progress and status_label:
+		status_label.text = "Caching… %d/%d" % [_warm_done, maxi(_warm_total, 1)]
 	var timed_out := _warm_elapsed >= WARM_TIMEOUT_SEC
 	# Finish when threaded jobs + media queue are drained (failed loads won't block forever).
 	if (media_left <= 0 and inflight <= 0) or timed_out:
@@ -780,7 +1522,11 @@ func _finish_warm() -> void:
 		status_label.text = "Cache ready"
 		_begin_tab_play(tab)
 	elif status_label:
-		status_label.text = "Cache ready (%d assets)" % _warm_total
+		if _BootCache.full_warm_completed:
+			# Boot already showed the Caching pass — keep status calm.
+			_refresh_status()
+		else:
+			status_label.text = "Cache ready (%d assets)" % _warm_total
 
 
 func _update_all_play_buttons() -> void:
@@ -1003,15 +1749,14 @@ func _rebuild_list(container: VBoxContainer, entries: Array[Dictionary], tab: in
 			_play_entry_at(tab, idx)
 		)
 		row.add_child(title)
-		var replace := Button.new()
-		replace.text = "↻"
-		replace.custom_minimum_size = Vector2(36, 28)
-		replace.size_flags_horizontal = Control.SIZE_SHRINK_END
-		replace.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		replace.tooltip_text = "Replace this item with another file"
-		replace.disabled = (tab == TAB_LIGHT)
-		replace.pressed.connect(func() -> void: _pick_replace(tab, idx))
-		row.add_child(replace)
+		var edit_btn := Button.new()
+		edit_btn.text = "✎"
+		edit_btn.custom_minimum_size = Vector2(36, 28)
+		edit_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
+		edit_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		edit_btn.tooltip_text = "Edit name, asset, and scale"
+		edit_btn.pressed.connect(func() -> void: _open_edit_item(tab, idx))
+		row.add_child(edit_btn)
 		var del := Button.new()
 		del.text = "✕"
 		del.custom_minimum_size = Vector2(32, 28)
@@ -1146,12 +1891,10 @@ func _pick_layer_file(layer_id: String) -> void:
 
 
 func _pick_replace(tab: int, index: int) -> void:
-	if tab == TAB_LIGHT:
-		return
 	_replace_tab = tab
 	_replace_index = index
 	_layer_pick = "replace"
-	_set_layer_dialog_filters(false)
+	_set_layer_dialog_filters(tab == TAB_LIGHT)
 	# Replace keeps multi-select practical: first file replaces, extras append.
 	layer_file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILES
 	layer_file_dialog.title = "Replace asset (multi-select appends extras)"
@@ -1183,11 +1926,28 @@ func _on_layer_files_selected(paths: PackedStringArray) -> void:
 		_AssetCache.prefetch_paths([first])
 		_replace_entry_with_file(replace_tab, replace_index, first, paths[0].get_file().get_basename())
 		for i in range(1, paths.size()):
-			_append_user_file(replace_tab, paths[i], false)
+			if replace_tab == TAB_LIGHT:
+				# Append extras as new HDRI rows (same as lighting add).
+				var extra := MediaImport.to_project_or_absolute(paths[i])
+				MediaImport.warm_path(extra)
+				_AssetCache.prefetch_paths([extra])
+				var elabel := paths[i].get_file().get_basename()
+				_light_entries.append({
+					"id": "user_hdri_%s" % elabel,
+					"label": elabel,
+					"user_added": true,
+					"config": FlythroughAssetCatalog.hdri_lighting_config(
+						"user_hdri_%s" % elabel,
+						extra
+					),
+				})
+			else:
+				_append_user_file(replace_tab, paths[i], false)
 		_rebuild_all_lists()
 		_schedule_autosave()
 		_warm_ready = false
 		_start_warm_all(-1)
+		_refresh_edit_dialog_after_replace(replace_tab, replace_index)
 		return
 
 	if pick == "lighting":
@@ -1287,17 +2047,59 @@ func _replace_entry_with_file(tab: int, index: int, resolved: String, label: Str
 	var entries := _entries_for_tab(tab)
 	if index < 0 or index >= entries.size():
 		return
-	if MediaImport.detect_type(resolved).is_empty() and tab != TAB_LIGHT:
-		push_warning("PlaylistSidebar: unsupported replace file %s" % resolved)
-		return
 	var entry: Dictionary = entries[index]
-	entry["label"] = label
-	entry["config"] = {"path": resolved}
-	entry["user_added"] = true
-	entry["id"] = "user_%s" % label
+	var keep_scale := _entry_scale_snapshot(entry)
+	var keep_expr := _entry_scale_expr(entry)
+	if tab == TAB_LIGHT:
+		entry["label"] = label
+		entry["user_added"] = true
+		entry["id"] = "user_hdri_%s" % label
+		entry["config"] = FlythroughAssetCatalog.hdri_lighting_config(entry["id"], resolved)
+	else:
+		if MediaImport.detect_type(resolved).is_empty():
+			push_warning("PlaylistSidebar: unsupported replace file %s" % resolved)
+			return
+		entry["label"] = label
+		var cfg: Dictionary = {"path": resolved, "user_scale": keep_scale}
+		if keep_expr.is_empty():
+			entry.erase("user_scale_expr")
+		else:
+			cfg["user_scale_expr"] = keep_expr
+			entry["user_scale_expr"] = keep_expr
+		entry["config"] = cfg
+		entry["user_added"] = true
+		entry["id"] = "user_%s" % label
+		entry["user_scale"] = keep_scale
 	_set_selection_for_tab(tab, index)
 	_rebuild_all_lists()
 	_play_entry_at(tab, index)
+
+
+func _refresh_edit_dialog_after_replace(tab: int, index: int) -> void:
+	if not _edit_from_modal_replace:
+		return
+	_edit_from_modal_replace = false
+	if _edit_dialog == null:
+		return
+	var entries := _entries_for_tab(tab)
+	if index < 0 or index >= entries.size():
+		return
+	_edit_tab = tab
+	_edit_index = index
+	var entry: Dictionary = entries[index]
+	_edit_name.text = str(entry.get("label", "Asset"))
+	_edit_asset_label.text = _entry_asset_caption(entry)
+	_edit_asset_label.tooltip_text = _edit_asset_label.text
+	if _edit_scale_row != null and tab != TAB_LIGHT:
+		_edit_scale_busy = true
+		var raw: Variant = _entry_scale_raw(entry)
+		if raw is String:
+			SliderSpinLinkScr.set_expr(_edit_scale_slider, str(raw), false)
+		else:
+			SliderSpinLinkScr.set_expr(_edit_scale_slider, str(snappedf(float(raw), 0.001)), false)
+		_edit_scale_busy = false
+	if not _edit_dialog.visible:
+		_edit_dialog.popup_centered()
 
 
 func step_prev() -> void:
@@ -1352,3 +2154,12 @@ func _on_clear() -> void:
 	_rebuild_all_lists()
 	_refresh_status()
 	_save_session_now()
+
+
+func _on_reset_to_defaults() -> void:
+	ShowDirector.reset_stage_to_defaults()
+	_sync_fly_speed_from_stage()
+	_sync_path_style_from_stage()
+	_sync_scatter_settings_from_stage()
+	if status_label:
+		status_label.text = "Stage + effects reset to defaults"

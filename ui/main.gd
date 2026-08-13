@@ -28,14 +28,19 @@ func _ready() -> void:
 	present_button.pressed.connect(toggle_stage_undock)
 	if playlist_sidebar.has_signal("present_requested"):
 		playlist_sidebar.present_requested.connect(toggle_stage_undock)
-	# Last session overrides blank defaults (demo show.json stays untouched).
-	if not _restore_last_session():
-		_start_blank_stage()
 	var win := get_window()
 	win.size = Vector2i(1700, 950)
 	win.min_size = Vector2i(1200, 700)
 	win.close_requested.connect(_on_main_window_close_requested)
 	set_process(true)
+	# Let the first frame paint before session/stage apply (assets already warmed by BootLoader).
+	call_deferred("_boot_stage")
+
+
+func _boot_stage() -> void:
+	# Last session overrides blank defaults (demo show.json stays untouched).
+	if not _restore_last_session():
+		_start_blank_stage()
 
 
 func _on_main_window_close_requested() -> void:
@@ -55,13 +60,13 @@ func _restore_last_session() -> bool:
 		playlist_sidebar.call("begin_session_restore")
 	ShowDirector.clear_playlist()
 	var show_name := str(data.get("name", "HyperSpace"))
-	var effects: Variant = data.get("effects", ["ascii", "particles", "feedback", "glitch"])
+	var effects: Variant = data.get("effects", ["ascii", "feedback", "glitch"])
 	var cues: Variant = data.get("cues", [])
 	ShowDirector.show_data = {
 		"name": show_name,
 		"items": [],
 		"cues": cues if cues is Array else [],
-		"effects": effects if effects is Array else ["ascii", "particles", "feedback", "glitch"],
+		"effects": effects if effects is Array else ["ascii", "feedback", "glitch"],
 	}
 	ShowDirector.cues = ShowDirector.show_data["cues"]
 	var play_idx := int(data.get("current_index", 0))
@@ -80,6 +85,8 @@ func _restore_last_session() -> bool:
 		ShowDirector.play_index(play_idx, Transition.Mode.CUT, 0.0)
 	# Apply sidebar fly_speed / env_scale onto the live stage if present.
 	_apply_session_sidebar_params(data)
+	if effects_sidebar != null and effects_sidebar.has_method("apply_session_fx"):
+		effects_sidebar.call("apply_session_fx", data)
 	if playlist_sidebar != null and playlist_sidebar.has_method("end_session_restore"):
 		playlist_sidebar.call("end_session_restore")
 	ShowDirector.show_loaded.emit(show_name)
@@ -99,18 +106,31 @@ func _apply_session_sidebar_params(data: Dictionary) -> void:
 		item.params["fly_speed"] = speed_val
 		item.params["speed"] = speed_val
 		ShowDirector.set_active_cue_param("fly_speed", speed_val)
+	if sb.has("path_style") or sb.has("camera_path"):
+		var style_val := FlythroughPathBuilder.normalize_style(
+			str(sb.get("path_style", sb.get("camera_path", "auto")))
+		)
+		item.params["path_style"] = style_val
+		item.params["camera_path"] = style_val
+		ShowDirector.set_active_cue_param("path_style", style_val)
 	if sb.has("env_scale"):
-		var scale_val := clampf(roundf(float(sb["env_scale"])), 1.0, 50.0)
+		var scale_val := maxf(float(sb["env_scale"]), 0.01)
 		var env_cfg: Dictionary = (item.params.get("environment", {}) as Dictionary).duplicate(true)
 		env_cfg["user_scale"] = scale_val
 		item.params["environment"] = env_cfg
 		ShowDirector.set_active_cue_param("env_scale", scale_val)
+	if sb.has("scatter_global_scale") and (sb["scatter_global_scale"] is float or sb["scatter_global_scale"] is int):
+		var gscale := clampf(float(sb["scatter_global_scale"]), 0.01, 100.0)
+		var sc_cfg: Dictionary = (item.params.get("scatter", {}) as Dictionary).duplicate(true)
+		sc_cfg["global_scale"] = gscale
+		item.params["scatter"] = sc_cfg
+		ShowDirector.set_active_cue_param("scatter_global_scale", gscale)
 
 
 func _start_blank_stage() -> void:
 	## Empty fly-through stage — pick assets from Env / Main / Scatter / Lighting tabs.
 	ShowDirector.clear_playlist()
-	ShowDirector.show_data = {"name": "HyperSpace", "items": [], "cues": [], "effects": ["ascii", "particles", "feedback", "glitch"]}
+	ShowDirector.show_data = {"name": "HyperSpace", "items": [], "cues": [], "effects": ["ascii", "feedback", "glitch"]}
 	ShowDirector.cues = []
 	ShowDirector.add_item_from_dict({
 		"id": "stage",

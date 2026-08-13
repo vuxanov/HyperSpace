@@ -19,11 +19,18 @@ static var _tex_cache: Dictionary = {}
 static var _ffmpeg_cached: String = "__unset__"
 ## Paths currently converting to ogv in a background process.
 static var _converting: Dictionary = {}
+## GIF/image warm attempted but not cached (failed decode) — skip retries / count as settled.
+static var _warm_miss: Dictionary = {}
 
 
 static func clear_gif_cache() -> void:
 	_gif_cache.clear()
 	_tex_cache.clear()
+	_warm_miss.clear()
+
+
+static func warm_gave_up(path: String) -> bool:
+	return _warm_miss.has(absolute_path(path))
 
 
 static func prefetch_gif(path: String) -> void:
@@ -80,19 +87,24 @@ static func warm_paths_sync_media(paths: Array, max_items: int = 1) -> int:
 		if s.is_empty() or s.begins_with("primitive:"):
 			continue
 		var t := detect_type(s)
+		var key := absolute_path(s)
 		if t == "gif":
-			if gif_cached(s):
+			if gif_cached(s) or _warm_miss.has(key):
 				continue
 			if done < max_items:
 				load_gif_animation(s)
+				if not gif_cached(s):
+					_warm_miss[key] = true
 				done += 1
 			else:
 				remaining += 1
 		elif t == "image":
-			if texture_cached(s):
+			if texture_cached(s) or _warm_miss.has(key):
 				continue
 			if done < max_items:
 				load_texture(s)
+				if not texture_cached(s) and not _AssetCache.is_inflight(s):
+					_warm_miss[key] = true
 				done += 1
 			else:
 				remaining += 1

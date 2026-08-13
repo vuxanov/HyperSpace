@@ -86,10 +86,7 @@ func apply_audio_state(state: AudioState) -> void:
 		return
 	var lfo := float(RH.get_field("lfo_mod01", 0.0))
 	if RH.property_active("scale") and RH.applies_to("foreground"):
-		var d := RH.drive_value("scale", state, lfo)
-		if state.beat:
-			d = minf(d * 1.25, 1.0)
-		var amt := RH.scale_multiplier(d)
+		var amt := RH.scale_multiplier()
 		scale = _base_scale * Vector2(
 			amt if RH.scale_x() else 1.0,
 			amt if RH.scale_y() else 1.0

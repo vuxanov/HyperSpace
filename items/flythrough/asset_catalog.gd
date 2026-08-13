@@ -65,6 +65,7 @@ static func blank_stage_params() -> Dictionary:
 	return {
 		"style": "flythrough",
 		"speed": 2.0,
+		"path_style": "auto",
 		"centerpiece_locked": true,
 		"center_distance": 2.75,
 		"environment": {"source": "primitive:box_corridor"},
@@ -305,7 +306,7 @@ static func empty_centerpiece_config() -> Dictionary:
 
 
 static func empty_scatter_config() -> Dictionary:
-	return {"source": "primitive:cubes", "count": 0}
+	return {"source": "primitive:cubes", "count": 0, "layout": "random"}
 
 
 static func is_empty_layer_config(config: Variant) -> bool:
@@ -406,7 +407,20 @@ static func layer_config_from_entry(entry: Dictionary, role: String, scatter_cou
 	var cfg: Dictionary = (entry.get("config", {}) as Dictionary).duplicate(true)
 	if role == "scatter":
 		cfg["count"] = scatter_count
+		if not cfg.has("layout"):
+			cfg["layout"] = "random"
 	return cfg
+
+
+static func normalize_scatter_layout(raw: Variant) -> String:
+	var id := str(raw).strip_edges().to_lower()
+	match id:
+		"grid", "lattice":
+			return "grid"
+		"circular", "circle", "ring":
+			return "circular"
+		_:
+			return "random"
 
 
 static func short_label_for_config(config: Variant) -> String:

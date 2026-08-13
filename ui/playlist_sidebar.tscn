@@ -1,4 +1,4 @@
-﻿[gd_scene load_steps=2 format=3 uid="uid://playlist_sidebar"]
+[gd_scene load_steps=2 format=3 uid="uid://playlist_sidebar"]
 
 [ext_resource type="Script" path="res://ui/playlist_sidebar.gd" id="1"]
 
@@ -26,9 +26,10 @@ theme_override_font_sizes/font_size = 20
 text = "HyperSpace"
 
 [node name="StatusLabel" type="Label" parent="Margin/Column/Header"]
+visible = false
 layout_mode = 2
 autowrap_mode = 3
-text = "Pick an asset to apply"
+text = ""
 
 [node name="FlyRow" type="HBoxContainer" parent="Margin/Column/Header"]
 layout_mode = 2
@@ -41,12 +42,33 @@ text = "Fly speed"
 [node name="FlySpeed" type="SpinBox" parent="Margin/Column/Header/FlyRow"]
 layout_mode = 2
 size_flags_horizontal = 3
-min_value = 1.0
-max_value = 100.0
-step = 1.0
+min_value = 0.0
+max_value = 1000000.0
+step = 0.01
 value = 12.0
+allow_greater = true
+allow_lesser = true
+custom_arrow_step = 1.0
 suffix = "u/s"
-tooltip_text = "Camera fly-through speed along the path"
+tooltip_text = "Camera fly-through speed (decimals ok; arrows change by 1)"
+
+[node name="PathRow" type="HBoxContainer" parent="Margin/Column/Header"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="PathLabel" type="Label" parent="Margin/Column/Header/PathRow"]
+layout_mode = 2
+text = "Cam path"
+
+[node name="PathStyle" type="OptionButton" parent="Margin/Column/Header/PathRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+tooltip_text = "Camera fly-through path shape (Auto keeps the env-fitted straight path)"
+
+[node name="ResetDefaultsBtn" type="Button" parent="Margin/Column/Header"]
+layout_mode = 2
+text = "Reset to default"
+tooltip_text = "Restore env/hero/scatter poses and clear rotation/reactivity leftovers"
 
 [node name="AssetTabs" type="TabContainer" parent="Margin/Column"]
 layout_mode = 2
@@ -89,13 +111,14 @@ text = "Env scale"
 [node name="EnvScale" type="SpinBox" parent="Margin/Column/AssetTabs/Environments/EnvScaleRow"]
 layout_mode = 2
 size_flags_horizontal = 3
-min_value = 1.0
-max_value = 20.0
-step = 1.0
+min_value = 0.0
+max_value = 1000000.0
+step = 0.01
 value = 1.0
 allow_greater = true
 allow_lesser = true
-tooltip_text = "Per-environment scale after auto-fit (keeps path/framing updated)"
+custom_arrow_step = 1.0
+tooltip_text = "Per-environment scale after auto-fit (decimals ok; arrows change by 1)"
 
 [node name="EnvHint" type="Label" parent="Margin/Column/AssetTabs/Environments"]
 layout_mode = 2
@@ -195,10 +218,61 @@ step = 1.0
 value = 8.0
 suffix = "s"
 
+[node name="ScatterLayoutRow" type="HBoxContainer" parent="Margin/Column/AssetTabs/Scattering"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="ScatterLayoutLabel" type="Label" parent="Margin/Column/AssetTabs/Scattering/ScatterLayoutRow"]
+layout_mode = 2
+text = "Layout"
+
+[node name="ScatterLayout" type="OptionButton" parent="Margin/Column/AssetTabs/Scattering/ScatterLayoutRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+tooltip_text = "How props are placed along the fly path: random, grid lanes, or circular ring"
+
+[node name="ScatterDensityRow" type="HBoxContainer" parent="Margin/Column/AssetTabs/Scattering"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="ScatterDensityLabel" type="Label" parent="Margin/Column/AssetTabs/Scattering/ScatterDensityRow"]
+layout_mode = 2
+text = "Density"
+
+[node name="ScatterDensity" type="SpinBox" parent="Margin/Column/AssetTabs/Scattering/ScatterDensityRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 1.0
+max_value = 2000.0
+step = 1.0
+value = 18.0
+rounded = true
+tooltip_text = "How many scatter props to spawn (1–2000). GPU-instanced. GIF/video share one decoder."
+
+[node name="ScatterGlobalScaleRow" type="HBoxContainer" parent="Margin/Column/AssetTabs/Scattering"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="ScatterGlobalScaleLabel" type="Label" parent="Margin/Column/AssetTabs/Scattering/ScatterGlobalScaleRow"]
+layout_mode = 2
+text = "Global scale"
+
+[node name="ScatterGlobalScale" type="SpinBox" parent="Margin/Column/AssetTabs/Scattering/ScatterGlobalScaleRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 0.1
+max_value = 5.0
+step = 0.01
+value = 1.0
+allow_greater = true
+allow_lesser = true
+custom_arrow_step = 1.0
+tooltip_text = "Scale the whole scatter formation (spacing + volume cube). Per-item size stays in ✎ Edit."
+
 [node name="ScatterHint" type="Label" parent="Margin/Column/AssetTabs/Scattering"]
 layout_mode = 2
 autowrap_mode = 3
-text = "Props along the path. Click to apply; Play cycles on this timer."
+text = "Fill a volume cube (up to 2000 instances). Layout picks the pattern; density is count. Global scale grows or shrinks the whole cluster. Per-item size is ✎ Edit."
 
 [node name="ScatterAddRow" type="HBoxContainer" parent="Margin/Column/AssetTabs/Scattering"]
 layout_mode = 2

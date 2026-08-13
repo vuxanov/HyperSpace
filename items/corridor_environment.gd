@@ -197,10 +197,7 @@ func apply_audio_state(state: AudioState) -> void:
 	if not RH.applies_to("foreground") or _fg_orb == null:
 		return
 	if RH.affect_scale():
-		var reactive := state.bass * 1.8 + state.energy
-		if state.beat:
-			reactive *= 1.4
-		var amt := clampf(1.0 + reactive * RH.scale_amount() * 0.2, 0.4, 12.0)
+		var amt := RH.scale_multiplier()
 		_fg_orb.scale = RH.scale_vector(amt)
 	if RH.affect_emission() and _fg_orb.material_override is StandardMaterial3D:
 		(_fg_orb.material_override as StandardMaterial3D).emission_energy_multiplier = 1.5 + state.mids * 4.0

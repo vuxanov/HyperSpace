@@ -2,6 +2,8 @@ extends RefCounted
 class_name FlythroughCameraRig
 
 ## Follows a Curve3D; mouse/gamepad look + shared ModulatorBus rotation offsets.
+## Orientation uses look-ahead + basis slerp so corners (square) and loop seams stay smooth.
+## Path speed is dampened in high-curvature sections so square corners don't rush.
 
 
 var fly_speed: float = 12.0
@@ -9,6 +11,16 @@ var look_sensitivity: float = 0.0035
 var gamepad_look_sensitivity: float = 1.6
 var max_pitch_deg: float = 65.0
 var loop: bool = true
+## How far ahead (world units) to sample for facing; scaled up on long paths.
+var look_ahead: float = 5.5
+## Higher = snappier orientation follow; lower = softer turns.
+var orient_smooth: float = 4.5
+## Cap path-facing rotation speed (deg/sec) so square corners never snap.
+var max_turn_deg_per_sec: float = 72.0
+## How strongly high curvature slows travel (square corners).
+var curvature_brake: float = 18.0
+## Floor for curvature speed multiplier (never stop completely in a corner).
+var min_corner_speed_mul: float = 0.18
 
 var _camera: Camera3D
 var _curve: Curve3D
@@ -21,6 +33,12 @@ var _reactive_yaw: float = 0.0
 var _reactive_pitch: float = 0.0
 var _reactive_roll: float = 0.0
 var _mod: ModulatorBus
+var _smooth_basis: Basis = Basis.IDENTITY
+var _has_smooth_basis: bool = false
+
+
+func apply_camera_fx(on: bool, params: Dictionary = {}) -> void:
+	SceneMeshFx.apply_camera_fx(_camera, on, params)
 
 
 func setup(camera: Camera3D, curve: Curve3D) -> void:
@@ -30,6 +48,7 @@ func setup(camera: Camera3D, curve: Curve3D) -> void:
 	_yaw = 0.0
 	_pitch = 0.0
 	_spin_roll = 0.0
+	_has_smooth_basis = false
 	reset_reactive_spin()
 	_bind_shared_modulator()
 	_apply_transform()
@@ -71,7 +90,7 @@ func _bind_shared_modulator() -> void:
 		return
 	var tree := Engine.get_main_loop() as SceneTree
 	if tree and tree.root:
-		var rs := tree.root.get_node_or_null("ReactivitySettings")
+		var rs: Node = tree.root.get_node_or_null("ReactivitySettings")
 		if rs and rs.has_method("get_modulator"):
 			_mod = rs.call("get_modulator") as ModulatorBus
 	if _mod == null:
@@ -85,6 +104,7 @@ func set_curve(curve: Curve3D, reset_progress: bool = false) -> void:
 		if old_len > 0.01:
 			frac = _distance / old_len
 	_curve = curve
+	_has_smooth_basis = false
 	if reset_progress or _curve == null:
 		_distance = 0.0
 	else:
@@ -115,14 +135,25 @@ func advance(delta: float, _kick: float = 0.0) -> void:
 	var length := _curve.get_baked_length()
 	if length <= 0.01:
 		return
-	# fly_speed is world-units/sec scaled by path length so large envs still feel snappy.
-	var speed_scale := maxf(length / 35.0, 1.0)
-	_distance += fly_speed * speed_scale * delta
+	# fly_speed is world-units/sec, lightly scaled by path length.
+	# Divisor ~100 so fly_speed=1 is a slow cruise (was ~35 → too fast).
+	var speed_scale := maxf(length / 100.0, 0.35)
+	var base_speed := fly_speed * speed_scale
+	# Slow through high-curvature sections (square corners / dive elbows).
+	var corner_mul := _curvature_speed_mul(_distance, length)
+	_distance += base_speed * corner_mul * delta
 	if loop:
 		_distance = fposmod(_distance, length)
 	else:
 		_distance = clampf(_distance, 0.0, length)
-	_apply_transform()
+	_apply_transform(delta)
+
+
+func get_path_progress() -> float:
+	var length := get_path_length()
+	if length <= 0.01:
+		return 0.0
+	return clampf(_distance / length, 0.0, 1.0)
 
 
 func get_distance() -> float:
@@ -138,7 +169,7 @@ func get_path_length() -> float:
 func sample_transform(distance: float) -> Transform3D:
 	if _curve == null or _curve.get_baked_length() <= 0.01:
 		return Transform3D(Basis.IDENTITY, Vector3.ZERO)
-	return _curve.sample_baked_with_rotation(fposmod(distance, _curve.get_baked_length()), false)
+	return _path_transform_at(fposmod(distance, _curve.get_baked_length()), false)
 
 
 func _apply_gamepad_look(delta: float) -> void:
@@ -153,13 +184,13 @@ func _apply_gamepad_look(delta: float) -> void:
 	_pitch = clampf(_pitch, deg_to_rad(-max_pitch_deg), deg_to_rad(max_pitch_deg))
 
 
-func _apply_transform() -> void:
+func _apply_transform(delta: float = 1.0 / 60.0) -> void:
 	if _camera == null or _curve == null:
 		return
 	var length := _curve.get_baked_length()
 	if length <= 0.01:
 		return
-	var path_xf := _curve.sample_baked_with_rotation(_distance, false)
+	var path_xf := _path_transform_at(_distance, true, delta)
 	var yaw := _yaw + _reactive_yaw
 	var pitch := _pitch + _reactive_pitch
 	var roll := _spin_roll + _reactive_roll
@@ -167,6 +198,66 @@ func _apply_transform() -> void:
 		yaw += _mod.yaw_offset
 		pitch += _mod.pitch_offset
 		roll += _mod.roll_offset
-	pitch = clampf(pitch, deg_to_rad(-max_pitch_deg), deg_to_rad(max_pitch_deg))
+	else:
+		pitch = clampf(pitch, deg_to_rad(-max_pitch_deg), deg_to_rad(max_pitch_deg))
 	var look := Basis.from_euler(Vector3(pitch, yaw, roll))
 	_camera.global_transform = Transform3D(path_xf.basis * look, path_xf.origin)
+
+
+func _path_transform_at(distance: float, smooth: bool = false, delta: float = 1.0 / 60.0) -> Transform3D:
+	var length := _curve.get_baked_length()
+	var dist := fposmod(distance, length) if length > 0.01 else 0.0
+	var origin := _curve.sample_baked(dist)
+	var ahead := clampf(look_ahead, 0.5, maxf(length * 0.08, 0.5))
+	# Speed-aware look-ahead so slow flies still anticipate corners a bit.
+	ahead = maxf(ahead, fly_speed * 0.35)
+	ahead = minf(ahead, length * 0.18)
+	var target := _curve.sample_baked(fposmod(dist + ahead, length))
+	var forward := target - origin
+	var basis: Basis
+	if forward.length_squared() < 1e-6:
+		basis = _curve.sample_baked_with_rotation(dist, false).basis
+	else:
+		var up := Vector3.UP
+		var f := forward.normalized()
+		if absf(f.dot(up)) > 0.92:
+			up = Vector3.FORWARD
+		# Camera looks along -Z; align -Z with forward travel.
+		basis = Basis.looking_at(f, up)
+	if smooth:
+		if not _has_smooth_basis:
+			_smooth_basis = basis
+			_has_smooth_basis = true
+		else:
+			var t := clampf(orient_smooth * maxf(delta, 0.0001), 0.0, 1.0)
+			var candidate := _smooth_basis.slerp(basis, t).orthonormalized()
+			var ang := _smooth_basis.get_rotation_quaternion().angle_to(candidate.get_rotation_quaternion())
+			var max_ang := deg_to_rad(max_turn_deg_per_sec) * maxf(delta, 0.0001)
+			if ang > max_ang and ang > 0.0001:
+				var lim_t := clampf(max_ang / ang, 0.0, 1.0)
+				candidate = _smooth_basis.slerp(candidate, lim_t).orthonormalized()
+			_smooth_basis = candidate
+		basis = _smooth_basis
+	return Transform3D(basis, origin)
+
+
+func _curvature_speed_mul(distance: float, length: float) -> float:
+	## Estimate path curvature from heading change over a short chord; brake in corners.
+	if _curve == null or length <= 0.01:
+		return 1.0
+	var sample := clampf(length * 0.012, 0.6, 3.5)
+	var d0 := fposmod(distance, length)
+	var d1 := fposmod(distance + sample, length)
+	var d2 := fposmod(distance + sample * 2.0, length)
+	var p0 := _curve.sample_baked(d0)
+	var p1 := _curve.sample_baked(d1)
+	var p2 := _curve.sample_baked(d2)
+	var v0 := p1 - p0
+	var v1 := p2 - p1
+	if v0.length_squared() < 1e-8 or v1.length_squared() < 1e-8:
+		return 1.0
+	var ang := v0.normalized().angle_to(v1.normalized())
+	# ang/sample ≈ rad per world-unit; scale into a soft brake curve.
+	var curv := ang / maxf(sample, 0.001)
+	return clampf(1.0 / (1.0 + curv * curvature_brake), min_corner_speed_mul, 1.0)
+

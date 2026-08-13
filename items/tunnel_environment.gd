@@ -166,10 +166,7 @@ func apply_audio_state(state: AudioState) -> void:
 		return
 	var scale_amt := 1.0
 	if RH.affect_scale():
-		var reactive := state.bass * 2.0 + state.energy
-		if state.beat:
-			reactive *= 1.5
-		scale_amt = clampf(1.0 + reactive * RH.scale_amount(), 0.3, 25.0)
+		scale_amt = RH.scale_multiplier()
 	var scale_vec: Vector3 = RH.scale_vector(scale_amt) if RH.affect_scale() else _base_scale
 	if _particles_mode and _ship_particles:
 		_ship_particles.scale = scale_vec

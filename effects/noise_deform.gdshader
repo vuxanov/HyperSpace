@@ -14,6 +14,13 @@ uniform float noise_scale = 1.0;
 uniform float time_sec = 0.0;
 uniform vec3 noise_seed = vec3(0.0);
 uniform vec3 noise_axes = vec3(1.0, 1.0, 1.0);
+uniform float cloth_amount = 0.0;
+uniform float cloth_stiffness = 0.55;
+uniform float cloth_wind = 0.0;
+uniform float cloth_time = 0.0;
+uniform float cloth_gravity = 1.0;
+uniform float use_vertex_color = 0.0;
+uniform float point_size = 0.0;
 
 float hash31(vec3 p) {
 	p = fract(p * 0.1031);
@@ -55,16 +62,45 @@ float fbm(vec3 p) {
 }
 
 void vertex() {
-	float feature = max(noise_scale, 0.35);
-	float freq = 1.0 / feature;
-	vec3 sample_p = (VERTEX + noise_seed) * freq + vec3(time_sec * 0.14, time_sec * 0.09, time_sec * 0.11);
-	float nx = fbm(sample_p);
-	float ny = fbm(sample_p + vec3(17.2, 3.1, 9.4));
-	float nz = fbm(sample_p + vec3(4.8, 21.7, 2.6));
-	vec3 axis_disp = vec3(nx, ny, nz) * noise_axes;
-	float along_n = fbm(sample_p + vec3(8.0, 1.0, 5.0));
-	float axis_w = max(length(noise_axes), 0.001);
-	VERTEX += (NORMAL * along_n * 0.7 * (axis_w / 1.732) + axis_disp * 0.95) * noise_amount;
+	if (point_size > 0.5) {
+		POINT_SIZE = max(point_size, 1.0);
+	}
+	if (noise_amount > 0.0005) {
+		float feature = max(noise_scale, 0.35);
+		float freq = 1.0 / feature;
+		vec3 sample_p = (VERTEX + noise_seed) * freq + vec3(time_sec * 0.14, time_sec * 0.09, time_sec * 0.11);
+		float nx = fbm(sample_p);
+		float ny = fbm(sample_p + vec3(17.2, 3.1, 9.4));
+		float nz = fbm(sample_p + vec3(4.8, 21.7, 2.6));
+		vec3 axis_disp = vec3(nx, ny, nz) * noise_axes;
+		float along_n = fbm(sample_p + vec3(8.0, 1.0, 5.0));
+		float axis_w = max(length(noise_axes), 0.001);
+		vec3 nrm = NORMAL;
+		if (length(nrm) < 0.01) {
+			nrm = vec3(0.0, 1.0, 0.0);
+		}
+		VERTEX += (nrm * along_n * 0.7 * (axis_w / 1.732) + axis_disp * 0.95) * noise_amount;
+	}
+	if (cloth_amount > 0.0005) {
+		// Cloth is hang + wind + flutter — not fbm noise. Pin high local Y.
+		vec3 world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		float stiff = clamp(cloth_stiffness, 0.05, 1.0);
+		float g = max(cloth_gravity, 0.0);
+		float w = cloth_wind;
+		float t = cloth_time;
+		float pin = smoothstep(-0.6, 1.15, VERTEX.y);
+		float hang = 1.0 - pin;
+		float loose = (1.0 - stiff * 0.62) * cloth_amount;
+		float sag = hang * g * (0.55 + hang * 0.45);
+		float swing = sin(t * (0.65 + w * 0.55) + world.y * 0.12 + world.z * 0.08);
+		float flutter = sin(t * 2.35 + world.x * 0.22) * w * 0.12 * hang;
+		vec3 force = vec3(
+			(swing * (0.55 + w * 0.9) + flutter) * hang,
+			-sag + abs(swing) * w * 0.08 * hang,
+			swing * (0.32 + w * 0.45) * hang
+		);
+		VERTEX += force * loose * (0.35 + hang);
+	}
 }
 
 void fragment() {
@@ -72,7 +108,16 @@ void fragment() {
 	if (use_albedo_tex > 0.5) {
 		alb *= texture(albedo_tex, UV).rgb;
 	}
-	ALBEDO = alb;
-	ROUGHNESS = roughness;
-	METALLIC = metallic;
+	if (use_vertex_color > 0.5) {
+		alb *= COLOR.rgb;
+		ALBEDO = vec3(0.0);
+		EMISSION = alb;
+		ROUGHNESS = 1.0;
+		METALLIC = 0.0;
+	} else {
+		ALBEDO = alb;
+		EMISSION = vec3(0.0);
+		ROUGHNESS = roughness;
+		METALLIC = metallic;
+	}
 }

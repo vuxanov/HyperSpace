@@ -3,6 +3,8 @@ class_name Scene3DItem
 
 ## Displays a 3D environment via SubViewport → TextureRect.
 
+const _SceneMeshFx := preload("res://core/scene_mesh_fx.gd")
+
 var item_id: String = ""
 var item_loop: bool = false
 
@@ -101,6 +103,7 @@ func _load_scene(scene_path: String, params: Dictionary) -> void:
 		if packed:
 			var instance := packed.instantiate()
 			_sub_viewport.add_child(instance)
+			_SceneMeshFx.ensure_mesh_tangents(instance)
 			if instance is ReactiveEnvironment:
 				_environment = instance
 			return
@@ -111,6 +114,7 @@ func _load_scene(scene_path: String, params: Dictionary) -> void:
 		if err == OK:
 			var scene := gltf.generate_scene(state)
 			_sub_viewport.add_child(scene)
+			_SceneMeshFx.ensure_mesh_tangents(scene)
 			return
 	push_warning("Scene3DItem: could not load %s, using fallback" % scene_path)
 	_create_fallback_environment(params)
@@ -143,6 +147,22 @@ func set_flythrough_layer(layer_id: String, config: Dictionary) -> void:
 		_load_scene(_pending_path, _pending_params)
 
 
+func restore_reactive_poses() -> void:
+	if _environment != null and _environment.has_method("restore_reactive_poses"):
+		_environment.call("restore_reactive_poses")
+
+
+func reset_stage_to_defaults() -> void:
+	if _environment != null and _environment.has_method("reset_stage_to_defaults"):
+		_environment.call("reset_stage_to_defaults")
+		if _pending_params.has("speed") or _pending_params.has("fly_speed"):
+			_pending_params["speed"] = 2.0
+			_pending_params["fly_speed"] = 2.0
+		return
+	# Non-flythrough fallback: drop reactive leftovers if the env knows how.
+	restore_reactive_poses()
+
+
 func set_layer_alpha(alpha: float) -> void:
 	_alpha = alpha
 	modulate.a = alpha
@@ -153,12 +173,34 @@ func apply_audio_state(state: AudioState) -> void:
 		_environment.apply_audio_state(state)
 
 
+func get_path_progress() -> float:
+	if _environment != null and _environment.has_method("get_path_progress"):
+		return float(_environment.call("get_path_progress"))
+	return 0.0
+
+
+func get_fly_speed() -> float:
+	if _environment != null and _environment.has_method("get_fly_speed"):
+		return float(_environment.call("get_fly_speed"))
+	if _environment != null and _environment.get("fly_speed") != null:
+		return float(_environment.get("fly_speed"))
+	return 0.0
+
+
 func apply_kinect_state(state: KinectState) -> void:
 	if _environment:
 		_environment.apply_kinect_state(state)
 
 
 func set_cue_param(key: String, value: Variant) -> void:
+	_pending_params[key] = value
+	if key == "fly_speed" or key == "speed":
+		_pending_params["fly_speed"] = float(value)
+		_pending_params["speed"] = float(value)
+	elif key == "path_style" or key == "camera_path":
+		var style := FlythroughPathBuilder.normalize_style(str(value))
+		_pending_params["path_style"] = style
+		_pending_params["camera_path"] = style
 	if _environment:
 		_environment.set_cue_param(key, value)
 
@@ -169,6 +211,66 @@ func set_wireframe(on: bool) -> void:
 	_sub_viewport.debug_draw = (
 		SubViewport.DEBUG_DRAW_WIREFRAME if on else SubViewport.DEBUG_DRAW_DISABLED
 	)
+
+
+func set_cloth(on: bool, params: Dictionary = {}) -> void:
+	if _environment != null and _environment.has_method("set_cloth"):
+		_environment.call("set_cloth", on, params)
+		return
+	if _sub_viewport:
+		_generic_cloth(on, params)
+
+
+func set_point_cloud(on: bool, params: Dictionary = {}) -> void:
+	if _environment != null and _environment.has_method("set_point_cloud"):
+		_environment.call("set_point_cloud", on, params)
+		return
+	if _sub_viewport:
+		var size := clampf(float(params.get("point_size", 6.0)), 1.0, 64.0)
+		var targets: Dictionary = SceneMeshFx.pc_targets_from(params)
+		var want_layers := bool(targets.get("target_environment", true)) \
+			or bool(targets.get("target_main", true)) \
+			or bool(targets.get("target_scatter", true))
+		if not on or not want_layers:
+			SceneMeshFx.clear_point_cloud(_sub_viewport)
+			return
+		var roots: Array = [_sub_viewport] if want_layers else []
+		SceneMeshFx.apply_point_cloud_layers(_sub_viewport, roots, true, size, false)
+
+
+func set_camera_fx(on: bool, params: Dictionary = {}) -> void:
+	if _environment != null and _environment.has_method("set_camera_fx"):
+		_environment.call("set_camera_fx", on, params)
+		return
+	if _sub_viewport:
+		var cam := SceneMeshFx.find_camera(_sub_viewport)
+		SceneMeshFx.apply_camera_fx(cam, on, params)
+
+
+func _generic_cloth(on: bool, params: Dictionary) -> void:
+	## Fallback for non-flythrough envs: shader uniforms on any ShaderMaterial + SoftBody on grids.
+	var meshes: Array = []
+	SceneMeshFx.collect_meshes(_sub_viewport, meshes)
+	var amt := float(params.get("amount", 0.7)) if on else 0.0
+	var stiff := float(params.get("stiffness", 0.55))
+	var wind := float(params.get("wind", 0.55)) if on else 0.0
+	for mi_any in meshes:
+		if not (mi_any is MeshInstance3D):
+			continue
+		var mi := mi_any as MeshInstance3D
+		if str(mi.name).begins_with("HSPointCloud"):
+			continue
+		var mat := mi.material_override
+		if mat is ShaderMaterial:
+			var sm := mat as ShaderMaterial
+			sm.set_shader_parameter("cloth_amount", amt)
+			sm.set_shader_parameter("cloth_stiffness", stiff)
+			sm.set_shader_parameter("cloth_wind", wind)
+			sm.set_shader_parameter("cloth_time", float(Time.get_ticks_msec()) * 0.001)
+		if mi.get_parent() is FlythroughMediaProp:
+			(mi.get_parent() as FlythroughMediaProp).set_softbody_cloth(
+				on, stiff, float(params.get("damping", 0.28)), Vector3(wind * 2.0, 0.2, wind)
+			)
 
 
 func start_item() -> void:

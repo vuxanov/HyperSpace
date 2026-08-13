@@ -1,10 +1,15 @@
 extends EffectLayer
 class_name GlitchEffect
 
-## Screen-space glitch (row shift + RGB split) from ASCII Live Visuals Engine.
+## Screen-space glitch (row shift + RGB split).
 
 var _rect: ColorRect
 var _time: float = 0.0
+var _base_intensity: float = 1.2
+var _base_rate: float = 2.0
+var _base_h_size: float = 0.8
+var _base_rgb: float = 0.9
+var _base_chaos: float = 0.75
 
 
 func _ready() -> void:
@@ -13,11 +18,12 @@ func _ready() -> void:
 	_rect = _make_screen_color_rect("res://effects/glitch_effect.gdshader")
 	var mat := _mat()
 	if mat:
-		mat.set_shader_parameter("intensity", 1.2)
-		mat.set_shader_parameter("rate", 2.0)
-		mat.set_shader_parameter("h_size", 0.8)
-		mat.set_shader_parameter("rgb_split", 0.9)
-		mat.set_shader_parameter("slice_chaos", 0.75)
+		mat.set_shader_parameter("intensity", _base_intensity)
+		mat.set_shader_parameter("rate", _base_rate)
+		mat.set_shader_parameter("h_size", _base_h_size)
+		mat.set_shader_parameter("rgb_split", _base_rgb)
+		mat.set_shader_parameter("slice_chaos", _base_chaos)
+		mat.set_shader_parameter("audio_drive", 0.0)
 	visible = false
 	set_process(false)
 
@@ -42,54 +48,46 @@ func set_active(is_on: bool) -> void:
 
 func apply_params(params: Dictionary) -> void:
 	super.apply_params(params)
-	_apply_shader(params)
+	_apply_resolved()
 	visible = enabled
 	set_process(enabled)
 
 
-func apply_audio_state(state: AudioState) -> void:
+func apply_audio_state(_state: AudioState) -> void:
 	if not enabled:
 		visible = false
 		set_process(false)
 		return
 	visible = true
 	set_process(true)
-	var mat := _mat()
-	if mat:
-		mat.set_shader_parameter("audio_drive", resolve_drive(state.highs))
+	_apply_resolved()
 
 
-func apply_modulator(mod01: float) -> void:
-	super.apply_modulator(mod01)
-	if not enabled:
-		return
-	if normalize_drive_mode(drive_mode) == "lfo":
-		var mat := _mat()
-		if mat:
-			mat.set_shader_parameter("audio_drive", resolve_drive(0.0))
-			mat.set_shader_parameter("intensity", clampf(_intensity * (0.45 + mod01 * 1.2), 0.0, 4.0))
+func apply_modulator(_mod01: float) -> void:
+	pass
 
 
-func _on_params_changed(params: Dictionary) -> void:
-	_apply_shader(params)
+func _on_params_changed(_params: Dictionary) -> void:
+	_apply_resolved()
 	visible = enabled
 	set_process(enabled)
 
 
-func _apply_shader(params: Dictionary) -> void:
+func _apply_resolved() -> void:
 	var mat := _mat()
 	if mat == null:
 		return
-	if params.has("intensity"):
-		mat.set_shader_parameter("intensity", float(params["intensity"]))
-	if params.has("rate"):
-		mat.set_shader_parameter("rate", float(params["rate"]))
-	if params.has("h_size"):
-		mat.set_shader_parameter("h_size", float(params["h_size"]))
-	if params.has("rgb_split"):
-		mat.set_shader_parameter("rgb_split", float(params["rgb_split"]))
-	if params.has("slice_chaos"):
-		mat.set_shader_parameter("slice_chaos", float(params["slice_chaos"]))
+	_base_intensity = eval_num("intensity", _base_intensity, 0.0, 8.0)
+	_base_rate = eval_num("rate", _base_rate, 0.0, 64.0)
+	_base_h_size = eval_num("h_size", _base_h_size, 0.0, 2.0)
+	_base_rgb = eval_num("rgb_split", _base_rgb, 0.0, 2.0)
+	_base_chaos = eval_num("slice_chaos", _base_chaos, 0.0, 2.0)
+	mat.set_shader_parameter("intensity", _base_intensity)
+	mat.set_shader_parameter("rate", _base_rate)
+	mat.set_shader_parameter("h_size", _base_h_size)
+	mat.set_shader_parameter("rgb_split", _base_rgb)
+	mat.set_shader_parameter("slice_chaos", _base_chaos)
+	mat.set_shader_parameter("audio_drive", 0.0)
 
 
 func _mat() -> ShaderMaterial:

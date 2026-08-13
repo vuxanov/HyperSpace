@@ -17,8 +17,9 @@ void fragment() {
 
 	vec2 centered = uv - vec2(0.5);
 	float dist = length(centered);
-	float drive = clamp(intensity * amount * 0.55 + audio_drive * 0.75, 0.0, 4.0);
-	float active = step(0.02, drive);
+	// amount/intensity carry slider ceilings; audio_drive is the 0..N modulator from GDScript.
+	float drive = clamp(intensity * amount * 0.85 + audio_drive * 0.55, 0.0, 4.0);
+	float active = step(0.015, drive);
 
 	float offset = drive * 0.055 * (0.2 + dist * 1.8) * active;
 	vec2 dir = normalize(centered + vec2(0.0001));

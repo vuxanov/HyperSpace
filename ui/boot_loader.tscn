@@ -1,0 +1,80 @@
+[gd_scene load_steps=2 format=3 uid="uid://boot_loader"]
+
+[ext_resource type="Script" path="res://ui/boot_loader.gd" id="1"]
+
+[node name="BootLoader" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.06, 0.06, 0.08, 1)
+
+[node name="Accent" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 3.0
+grow_horizontal = 2
+mouse_filter = 2
+color = Color(0.55, 0.72, 0.78, 0.85)
+
+[node name="Center" type="CenterContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Column" type="VBoxContainer" parent="Center"]
+layout_mode = 2
+theme_override_constants/separation = 14
+
+[node name="Brand" type="Label" parent="Center/Column"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 42
+theme_override_colors/font_color = Color(0.92, 0.94, 0.96, 1)
+text = "HyperSpace"
+horizontal_alignment = 1
+
+[node name="Status" type="Label" parent="Center/Column"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+theme_override_colors/font_color = Color(0.72, 0.76, 0.8, 1)
+text = "Starting…"
+horizontal_alignment = 1
+
+[node name="SpinnerRow" type="HBoxContainer" parent="Center/Column"]
+layout_mode = 2
+alignment = 1
+
+[node name="Spinner" type="ColorRect" parent="Center/Column/SpinnerRow"]
+custom_minimum_size = Vector2(28, 28)
+layout_mode = 2
+pivot_offset = Vector2(14, 14)
+color = Color(0.55, 0.72, 0.78, 1)
+
+[node name="Progress" type="ProgressBar" parent="Center/Column"]
+custom_minimum_size = Vector2(360, 14)
+layout_mode = 2
+max_value = 100.0
+show_percentage = false
+
+[node name="Detail" type="Label" parent="Center/Column"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 13
+theme_override_colors/font_color = Color(0.55, 0.58, 0.62, 1)
+text = ""
+horizontal_alignment = 1

@@ -6,8 +6,8 @@ extends Resource
 @export var bands: PackedFloat32Array = PackedFloat32Array()
 @export var energy: float = 0.0
 @export var peak: float = 0.0
+@export var input_level: float = 0.0  ## Peak-normalized capture level 0..1 (EQ / meter)
 @export var beat: bool = false
-@export var bpm_estimate: float = 120.0
 @export var bass: float = 0.0
 @export var mids: float = 0.0
 @export var highs: float = 0.0
@@ -19,8 +19,8 @@ func duplicate_state() -> AudioState:
 	copy.bands = bands.duplicate()
 	copy.energy = energy
 	copy.peak = peak
+	copy.input_level = input_level
 	copy.beat = beat
-	copy.bpm_estimate = bpm_estimate
 	copy.bass = bass
 	copy.mids = mids
 	copy.highs = highs

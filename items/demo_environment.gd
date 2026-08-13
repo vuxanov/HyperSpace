@@ -188,10 +188,7 @@ func apply_audio_state(state: AudioState) -> void:
 		return
 	var scale_amt := 1.0
 	if RH.property_active("scale"):
-		var d := RH.drive_value("scale", state, lfo)
-		if state.beat:
-			d = minf(d * 1.4, 1.0)
-		scale_amt = RH.scale_multiplier(d)
+		scale_amt = RH.scale_multiplier()
 	var scale_vec: Vector3 = RH.scale_vector(scale_amt) if RH.property_active("scale") else _base_scale
 	if _particles_mode and _particles:
 		_particles.scale = scale_vec

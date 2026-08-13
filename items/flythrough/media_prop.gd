@@ -8,6 +8,8 @@ class_name FlythroughMediaProp
 
 
 const DEFAULT_HEIGHT := 1.0
+## Grid density so noise deform / cloth have vertices to move (QuadMesh is 2 tris).
+const GRID_SUBDIV := 32
 ## Dim LDR so ACES does not blow screen content.
 const EXPOSURE_COMP := 0.72
 const FALLBACK_CHARCOAL := Color(0.08, 0.08, 0.1)
@@ -19,6 +21,8 @@ const _MEDIA_SHADER: Shader = preload("res://effects/media_screen.gdshader")
 const _VideoPool = preload("res://core/media_video_pool.gd")
 
 var _mesh_inst: MeshInstance3D
+var _soft: SoftBody3D
+var _cloth_wind: Vector3 = Vector3.ZERO
 var _mat: ShaderMaterial
 var _loop: bool = true
 var _source_path: String = ""
@@ -150,11 +154,12 @@ func _ensure_mesh(height: float, billboard: bool) -> void:
 	_mat.set_shader_parameter("use_billboard", 1.0 if billboard else 0.0)
 	_mat.set_shader_parameter("fallback_rgb", Vector3(FALLBACK_CHARCOAL.r, FALLBACK_CHARCOAL.g, FALLBACK_CHARCOAL.b))
 	_mat.set_shader_parameter("tex_albedo", null)
+	_mat.set_shader_parameter("deform_amount", 0.0)
+	_mat.set_shader_parameter("cloth_amount", 0.0)
 	_mat.render_priority = 16
-	var quad := QuadMesh.new()
-	quad.size = Vector2(height * (16.0 / 9.0), height)
+	var plane := _make_grid_mesh(Vector2(height * (16.0 / 9.0), height))
 	_mesh_inst = MeshInstance3D.new()
-	_mesh_inst.mesh = quad
+	_mesh_inst.mesh = plane
 	_mesh_inst.material_override = _mat
 	_mesh_inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_mesh_inst.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
@@ -190,10 +195,8 @@ func _set_screen_texture(tex: Texture2D, aspect: float = -1.0) -> void:
 	_mat.set_shader_parameter("exposure_comp", EXPOSURE_COMP)
 	_mat.set_shader_parameter("modulate", Color(1, 1, 1, 1))
 	_mat.set_shader_parameter("fallback_rgb", Vector3(FALLBACK_CHARCOAL.r, FALLBACK_CHARCOAL.g, FALLBACK_CHARCOAL.b))
-	if _bound_aspect > 0.01 and _mesh_inst and _mesh_inst.mesh is QuadMesh:
-		var q := _mesh_inst.mesh as QuadMesh
-		var h := q.size.y
-		q.size = Vector2(h * _bound_aspect, h)
+	if _bound_aspect > 0.01:
+		_set_plane_size(-1.0, -1.0)
 
 
 func _rebind_texture() -> void:
@@ -322,17 +325,122 @@ func _process(delta: float) -> void:
 		# Keep aspect in sync if the first real frame differs from seed.
 		if not _video_pool_key.is_empty():
 			var a := _VideoPool.aspect_for(_video_pool_key)
-			if absf(a - _bound_aspect) > 0.01 and _mesh_inst and _mesh_inst.mesh is QuadMesh:
+			if absf(a - _bound_aspect) > 0.01:
 				_bound_aspect = a
-				var q := _mesh_inst.mesh as QuadMesh
-				var h := q.size.y
-				q.size = Vector2(h * _bound_aspect, h)
+				_set_plane_size(-1.0, -1.0)
 	if not _needs_gif_process and not _needs_video_process and _pending_gif_path.is_empty():
 		set_process(false)
 
 
+func _make_grid_mesh(size: Vector2) -> PlaneMesh:
+	var plane := PlaneMesh.new()
+	plane.size = size
+	plane.orientation = PlaneMesh.FACE_Z
+	plane.subdivide_width = GRID_SUBDIV
+	plane.subdivide_depth = GRID_SUBDIV
+	return plane
+
+
+func _current_plane_size() -> Vector2:
+	if _mesh_inst and _mesh_inst.mesh is PlaneMesh:
+		return (_mesh_inst.mesh as PlaneMesh).size
+	return Vector2(DEFAULT_HEIGHT * 16.0 / 9.0, DEFAULT_HEIGHT)
+
+
+func _set_plane_size(width: float, height: float) -> void:
+	var cur := _current_plane_size()
+	var h := height if height > 0.01 else cur.y
+	var w := width if width > 0.01 else h * maxf(_bound_aspect, 0.1)
+	var sz := Vector2(w, h)
+	if _mesh_inst and _mesh_inst.mesh is PlaneMesh:
+		(_mesh_inst.mesh as PlaneMesh).size = sz
+	if _soft and is_instance_valid(_soft) and _soft.mesh is PlaneMesh:
+		(_soft.mesh as PlaneMesh).size = sz
+
+
+func set_deform_uniforms(params: Dictionary) -> void:
+	if _mat == null:
+		return
+	_mat.set_shader_parameter("deform_amount", float(params.get("deform_amount", 0.0)))
+	_mat.set_shader_parameter("deform_scale", float(params.get("deform_scale", 1.0)))
+	_mat.set_shader_parameter("deform_time", float(params.get("deform_time", 0.0)))
+	_mat.set_shader_parameter("deform_axes", params.get("deform_axes", Vector3.ONE))
+	_mat.set_shader_parameter("cloth_amount", float(params.get("cloth_amount", 0.0)))
+	_mat.set_shader_parameter("cloth_stiffness", float(params.get("cloth_stiffness", 0.55)))
+	_mat.set_shader_parameter("cloth_wind", float(params.get("cloth_wind", 0.0)))
+	_mat.set_shader_parameter("cloth_time", float(params.get("cloth_time", 0.0)))
+
+
+func has_active_softbody() -> bool:
+	## Godot 4.7 SoftBody3D has no physics_enabled — presence of the node is the on-switch.
+	return _soft != null and is_instance_valid(_soft)
+
+
+func set_softbody_cloth(on: bool, stiffness: float, damping: float, wind: Vector3) -> void:
+	## Real SoftBody on the tessellated grid. Billboard screens stay shader-only.
+	_cloth_wind = wind
+	if not on or _billboard:
+		_teardown_softbody()
+		return
+	_ensure_softbody(stiffness, damping)
+	if _soft and is_instance_valid(_soft):
+		_soft.linear_stiffness = clampf(stiffness, 0.35, 1.0)
+		_soft.damping_coefficient = clampf(maxf(damping, 0.18), 0.18, 1.0)
+		_soft.drag_coefficient = 0.12 + clampf(damping, 0.0, 1.0) * 0.2
+		_soft.process_mode = Node.PROCESS_MODE_INHERIT
+	set_physics_process(true)
+
+
+func _ensure_softbody(stiffness: float, damping: float) -> void:
+	if _soft != null and is_instance_valid(_soft):
+		return
+	if _mesh_inst == null or _mesh_inst.mesh == null:
+		return
+	_soft = SoftBody3D.new()
+	_soft.name = "MediaCloth"
+	_soft.mesh = _mesh_inst.mesh.duplicate() if _mesh_inst.mesh else _mesh_inst.mesh
+	_soft.material_override = _mat
+	_soft.transform = _mesh_inst.transform
+	_soft.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_soft.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+	_soft.set_meta("media_screen", true)
+	_soft.collision_layer = 0
+	_soft.collision_mask = 0
+	_soft.ray_pickable = false
+	_soft.simulation_precision = 8
+	_soft.total_mass = 1.4
+	_soft.linear_stiffness = clampf(stiffness, 0.35, 1.0)
+	_soft.damping_coefficient = clampf(maxf(damping, 0.18), 0.18, 1.0)
+	_soft.drag_coefficient = 0.12 + clampf(damping, 0.0, 1.0) * 0.2
+	_soft.pressure_coefficient = 0.0
+	_soft.process_mode = Node.PROCESS_MODE_INHERIT
+	add_child(_soft)
+	SceneMeshFx.pin_top_edge(_soft)
+	_mesh_inst.visible = false
+	_mesh_inst.set_meta("hs_softbody_src", true)
+
+
+func _teardown_softbody() -> void:
+	set_physics_process(false)
+	if _soft != null and is_instance_valid(_soft):
+		_soft.queue_free()
+	_soft = null
+	if _mesh_inst and is_instance_valid(_mesh_inst):
+		_mesh_inst.visible = true
+		_mesh_inst.set_meta("hs_softbody_src", false)
+
+
+func _physics_process(_delta: float) -> void:
+	if _soft == null or not is_instance_valid(_soft):
+		set_physics_process(false)
+		return
+	SceneMeshFx.apply_softbody_wind(_soft, _cloth_wind)
+
+
 func _exit_tree() -> void:
 	set_process(false)
+	set_physics_process(false)
+	_teardown_softbody()
 	_needs_video_process = false
 	_needs_gif_process = false
 	_gif_frames.clear()

@@ -4,6 +4,8 @@ class_name ChromaticEffect
 ## Screen-space chromatic aberration post-process.
 
 var _rect: ColorRect
+var _base_amount: float = 1.4
+var _base_intensity: float = 1.1
 
 
 func _ready() -> void:
@@ -12,8 +14,9 @@ func _ready() -> void:
 	_rect = _make_screen_color_rect("res://effects/chromatic_effect.gdshader")
 	var mat := _mat()
 	if mat:
-		mat.set_shader_parameter("intensity", 1.1)
-		mat.set_shader_parameter("amount", 1.4)
+		mat.set_shader_parameter("intensity", _base_intensity)
+		mat.set_shader_parameter("amount", _base_amount)
+		mat.set_shader_parameter("audio_drive", 0.0)
 	visible = false
 
 
@@ -26,44 +29,36 @@ func set_active(is_on: bool) -> void:
 
 func apply_params(params: Dictionary) -> void:
 	super.apply_params(params)
-	_apply_shader(params)
+	_apply_resolved()
 	visible = enabled
 
 
-func apply_audio_state(state: AudioState) -> void:
+func apply_audio_state(_state: AudioState) -> void:
 	if not enabled:
 		visible = false
 		return
 	visible = true
-	var mat := _mat()
-	if mat:
-		mat.set_shader_parameter("audio_drive", resolve_drive(state.highs))
+	_apply_resolved()
 
 
-func apply_modulator(mod01: float) -> void:
-	super.apply_modulator(mod01)
-	if not enabled:
-		return
-	if normalize_drive_mode(drive_mode) == "lfo":
-		var mat := _mat()
-		if mat:
-			mat.set_shader_parameter("audio_drive", resolve_drive(0.0))
-			mat.set_shader_parameter("amount", clampf(0.5 + mod01 * 2.2, 0.0, 4.0))
+func apply_modulator(_mod01: float) -> void:
+	pass
 
 
-func _on_params_changed(params: Dictionary) -> void:
-	_apply_shader(params)
+func _on_params_changed(_params: Dictionary) -> void:
+	_apply_resolved()
 	visible = enabled
 
 
-func _apply_shader(params: Dictionary) -> void:
+func _apply_resolved() -> void:
 	var mat := _mat()
 	if mat == null:
 		return
-	if params.has("intensity"):
-		mat.set_shader_parameter("intensity", float(params["intensity"]))
-	if params.has("amount"):
-		mat.set_shader_parameter("amount", float(params["amount"]))
+	_base_intensity = eval_num("intensity", _base_intensity, 0.0, 8.0)
+	_base_amount = eval_num("amount", _base_amount, 0.0, 8.0)
+	mat.set_shader_parameter("intensity", _base_intensity)
+	mat.set_shader_parameter("amount", _base_amount)
+	mat.set_shader_parameter("audio_drive", 0.0)
 
 
 func _mat() -> ShaderMaterial:

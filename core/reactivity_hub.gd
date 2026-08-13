@@ -29,8 +29,22 @@ static func _director() -> Node:
 
 
 static func enabled() -> bool:
+	## True when any deform/FX-react toggle is on. The old master Audio Reactivity
+	## flag still counts, but Scale/Noise/Rotation/Camera no longer need it.
 	var n := node()
-	return bool(n.get("enabled")) if n else false
+	if n == null:
+		return false
+	if bool(n.get("enabled")):
+		return true
+	if bool(n.get("affect_scale")) or bool(n.get("affect_rotation")) or bool(n.get("affect_noise")):
+		return true
+	if bool(n.get("affect_light")) or bool(n.get("affect_emission")):
+		return true
+	if bool(n.get("affect_camera_rotation")):
+		return true
+	var raw: Variant = n.get("camera_preset")
+	var preset := "Off" if raw == null else str(raw)
+	return not preset.is_empty() and preset != "Off"
 
 
 static func affect_scale() -> bool:
@@ -86,19 +100,108 @@ static func noise_scale() -> float:
 	return 4.0
 
 
-static func target() -> String:
+static func _normalize_layer(layer_id: String) -> String:
+	match layer_id:
+		"centerpiece", "foreground", "main":
+			return "main"
+		"light", "lights":
+			return "lights"
+		"cam", "camera":
+			return "camera"
+		"outer", "env", "environment":
+			return "environment"
+		_:
+			return layer_id
+
+
+## True when the global "What reacts" multi-select includes this layer.
+static func targets_include(layer_id: String) -> bool:
+	return _bool_targets_include("", layer_id, ["main", "scatter", "environment"])
+
+
+static func noise_targets_include(layer_id: String) -> bool:
+	return _bool_targets_include("noise_", layer_id, ["main", "scatter", "environment"])
+
+
+static func rotation_targets_include(layer_id: String) -> bool:
+	return _bool_targets_include("rotation_", layer_id, ["main", "scatter", "environment", "camera"])
+
+
+static func particles_targets_include(layer_id: String) -> bool:
+	return _bool_targets_include("particles_", layer_id, ["main", "scatter", "environment"])
+
+
+static func _bool_targets_include(prefix: String, layer_id: String, layers: Array) -> bool:
+	var key := _normalize_layer(layer_id)
+	## Lights and media are not Affects targets (scale/noise/rotation/particles/cloth).
+	if key == "lights" or key == "media":
+		return false
 	var n := node()
-	return str(n.get("target")) if n else "all"
+	if n == null:
+		return false
+	if not layers.has(key):
+		return false
+	return bool(n.get("%starget_%s" % [prefix, key]))
 
 
-static func noise_target() -> String:
+## Apply a legacy single-string target ("all" | layer id) onto multi-bool fields.
+static func apply_legacy_target_string(prefix: String, legacy: String, layers: Array) -> void:
 	var n := node()
-	return str(n.get("noise_target")) if n else "all"
+	if n == null:
+		return
+	var t := legacy.strip_edges().to_lower()
+	var all_on := t.is_empty() or t == "all" or t == "everything"
+	for layer in layers:
+		var on := all_on
+		if not all_on:
+			on = _normalize_layer(t) == str(layer) or t == str(layer)
+			# Legacy aliases for main.
+			if str(layer) == "main" and t in ["centerpiece", "foreground", "main"]:
+				on = true
+		n.set("%starget_%s" % [prefix, layer], on)
+	notify_changed()
 
 
-static func rotation_target() -> String:
+static func set_target_bool(prefix: String, layer: String, value: bool) -> void:
 	var n := node()
-	return str(n.get("rotation_target")) if n else "all"
+	if n == null:
+		return
+	n.set("%starget_%s" % [prefix, _normalize_layer(layer)], value)
+	notify_changed()
+
+
+static func get_target_bool(prefix: String, layer: String, fallback: bool = false) -> bool:
+	var n := node()
+	if n == null:
+		return fallback
+	return bool(n.get("%starget_%s" % [prefix, _normalize_layer(layer)]))
+
+
+static func particles_target_snapshot() -> Dictionary:
+	return {
+		"target_main": get_target_bool("particles_", "main"),
+		"target_scatter": get_target_bool("particles_", "scatter"),
+		"target_environment": get_target_bool("particles_", "environment"),
+	}
+
+
+static func apply_particles_targets_from_params(params: Dictionary) -> void:
+	## Prefer multi-bool keys; fall back to legacy string "target".
+	if params.has("target_main") or params.has("target_scatter") or params.has("target_environment") \
+			or params.has("target_lights") or params.has("target_media"):
+		var n := node()
+		if n == null:
+			return
+		n.set("particles_target_main", bool(params.get("target_main", false)))
+		n.set("particles_target_scatter", bool(params.get("target_scatter", false)))
+		n.set("particles_target_environment", bool(params.get("target_environment", false)))
+		n.set("particles_target_lights", false)
+		n.set("particles_target_media", false)
+		notify_changed()
+	elif params.has("target"):
+		apply_legacy_target_string("particles_", str(params["target"]), [
+			"main", "scatter", "environment",
+		])
 
 
 static func scale_x() -> bool:
@@ -179,7 +282,7 @@ static func set_rotation_amount(value: float) -> void:
 	if n and n.has_method("set_rotation_amount"):
 		n.call("set_rotation_amount", value)
 	elif n:
-		n.set("rotation_amount", maxf(value, 0.0))
+		n.set("rotation_amount", clampf(value, -1.0e6, 1.0e6))
 		notify_changed()
 
 
@@ -206,53 +309,32 @@ static func set_field(field: String, value: Variant) -> void:
 
 static func get_field(field: String, fallback: Variant = null) -> Variant:
 	var n := node()
-	if n:
-		return n.get(field)
-	return fallback
+	if n == null:
+		return fallback
+	var v: Variant = n.get(field)
+	if v == null:
+		return fallback
+	return v
 
 
 static func applies_to(object_id: String) -> bool:
-	if not enabled():
-		return false
-	var t := target()
-	if t == "all":
-		return true
-	if t == object_id:
-		return true
-	if (t == "centerpiece" or t == "foreground" or t == "main") and (
-		object_id == "centerpiece" or object_id == "foreground" or object_id == "main"
-	):
-		return true
-	if (t == "lights" or t == "light") and (object_id == "lights" or object_id == "light"):
-		return true
-	return false
-
-
-static func particles_target() -> String:
-	var n := node()
-	return str(n.get("particles_target")) if n else "all"
+	return targets_include(object_id)
 
 
 static func particles_applies_to(layer_id: String) -> bool:
 	var director := _director()
 	if director == null or not bool(director.call("get_effect_enabled", "particles")):
 		return false
-	return _layer_matches_target(particles_target(), layer_id)
+	return particles_targets_include(layer_id)
 
 
 static func noise_applies_to(layer_id: String) -> bool:
-	if not enabled() or not affect_noise():
+	if not affect_noise():
 		return false
-	if source_for("noise") == "off":
-		return false
-	return _layer_matches_target(noise_target(), layer_id)
+	return noise_targets_include(layer_id)
 
 
 static func rotation_applies_to(layer_id: String) -> bool:
-	if not enabled():
-		return false
-	if source_for("rotation") == "off":
-		return false
 	# Camera can be driven from Camera motion nested toggle and/or Rotation target.
 	if layer_id == "camera":
 		var cam_rot := bool(get_field("affect_camera_rotation", false))
@@ -260,28 +342,10 @@ static func rotation_applies_to(layer_id: String) -> bool:
 			return true
 		if not affect_rotation():
 			return false
-		return _layer_matches_target(rotation_target(), "camera")
+		return rotation_targets_include("camera")
 	if not affect_rotation():
 		return false
-	return _layer_matches_target(rotation_target(), layer_id)
-
-
-static func _layer_matches_target(t: String, layer_id: String) -> bool:
-	if t == "all":
-		return true
-	if t == layer_id:
-		return true
-	if t == "centerpiece" and (layer_id == "foreground" or layer_id == "centerpiece" or layer_id == "main"):
-		return true
-	if t == "scatter" and layer_id == "scatter":
-		return true
-	if t == "environment" and layer_id == "environment":
-		return true
-	if (t == "lights" or t == "light") and (layer_id == "lights" or layer_id == "light"):
-		return true
-	if (t == "camera" or t == "cam") and (layer_id == "camera" or layer_id == "cam"):
-		return true
-	return false
+	return rotation_targets_include(layer_id)
 
 
 static func scale_vector(base: float) -> Vector3:
@@ -368,21 +432,16 @@ static func drive_value(property: String, state: AudioState, lfo_mod01: float = 
 	return clampf(pow(clampf(raw, 0.0, 1.0), 0.55) * 1.15, 0.0, 1.0)
 
 
-## Lift quiet mic levels so Scale Amount feels usable; amount = peak multiplier above 1.
-static func scale_multiplier(drive01: float, amount: float = -1.0) -> float:
-	var amt := amount if amount >= 0.0 else scale_amount()
-	# Map tiny analyzer values into a punchier 0..1 curve.
-	var d := clampf(drive01, 0.0, 1.0)
-	d = clampf(pow(d, 0.35) * 1.35, 0.0, 1.0)
-	return clampf(1.0 + d * amt, 0.15, 60.0)
+## Amount is the live field (number or evaluated expression). drive01 is ignored.
+static func scale_multiplier(_drive01: float = 1.0, amount: float = -1.0e30) -> float:
+	var amt := scale_amount() if amount < -1.0e20 else amount
+	return clampf(1.0 + amt, -1.0e6, 1.0e6)
 
 
-## Peak rad/step at amount=20, drive=1 ≈ 0.07; amount scales linearly.
-static func rotation_rate(drive01: float, amount: float = -1.0) -> float:
-	var amt := amount if amount >= 0.0 else rotation_amount()
-	var d := clampf(drive01, 0.0, 1.0)
-	d = clampf(pow(d, 0.4) * 1.2, 0.0, 1.0)
-	return d * (amt / 20.0) * 0.07
+## Radians per frame from the live amount field (expression can be bass * 1000).
+static func rotation_rate(_drive01: float = 1.0, amount: float = -1.0e30) -> float:
+	var amt := rotation_amount() if amount < -1.0e20 else amount
+	return clampf((amt / 20.0) * 0.07, -1.0e6, 1.0e6)
 
 
 static func property_active(property: String) -> bool:
@@ -390,16 +449,14 @@ static func property_active(property: String) -> bool:
 		return false
 	match property:
 		"scale":
-			return affect_scale() and source_for("scale") != "off"
+			return affect_scale()
 		"emission":
-			return affect_emission() and source_for("emission") != "off"
+			return affect_emission()
 		"rotation":
-			if source_for("rotation") == "off":
-				return false
 			return affect_rotation() or bool(get_field("affect_camera_rotation", false))
 		"light":
-			return affect_light() and source_for("light") != "off"
+			return affect_light()
 		"noise":
-			return affect_noise() and source_for("noise") != "off"
+			return affect_noise()
 		_:
 			return false

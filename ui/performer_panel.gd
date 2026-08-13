@@ -234,8 +234,8 @@ func _on_ascii_density_changed(value: float) -> void:
 		})
 
 
-func _on_particles_toggled(enabled: bool) -> void:
-	ShowDirector.set_effect("particles", enabled, {"intensity": intensity_slider.value})
+func _on_particles_toggled(_enabled: bool) -> void:
+	pass
 
 
 func _on_feedback_toggled(enabled: bool) -> void:

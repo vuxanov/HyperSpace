@@ -52,6 +52,30 @@ const PRESETS := {
 		"density": 110.0, "intensity": 0.93, "contrast": 1.7,
 		"charset": " ⠁⠂⠃⠄⠅⠆⠇⠸⠿", "tint": Color(0.66, 0.55, 0.98), "cell_aspect": 0.7
 	},
+	"Emoji": {
+		"density": 72.0, "intensity": 1.0, "contrast": 1.45,
+		"charset": " ▫▪□■⬜🔲🔳⬛", "tint": Color(1.0, 0.92, 0.55), "cell_aspect": 1.0
+	},
+	"Faces": {
+		"density": 64.0, "intensity": 0.96, "contrast": 1.35,
+		"charset": " ·✧⭐❤💫🔥", "tint": Color(1.0, 0.72, 0.42), "cell_aspect": 1.0
+	},
+	"Runes": {
+		"density": 88.0, "intensity": 0.94, "contrast": 1.4,
+		"charset": " ᛁᚾᚲᚢᚠᚦᚱᚺᛏᛉᛊᛒᛗ", "tint": Color(0.72, 0.88, 1.0), "cell_aspect": 0.7
+	},
+	"Cyrillic": {
+		"density": 90.0, "intensity": 0.93, "contrast": 1.3,
+		"charset": " іосеанкджшщЖШМ", "tint": Color(0.95, 0.82, 1.0), "cell_aspect": 0.65
+	},
+	"Crosses": {
+		"density": 84.0, "intensity": 0.95, "contrast": 1.55,
+		"charset": " +×✕†‡✚✙┼╋✖", "tint": Color(1.0, 0.55, 0.62), "cell_aspect": 0.7
+	},
+	"Stars": {
+		"density": 96.0, "intensity": 0.92, "contrast": 1.35,
+		"charset": " ·✧✦☆★✪", "tint": Color(1.0, 0.88, 0.45), "cell_aspect": 0.75
+	},
 }
 
 ## Older HyperSpace / show names → current ASCII-app presets.
@@ -70,10 +94,9 @@ var _invert: bool = false
 var _base_charset: String = " .:-=+*#%@"
 var _density_min: float = 40.0
 var _density_max: float = 80.0
-## sine | triangle | saw | square — density LFO shape when Mode=LFO
-var _lfo_wave: String = "sine"
-var _lfo_rate: float = 0.45  # Hz
-var _lfo_phase: float = 0.0
+var _base_intensity: float = 0.92
+var _base_contrast: float = 1.25
+var _style_index: int = -1
 
 
 func _ready() -> void:
@@ -96,13 +119,9 @@ func _ready() -> void:
 	apply_preset("Standard")
 
 
-func _process(delta: float) -> void:
+func _process(_delta: float) -> void:
 	if not enabled:
 		set_process(false)
-		return
-	_lfo_phase = fposmod(_lfo_phase + delta * maxf(_lfo_rate, 0.05), 1.0)
-	if normalize_drive_mode(drive_mode) == "lfo":
-		_apply_density_from_lfo()
 
 
 func apply_preset(preset_name: String) -> void:
@@ -110,74 +129,56 @@ func apply_preset(preset_name: String) -> void:
 	if not PRESETS.has(resolved):
 		return
 	var params: Dictionary = PRESETS[resolved].duplicate()
-	params["invert"] = _invert
+	params["charset"] = PRESETS[resolved].get("charset", _base_charset)
 	apply_params(params)
 
 
 func apply_params(params: Dictionary) -> void:
 	super.apply_params(params)
 	_apply_shader_params(params)
+	_apply_resolved()
 	_sync_visibility()
-	set_process(enabled and normalize_drive_mode(drive_mode) == "lfo")
+	set_process(false)
 
 
 func set_active(is_on: bool) -> void:
 	enabled = is_on
 	_sync_visibility()
-	set_process(is_on and normalize_drive_mode(drive_mode) == "lfo")
+	set_process(false)
 
 
-func apply_audio_state(state: AudioState) -> void:
+func apply_audio_state(_state: AudioState) -> void:
 	if not enabled:
 		_sync_visibility()
-		set_process(false)
 		return
 	_sync_visibility()
+	_apply_resolved()
+
+
+func apply_modulator(_mod01: float) -> void:
+	pass
+
+
+func _apply_resolved() -> void:
 	var mat := _shader_mat()
 	if mat == null:
 		return
-	var mode := normalize_drive_mode(drive_mode)
-	set_process(mode == "lfo")
-	if mode == "lfo":
-		_apply_density_from_lfo()
-		return
-	var drive := resolve_drive(state.energy)
-	mat.set_shader_parameter("audio_highs", drive)
-	var dens: float
-	if mode == "auto":
-		dens = lerpf(_density_min, _density_max, 0.5)
-	else:
-		dens = lerpf(_density_min, _density_max, clampf(drive / maxf(_intensity, 0.001), 0.0, 1.0))
+	_apply_driven_style()
+	_density_min = eval_num("density_min", _density_min, 1.0, 200.0)
+	_density_max = eval_num("density_max", _density_max, 1.0, 200.0)
+	if _density_min > _density_max:
+		var tmp := _density_min
+		_density_min = _density_max
+		_density_max = tmp
+	_base_intensity = eval_num("intensity", _base_intensity, 0.0, 4.0)
+	_base_contrast = eval_num("contrast", _base_contrast, 0.1, 4.0)
+	var dens := lerpf(_density_min, _density_max, 0.5)
+	if has_raw_param("density"):
+		dens = eval_num("density", dens, 1.0, 200.0)
+	mat.set_shader_parameter("audio_highs", 0.0)
 	mat.set_shader_parameter("density", dens)
-
-
-func apply_modulator(mod01: float) -> void:
-	super.apply_modulator(mod01)
-	# Density LFO uses internal waveform oscillator; shared mod01 kept for resolve_drive.
-
-
-func _apply_density_from_lfo() -> void:
-	var mat := _shader_mat()
-	if mat == null:
-		return
-	var wave01 := _wave01(_lfo_phase, _lfo_wave)
-	mat.set_shader_parameter("audio_highs", resolve_drive(0.0))
-	mat.set_shader_parameter("density", lerpf(_density_min, _density_max, wave01))
-
-
-static func _wave01(phase01: float, wave: String) -> float:
-	## Map phase 0..1 → waveform 0..1.
-	var p := fposmod(phase01, 1.0)
-	match wave:
-		"triangle":
-			return 1.0 - absf(2.0 * p - 1.0)
-		"saw":
-			return p
-		"square":
-			return 1.0 if p < 0.5 else 0.0
-		_:
-			# sine
-			return sin(p * TAU) * 0.5 + 0.5
+	mat.set_shader_parameter("intensity", _base_intensity)
+	mat.set_shader_parameter("contrast", _base_contrast)
 
 
 func _on_params_changed(params: Dictionary) -> void:
@@ -191,43 +192,72 @@ func _resolve_preset_name(preset_name: String) -> String:
 	return str(PRESET_ALIASES.get(preset_name, preset_name))
 
 
+static func wrap_style_index(v: float) -> int:
+	var n := PRESETS.size()
+	if n <= 0:
+		return 0
+	return posmod(int(floor(v)), n)
+
+
+func _apply_driven_style() -> void:
+	## Driver/expression on style_index selects a preset charset (wraps). Density is separate.
+	if not has_raw_param("style_index"):
+		return
+	var names: Array = PRESETS.keys()
+	var n := names.size()
+	if n <= 0:
+		return
+	var idx := wrap_style_index(eval_num("style_index", 0.0))
+	if idx == _style_index:
+		return
+	_style_index = idx
+	var pname := str(names[idx])
+	var p: Dictionary = PRESETS.get(pname, {})
+	if p.is_empty():
+		return
+	var mat := _shader_mat()
+	if mat == null:
+		return
+	if p.has("cell_aspect"):
+		mat.set_shader_parameter("cell_aspect", float(p["cell_aspect"]))
+	if p.has("tint"):
+		var tint: Variant = p["tint"]
+		if tint is Color:
+			mat.set_shader_parameter("tint", Vector3(tint.r, tint.g, tint.b))
+	var charset := str(p.get("charset", _base_charset))
+	_base_charset = charset
+	charset = AsciiCharset.filter_charset(charset)
+	var atlas := _atlas_for(charset)
+	mat.set_shader_parameter("ascii_atlas", atlas)
+	mat.set_shader_parameter("charset_len", charset.length())
+
+
 func _apply_shader_params(params: Dictionary) -> void:
 	var mat := _shader_mat()
 	if mat == null:
 		return
-	if params.has("lfo_wave"):
-		_lfo_wave = str(params["lfo_wave"]).to_lower()
-	if params.has("lfo_rate"):
-		_lfo_rate = clampf(float(params["lfo_rate"]), 0.05, 8.0)
 	if params.has("density_min") or params.has("density_max"):
-		_density_min = float(params.get("density_min", _density_min))
-		_density_max = float(params.get("density_max", _density_max))
+		_density_min = eval_num("density_min", _density_min, 1.0, 200.0)
+		_density_max = eval_num("density_max", _density_max, 1.0, 200.0)
 		if _density_min > _density_max:
 			var tmp := _density_min
 			_density_min = _density_max
 			_density_max = tmp
-		_density_min = clampf(_density_min, 1.0, 200.0)
-		_density_max = clampf(_density_max, 1.0, 200.0)
-		if normalize_drive_mode(drive_mode) != "lfo":
-			mat.set_shader_parameter("density", lerpf(_density_min, _density_max, 0.5))
 	elif params.has("density"):
-		var d_single := float(params.get("density", 80.0))
+		var d_single := eval_num("density", 80.0, 1.0, 200.0)
 		_density_min = maxf(1.0, d_single * 0.65)
 		_density_max = d_single
-		if normalize_drive_mode(drive_mode) != "lfo":
-			mat.set_shader_parameter("density", lerpf(_density_min, _density_max, 0.5))
 	if params.has("intensity"):
-		mat.set_shader_parameter("intensity", float(params["intensity"]))
+		_base_intensity = eval_num("intensity", _base_intensity, 0.0, 4.0)
 	if params.has("contrast"):
-		mat.set_shader_parameter("contrast", float(params["contrast"]))
+		_base_contrast = eval_num("contrast", _base_contrast, 0.1, 4.0)
 	if params.has("cell_aspect"):
 		mat.set_shader_parameter("cell_aspect", float(params["cell_aspect"]))
 	if params.has("tint"):
 		var tint: Variant = params["tint"]
 		if tint is Color:
 			mat.set_shader_parameter("tint", Vector3(tint.r, tint.g, tint.b))
-	if params.has("invert"):
-		_invert = bool(params["invert"])
+	_invert = false
 	var charset := str(params.get("charset", _base_charset))
 	_base_charset = charset
 	charset = AsciiCharset.filter_charset(charset)
