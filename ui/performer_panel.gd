@@ -22,7 +22,6 @@ extends Control
 
 @onready var ascii_toggle: CheckButton = $Root/Body/EffectsPane/EffectsMargin/EffectsColumn/FxSection/AsciiToggle
 @onready var ascii_density_slider: HSlider = $Root/Body/EffectsPane/EffectsMargin/EffectsColumn/FxSection/AsciiDensitySlider
-@onready var particles_toggle: CheckButton = $Root/Body/EffectsPane/EffectsMargin/EffectsColumn/FxSection/ParticlesToggle
 @onready var feedback_toggle: CheckButton = $Root/Body/EffectsPane/EffectsMargin/EffectsColumn/FxSection/FeedbackToggle
 @onready var cue_container: HFlowContainer = $Root/Body/EffectsPane/EffectsMargin/EffectsColumn/CueSection/CueContainer
 
@@ -51,7 +50,6 @@ func _ready() -> void:
 	sensitivity_slider.value_changed.connect(_on_sensitivity_changed)
 	ascii_toggle.toggled.connect(_on_ascii_toggled)
 	ascii_density_slider.value_changed.connect(_on_ascii_density_changed)
-	particles_toggle.toggled.connect(_on_particles_toggled)
 	feedback_toggle.toggled.connect(_on_feedback_toggled)
 	file_dialog.file_selected.connect(_on_file_selected)
 	file_dialog.files_selected.connect(_on_files_selected)
@@ -232,10 +230,6 @@ func _on_ascii_density_changed(value: float) -> void:
 			"intensity": intensity_slider.value,
 			"density": value,
 		})
-
-
-func _on_particles_toggled(_enabled: bool) -> void:
-	pass
 
 
 func _on_feedback_toggled(enabled: bool) -> void:

@@ -880,19 +880,7 @@ func _hide_deform_legacy() -> void:
 
 
 func _setup_cloth_gravity() -> void:
-	var lbl := Label.new()
-	lbl.text = "Gravity"
-	cloth_body.add_child(lbl)
-	cloth_body.move_child(lbl, cloth_wind_slider.get_parent().get_index() + 1)
-	_cloth_gravity_slider = HSlider.new()
-	_cloth_gravity_slider.min_value = 0.0
-	_cloth_gravity_slider.max_value = 200.0
-	_cloth_gravity_slider.step = 1.0
-	_cloth_gravity_slider.value = 100.0
-	_cloth_gravity_slider.tooltip_text = "Downward hang. Type bass * 5 or pick Driver."
-	cloth_body.add_child(_cloth_gravity_slider)
-	cloth_body.move_child(_cloth_gravity_slider, lbl.get_index() + 1)
-	SliderSpinLinkScr.attach_driven(_cloth_gravity_slider, _on_cloth_params, 100.0)
+	return
 
 
 func _setup_camera_lens_control() -> void:
@@ -979,13 +967,10 @@ func _setup_dual_ranges() -> void:
 
 	var hosts := {
 		"ascii": ascii_schedule_host,
-		"particles": particles_schedule_host,
 		"feedback": feedback_schedule_host,
 		"glitch": glitch_schedule_host,
 		"chromatic": chromatic_schedule_host,
-		"pixel_sort": pixel_sort_schedule_host,
 		"wireframe": wireframe_schedule_host,
-		"cloth": cloth_schedule_host,
 		"point_cloud": point_cloud_schedule_host,
 		"camera_fx": camera_fx_schedule_host,
 		"react_scale": scale_schedule_host,
@@ -1620,17 +1605,7 @@ func _particles_target_params() -> Dictionary:
 
 
 func _on_particles_target_toggled(_v: bool = false) -> void:
-	RH.set_field("particles_target_main", particles_target_main.button_pressed)
-	RH.set_field("particles_target_scatter", particles_target_scatter.button_pressed)
-	RH.set_field("particles_target_environment", particles_target_environment.button_pressed)
-	RH.set_field("particles_target_lights", false)
-	RH.set_field("particles_target_media", false)
-	if particles_toggle and particles_toggle.button_pressed:
-		var params := {
-			"intensity": SliderSpinLinkScr.eval_of(intensity_slider),
-		}
-		params.merge(_particles_target_params())
-		ShowDirector.set_effect("particles", true, params)
+	pass
 
 
 func _on_camera_motion_toggled(on: bool) -> void:
@@ -1808,13 +1783,8 @@ func _on_ascii_invert(enabled: bool) -> void:
 		ShowDirector.set_effect("ascii", true, params)
 
 
-func _on_particles_toggled(enabled: bool) -> void:
-	var params := {
-		"intensity": intensity_slider.value,
-	}
-	params.merge(_particles_target_params())
-	ShowDirector.set_effect("particles", enabled, params)
-	_sync_conditional_ui()
+func _on_particles_toggled(_enabled: bool) -> void:
+	pass
 
 
 func _feedback_params() -> Dictionary:
@@ -1905,14 +1875,12 @@ func _pixel_sort_params() -> Dictionary:
 	}
 
 
-func _on_pixel_sort_toggled(enabled: bool) -> void:
-	ShowDirector.set_effect("pixel_sort", enabled, _pixel_sort_params())
-	_sync_conditional_ui()
+func _on_pixel_sort_toggled(_enabled: bool) -> void:
+	pass
 
 
 func _on_pixel_sort_params(_v: float = 0.0) -> void:
-	if pixel_sort_toggle.button_pressed:
-		ShowDirector.set_effect("pixel_sort", true, _pixel_sort_params())
+	pass
 
 
 func _wireframe_params() -> Dictionary:
@@ -1936,14 +1904,12 @@ func _cloth_params() -> Dictionary:
 	}
 
 
-func _on_cloth_toggled(enabled: bool) -> void:
-	ShowDirector.set_effect("cloth", enabled, _cloth_params())
-	_sync_conditional_ui()
+func _on_cloth_toggled(_enabled: bool) -> void:
+	pass
 
 
 func _on_cloth_params(_v: float = 0.0) -> void:
-	if cloth_toggle.button_pressed:
-		ShowDirector.set_effect("cloth", true, _cloth_params())
+	pass
 
 
 func _point_cloud_params() -> Dictionary:

@@ -1279,5 +1279,6 @@ Then `Could not parse global class "FlythroughCameraRig"` and `flythrough_enviro
 2. Added **Reaction Diffusion** (Gray-Scott) post under ASCII: presets Coral/Mitosis/Spots/Worms/Waves with shuffle+interval; Feed, Kill, Speed, Mix sliders (driver-capable). Overlay tints the live frame from V concentration — does not replace or crush to black.
 3. Shuffle+interval on camera pad, play mode, RD preset, cam path, scatter layout (ASCII Style Switch kept). Random+interval on Scale/Rotation/Noise affects + axes, Point Cloud Affects, camera rotation influence.
 4. Material-null stamp guards kept. Files include `effects/reaction_diffusion*.gd(shader)`, `ui/cycle_random.gd`, sidebar/director/stack/flythrough, `issue_log.md`.
+5. Follow-up: leftover `performer_panel` Particles toggle removed. compile_check loads RD instead of missing cloth script. Sidebar no longer registers particles/cloth/pixel_sort schedule hosts or calls `set_effect` for those ids.
 
 

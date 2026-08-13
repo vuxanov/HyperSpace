@@ -12,7 +12,7 @@ func _init() -> void:
 		"res://ui/dual_range_slider.gd",
 		"res://effects/effect_layer.gd",
 		"res://effects/fx_automation.gd",
-		"res://effects/cloth_effect.gd",
+		"res://effects/reaction_diffusion_effect.gd",
 		"res://effects/point_cloud_effect.gd",
 		"res://effects/camera_fx_effect.gd",
 		"res://effects/ascii_effect.gd",

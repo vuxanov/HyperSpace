@@ -232,10 +232,6 @@ max_value = 160.0
 step = 1.0
 value = 80.0
 
-[node name="ParticlesToggle" type="CheckButton" parent="Root/Body/EffectsPane/EffectsMargin/EffectsColumn/FxSection"]
-layout_mode = 2
-text = "Particles"
-
 [node name="FeedbackToggle" type="CheckButton" parent="Root/Body/EffectsPane/EffectsMargin/EffectsColumn/FxSection"]
 layout_mode = 2
 text = "Feedback Trail"
