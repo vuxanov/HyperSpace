@@ -22,6 +22,7 @@ const FREE_MIN := -1000000.0
 const FREE_MAX := 1000000.0
 
 static var _busy: Dictionary = {}  # instance_id -> bool
+static var _dragging: Dictionary = {}  # instance_id -> bool, thumb held by the user
 static var _driven: Dictionary = {}  # instance_id -> HSlider
 static var _driven_choices: Dictionary = {}  # instance_id -> OptionButton
 static var add_new_handler: Callable
@@ -211,10 +212,17 @@ static func unregister_driven(id: int) -> void:
 	_driven.erase(id)
 	_driven_choices.erase(id)
 	_busy.erase(id)
+	_dragging.erase(id)
 
 
 static func _on_driven_exiting(id: int) -> void:
-	unregister_driven(id)
+	## `tree_exiting` fires on `reparent()` too, and the sidebar reparents whole settings
+	## bodies while building the flat effect list and the indented setting panels. Forgetting
+	## the registration here killed the live thumb preview for every slider inside them, so
+	## only drop a control once its object is really gone. `refresh_all_previews()` already
+	## sweeps freed instances every frame, which is what makes that safe.
+	if not _live(instance_from_id(id)):
+		unregister_driven(id)
 
 
 static func attach_driven(slider: HSlider, on_change: Callable = Callable(), divisor: float = 1.0) -> LineEdit:
@@ -297,6 +305,8 @@ static func attach_driven(slider: HSlider, on_change: Callable = Callable(), div
 		slider.tree_exiting.connect(_on_driven_exiting.bind(sid))
 		slider.set_meta("driven_exit_hook", true)
 	_fill_driven_option(slider)
+	slider.drag_started.connect(func() -> void: _dragging[sid] = true)
+	slider.drag_ended.connect(func(_changed: bool) -> void: _dragging[sid] = false)
 	if not slider.value_changed.is_connected(_on_driven_slider):
 		slider.value_changed.connect(_on_driven_slider.bind(slider))
 	edit.text_submitted.connect(func(s: String) -> void: _commit_driven_edit(slider, s))
@@ -617,6 +627,9 @@ static func refresh_all_previews() -> void:
 			continue
 		var e := expr_of(slider).strip_edges()
 		if not _Expr.looks_like_expr(e):
+			continue
+		# Never yank the thumb out from under a drag; preview resumes on release.
+		if bool(_dragging.get(id_any, false)):
 			continue
 		var ev := float(hub.call("eval_expr", e))
 		var div := float(slider.get_meta("driven_div")) if slider.has_meta("driven_div") else 1.0

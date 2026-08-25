@@ -25,6 +25,8 @@ config/icon="res://icon.svg"
 driver/output_latency=50
 driver/enable_input=true
 driver/mix_rate=48000
+buses/channel_disable_threshold_db=-80
+buses/channel_disable_time=3600.0
 
 [autoload]
 
@@ -35,6 +37,7 @@ KinectManager="*res://autoload/kinect_manager.gd"
 ReactivitySettings="*res://autoload/reactivity_settings.gd"
 DriverHub="*res://autoload/driver_hub.gd"
 MCPRuntimeServer="*res://addons/godot_mcp_toolkit/runtime/mcp_runtime_server.gd"
+NonlinearProjection="*res://nonlinear_projection/nonlinear_projection.gd"
 
 [display]
 
@@ -50,3 +53,4 @@ enabled=PackedStringArray("res://addons/godot_mcp_toolkit/plugin.cfg")
 [mcp_toolkit]
 
 status="No .mcp.json found — use Project > Tools > MCP Toolkit > Write .mcp.json to create one."
+

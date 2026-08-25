@@ -12,9 +12,16 @@ var _base_mix: float = 0.78
 var _base_opacity: float = 0.7
 var _base_persist: float = 0.9
 var _base_zoom: float = 1.04
+var _base_blur: float = 0.35
+var _base_blend: int = 0
 var _frame_skip: int = 0
+## Plain-language blend names, same order as the shader's BLEND_* constants.
+const BLEND_NAMES := ["Normal", "Glow", "Brightest", "Darkest", "Shadow", "Edges", "Contrast"]
 const CAPTURE_EVERY_N := 2
 const CAPTURE_MAX_DIM := 640
+## A near-zero Blur means "crisp duplicate", so the history has to keep real detail.
+const CAPTURE_MAX_DIM_SHARP := 1280
+const SHARP_BLUR_MAX := 0.06
 
 
 func _ready() -> void:
@@ -33,6 +40,8 @@ func _ready() -> void:
 	mat.set_shader_parameter("opacity", _base_opacity)
 	mat.set_shader_parameter("persistence", _base_persist)
 	mat.set_shader_parameter("zoom", _base_zoom)
+	mat.set_shader_parameter("blur", _base_blur)
+	mat.set_shader_parameter("blend_mode", _base_blend)
 	mat.set_shader_parameter("has_history", 0.0)
 	_rect.material = mat
 	add_child(_rect)
@@ -100,11 +109,13 @@ func _capture_history() -> void:
 	var w := img.get_width()
 	var h := img.get_height()
 	var m := maxi(w, h)
-	if m > CAPTURE_MAX_DIM:
-		var sc := float(CAPTURE_MAX_DIM) / float(m)
+	var cap := CAPTURE_MAX_DIM_SHARP if _base_blur <= SHARP_BLUR_MAX else CAPTURE_MAX_DIM
+	if m > cap:
+		var sc := float(cap) / float(m)
 		img.resize(maxi(1, int(w * sc)), maxi(1, int(h * sc)), Image.INTERPOLATE_BILINEAR)
-	elif m > 960:
-		img.resize(maxi(1, w >> 1), maxi(1, h >> 1), Image.INTERPOLATE_BILINEAR)
+	# filter_linear_mipmap only has levels to read if the image carries them; without this
+	# the shader's Blur LOD silently collapses to level 0.
+	img.generate_mipmaps()
 	if _history == null:
 		_history = ImageTexture.create_from_image(img)
 	else:
@@ -133,6 +144,7 @@ func _apply_resolved() -> void:
 	_base_persist = eval_num("persistence", _base_persist)
 	_base_zoom = eval_num("zoom", _base_zoom)
 	_base_mix = eval_num("mix_amount", _base_mix)
+	_base_blur = clampf(eval_num("blur", _base_blur, 0.0, 1.0), 0.0, 1.0)
 	if has_raw_param("opacity"):
 		_base_opacity = eval_num("opacity", _base_opacity)
 	else:
@@ -141,7 +153,22 @@ func _apply_resolved() -> void:
 	mat.set_shader_parameter("zoom", _base_zoom)
 	mat.set_shader_parameter("mix_amount", clampf(_base_mix, 0.0, 1.0))
 	mat.set_shader_parameter("opacity", clampf(_base_opacity, 0.0, 1.0))
+	mat.set_shader_parameter("blur", _base_blur)
+	mat.set_shader_parameter("blend_mode", _resolve_blend())
 	mat.set_shader_parameter("audio_drive", 0.0)
+
+
+func _resolve_blend() -> int:
+	## Discrete choice, so it is a name rather than a driven number. Presets written before
+	## the selector existed have no "blend" key and stay on Normal.
+	var raw: Variant = raw_param("blend", null)
+	if raw is String:
+		var idx := BLEND_NAMES.find(str(raw))
+		if idx >= 0:
+			_base_blend = idx
+	elif raw is float or raw is int:
+		_base_blend = clampi(int(raw), 0, BLEND_NAMES.size() - 1)
+	return _base_blend
 
 
 func _mat() -> ShaderMaterial:

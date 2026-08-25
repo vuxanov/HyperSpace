@@ -235,7 +235,7 @@ func set_point_cloud(on: bool, params: Dictionary = {}) -> void:
 			SceneMeshFx.clear_point_cloud(_sub_viewport)
 			return
 		var roots: Array = [_sub_viewport] if want_layers else []
-		SceneMeshFx.apply_point_cloud_layers(_sub_viewport, roots, true, size, false)
+		SceneMeshFx.apply_point_cloud_layers(_sub_viewport, roots, true, size, true)
 
 
 func set_camera_fx(on: bool, params: Dictionary = {}) -> void:

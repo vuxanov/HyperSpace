@@ -428,8 +428,10 @@ static func drive_value(property: String, state: AudioState, lfo_mod01: float = 
 			raw = state.energy
 		_:
 			return 0.0
-	# Mid Sensitivity should leave headroom — avoid slamming to 1.0 on quiet mics.
-	return clampf(pow(clampf(raw, 0.0, 1.0), 0.55) * 1.15, 0.0, 1.0)
+	# Analyzer already maps to 0..1. Extra pow made every band look the same.
+	if src == "kick":
+		return 1.0 if raw > 0.5 else 0.0
+	return clampf(raw, 0.0, 1.0)
 
 
 ## Amount is the live field (number or evaluated expression). drive01 is ignored.

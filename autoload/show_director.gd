@@ -187,7 +187,7 @@ func set_play_all_effects(on: bool, cycle_sec: float = 20.0, active_sec: float =
 	if on:
 		# Play All always drives every known visual effect id.
 		var ids: Array = []
-		for eid in ["ascii", "feedback", "glitch", "chromatic", "rd", "wireframe", "point_cloud", "camera_fx"]:
+		for eid in ["ascii", "feedback", "glitch", "chromatic", "tone", "hole", "wireframe", "point_cloud", "camera_fx"]:
 			ids.append(eid)
 			_effect_user_enabled[eid] = true
 		fx_automation.enable_play_all(ids, cycle_sec, active_sec)
@@ -285,12 +285,20 @@ func _on_fx_gate_changed(effect_id: String, open: bool) -> void:
 
 
 func _on_play_all_randomize_tick() -> void:
-	## Random mode: reshuffle params/styles for currently selected Play-All FX.
-	if not _play_all_active or fx_automation.play_all_mode != "random":
+	## Random: reshuffle params for the current subset. Evolution: only newly added FX.
+	if not _play_all_active:
+		return
+	var mode := fx_automation.play_all_mode
+	if mode != "random" and mode != "evolution":
 		return
 	if not fx_automation.is_play_all_window_open():
 		return
-	for eid_any in fx_automation.get_play_all_ids():
+	var ids: Array = fx_automation.get_play_all_ids()
+	if mode == "evolution":
+		var focus: Array = fx_automation.take_evolution_randomize_ids()
+		if not focus.is_empty():
+			ids = focus
+	for eid_any in ids:
 		var eid := str(eid_any)
 		if not fx_automation.is_gate_open(eid):
 			# Still clear stale params apply path via refresh (stays off).
@@ -333,6 +341,7 @@ func _make_random_effect_params(effect_id: String) -> Dictionary:
 				"mix_amount": fb_op,
 				"opacity": fb_op,
 				"persistence": randf_range(0.35, 1.0),
+				"blur": 0.0 if randf() > 0.65 else randf_range(0.1, 0.8),
 			}
 		"glitch":
 			return {
@@ -347,23 +356,23 @@ func _make_random_effect_params(effect_id: String) -> Dictionary:
 				"intensity": 1.0,
 				"amount": randf_range(0.2, 3.0),
 			}
-		"rd":
-			var names: Array = ["Coral", "Mitosis", "Spots", "Worms", "Waves"]
-			var pick := str(names[randi() % names.size()])
-			var rd_presets := {
-				"Coral": {"feed": 0.0545, "kill": 0.062},
-				"Mitosis": {"feed": 0.0367, "kill": 0.0649},
-				"Spots": {"feed": 0.035, "kill": 0.065},
-				"Worms": {"feed": 0.046, "kill": 0.063},
-				"Waves": {"feed": 0.025, "kill": 0.06},
-			}
-			var fk: Dictionary = rd_presets.get(pick, {})
+		"tone":
 			return {
-				"preset": pick,
-				"feed": float(fk.get("feed", 0.0545)),
-				"kill": float(fk.get("kill", 0.062)),
-				"speed": randf_range(0.6, 1.8),
-				"mix_amount": randf_range(0.25, 0.75),
+				"invert": 1.0 if randf() > 0.6 else randf_range(0.0, 0.35),
+				"brightness": randf_range(0.7, 1.5),
+				"contrast": randf_range(0.7, 1.8),
+				"saturation": randf_range(0.4, 1.8),
+			}
+		"hole":
+			return {
+				"shape": "Rectangle" if randf() > 0.5 else "Circular",
+				"strength": randf_range(0.45, 1.05),
+				"hole_size": randf_range(0.12, 0.32),
+				"twist": randf_range(0.0, 0.55),
+				"softness": randf_range(0.16, 0.42),
+				"flow": randf_range(0.28, 0.90),
+				"center_x": randf_range(0.32, 0.68),
+				"center_y": randf_range(0.32, 0.68),
 			}
 		"wireframe":
 			return {
@@ -556,7 +565,7 @@ func restore_reactive_poses() -> void:
 
 func reset_stage_to_defaults() -> void:
 	## Full reset: poses + reactivity leftovers + all visual FX off (keeps playlist assets).
-	const FX_IDS := ["ascii", "feedback", "glitch", "chromatic", "rd", "wireframe", "point_cloud", "camera_fx"]
+	const FX_IDS := ["ascii", "feedback", "glitch", "chromatic", "tone", "hole", "wireframe", "point_cloud", "camera_fx"]
 	# Clear user-enabled FX first so gate/play-all teardown cannot re-open layers.
 	set_play_all_effects(false)
 	for eid in FX_IDS:

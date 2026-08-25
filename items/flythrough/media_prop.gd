@@ -197,6 +197,7 @@ func _set_screen_texture(tex: Texture2D, aspect: float = -1.0) -> void:
 	_mat.set_shader_parameter("fallback_rgb", Vector3(FALLBACK_CHARCOAL.r, FALLBACK_CHARCOAL.g, FALLBACK_CHARCOAL.b))
 	if _bound_aspect > 0.01:
 		_set_plane_size(-1.0, -1.0)
+	_sync_point_cloud_texture()
 
 
 func _rebind_texture() -> void:
@@ -208,6 +209,19 @@ func _rebind_texture() -> void:
 		_show_fallback(true)
 	else:
 		_show_fallback(false)
+
+
+func _sync_point_cloud_texture() -> void:
+	if _mesh_inst == null or not _mesh_inst.has_meta("hs_pc_overlay"):
+		return
+	var ov_any: Variant = _mesh_inst.get_meta("hs_pc_overlay")
+	if not SceneMeshFx.is_live(ov_any) or not (ov_any is MeshInstance3D):
+		return
+	var ov := ov_any as MeshInstance3D
+	var want: ArrayMesh = SceneMeshFx.make_points_mesh_from(_mesh_inst, true)
+	if want != null and ov.mesh != want:
+		ov.mesh = want
+	SceneMeshFx.bind_overlay_live_texture(ov, _mesh_inst)
 
 
 func _try_bind_still(path: String) -> bool:
@@ -307,6 +321,7 @@ func _advance_gif(delta: float) -> void:
 		# Shared material: only swap the texture uniform (clones already share _mat).
 		_mat.set_shader_parameter("tex_albedo", _gif_frames[_gif_index])
 		_bound_tex = _gif_frames[_gif_index]
+		_sync_point_cloud_texture()
 
 
 func _process(delta: float) -> void:
@@ -356,6 +371,7 @@ func _set_plane_size(width: float, height: float) -> void:
 		(_mesh_inst.mesh as PlaneMesh).size = sz
 	if _soft and is_instance_valid(_soft) and _soft.mesh is PlaneMesh:
 		(_soft.mesh as PlaneMesh).size = sz
+	_sync_point_cloud_texture()
 
 
 func set_deform_uniforms(params: Dictionary) -> void:

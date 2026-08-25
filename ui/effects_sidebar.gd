@@ -23,15 +23,21 @@ const FX_DRIVE_TOOLTIPS := [
 const ASCII_LFO_WAVE_IDS := ["sine", "triangle", "saw", "square"]
 const ASCII_LFO_WAVE_LABELS := ["Sine", "Triangle", "Saw", "Square"]
 const CAMERA_PRESETS := ["Off", "Pitch rock", "Roll bank", "Orbit tumble", "Spiral twist", "Kick snap"]
-const FX_IDS := ["ascii", "feedback", "glitch", "chromatic", "rd", "wireframe", "point_cloud", "camera_fx"]
-const RD_PRESET_NAMES := ["Coral", "Mitosis", "Spots", "Worms", "Waves"]
-const RD_PRESET_DATA := {
-	"Coral": {"feed": 0.0545, "kill": 0.062},
-	"Mitosis": {"feed": 0.0367, "kill": 0.0649},
-	"Spots": {"feed": 0.035, "kill": 0.065},
-	"Worms": {"feed": 0.046, "kill": 0.063},
-	"Waves": {"feed": 0.025, "kill": 0.06},
-}
+const FX_IDS := ["ascii", "feedback", "glitch", "chromatic", "tone", "hole", "wireframe", "point_cloud", "camera_fx"]
+const HOLE_SHAPE_NAMES := ["Circular", "Rectangle"]
+## How the previous frame is composited onto the live one. Order must match the shader's
+## BLEND_* constants and FeedbackEffect.BLEND_NAMES. Normal is the pre-selector look.
+const FEEDBACK_BLEND_NAMES := ["Normal", "Glow", "Brightest", "Darkest", "Shadow", "Edges", "Contrast"]
+
+## One flat effect list: an effect row is prominent, its settings body is indented and quieter.
+const FX_HEADER_FONT_SIZE := 15
+const FX_HEADER_COLOR := Color(0.94, 0.96, 0.99)
+const FX_SETTING_FONT_SIZE := 11
+const FX_SETTING_LABEL_COLOR := Color(0.70, 0.75, 0.81)
+const FX_SETTING_INDENT := 16
+const FX_SETTING_PAD := 6
+const FX_SETTING_BG := Color(1.0, 1.0, 1.0, 0.026)
+const FX_SETTING_RULE := Color(0.45, 0.95, 0.7, 0.34)
 
 
 @onready var reactivity_toggle: CheckButton = $Margin/Scroll/Column/AudioSection/ReactivityToggle
@@ -39,6 +45,7 @@ const RD_PRESET_DATA := {
 @onready var input_device_option: OptionButton = $Margin/Scroll/Column/AudioSection/ReactivityBody/InputDeviceRow/InputDeviceOption
 @onready var refresh_devices_btn: Button = $Margin/Scroll/Column/AudioSection/ReactivityBody/InputDeviceRow/RefreshDevicesBtn
 @onready var capture_status_label: Label = $Margin/Scroll/Column/AudioSection/ReactivityBody/CaptureStatusLabel
+var _audio_source_ids: PackedStringArray = PackedStringArray()
 @onready var input_level_bar: ProgressBar = $Margin/Scroll/Column/AudioSection/ReactivityBody/InputLevelBar
 @onready var spectrum_bars: HBoxContainer = $Margin/Scroll/Column/AudioSection/ReactivityBody/SpectrumBars
 @onready var intensity_slider: HSlider = $Margin/Scroll/Column/AudioSection/ReactivityBody/IntensitySlider
@@ -53,9 +60,6 @@ const RD_PRESET_DATA := {
 
 var _spectrum_bar_nodes: Array[ColorRect] = []
 var _input_level_fill: ColorRect = null
-var _filling_devices: bool = false
-var _device_select_timer: Timer
-var _pending_device_index: int = -1
 const SPECTRUM_BAR_H := 64.0
 const SPECTRUM_BAR_COLOR := Color(0.45, 0.95, 0.7, 0.95)
 const SPECTRUM_BAR_BG := Color(0.12, 0.14, 0.16, 0.9)
@@ -163,6 +167,8 @@ var particles_schedule_host: VBoxContainer
 @onready var feedback_lfo_rate: HSlider = $Margin/Scroll/Column/FxSection/FeedbackBody/FeedbackLfoRate
 @onready var feedback_schedule: CheckButton = $Margin/Scroll/Column/FxSection/FeedbackBody/FeedbackSchedule
 @onready var feedback_schedule_host: VBoxContainer = $Margin/Scroll/Column/FxSection/FeedbackBody/FeedbackScheduleHost
+var feedback_blur_slider: HSlider
+var feedback_blend: OptionButton
 
 @onready var glitch_toggle: CheckButton = $Margin/Scroll/Column/FxSection/GlitchToggle
 @onready var glitch_body: VBoxContainer = $Margin/Scroll/Column/FxSection/GlitchBody
@@ -206,17 +212,33 @@ var cloth_damping_slider: HSlider
 var cloth_wind_slider: HSlider
 var cloth_schedule: CheckButton
 var cloth_schedule_host: VBoxContainer
-var rd_toggle: CheckButton
-var rd_body: VBoxContainer
-var rd_preset: OptionButton
-var rd_feed_slider: HSlider
-var rd_kill_slider: HSlider
-var rd_speed_slider: HSlider
-var rd_mix_slider: HSlider
-var rd_schedule: CheckButton
-var rd_schedule_host: VBoxContainer
+var hole_toggle: CheckButton
+var hole_body: VBoxContainer
+var hole_shape: OptionButton
+var hole_strength_slider: HSlider
+var hole_size_slider: HSlider
+var hole_twist_slider: HSlider
+var hole_softness_slider: HSlider
+var hole_flow_slider: HSlider
+var hole_cx_slider: HSlider
+var hole_cy_slider: HSlider
+var hole_schedule: CheckButton
+var hole_schedule_host: VBoxContainer
+var tone_toggle: CheckButton
+var tone_body: VBoxContainer
+var tone_invert_slider: HSlider
+var tone_brightness_slider: HSlider
+var tone_contrast_slider: HSlider
+var tone_saturation_slider: HSlider
+var tone_schedule: CheckButton
+var tone_schedule_host: VBoxContainer
+## body VBox -> PanelContainer wrapper that draws the nesting indent / tint / left rule.
+var _setting_nests: Dictionary = {}
 var _shuffle_slots: Dictionary = {}
 var _random_groups: Dictionary = {}
+var _play_all_audio_drivers_active: bool = false
+var _play_all_audio_snapshot: Dictionary = {}
+var _play_all_audio_wireframe_expr: String = ""
 
 @onready var point_cloud_toggle: CheckButton = $Margin/Scroll/Column/FxSection/PointCloudToggle
 @onready var point_cloud_body: VBoxContainer = $Margin/Scroll/Column/FxSection/PointCloudBody
@@ -234,6 +256,13 @@ var _random_groups: Dictionary = {}
 @onready var camera_fx_bokeh_slider: HSlider = $Margin/Scroll/Column/FxSection/CameraFxBody/CameraFxBokehSlider
 @onready var camera_fx_schedule: CheckButton = $Margin/Scroll/Column/FxSection/CameraFxBody/CameraFxSchedule
 @onready var camera_fx_schedule_host: VBoxContainer = $Margin/Scroll/Column/FxSection/CameraFxBody/CameraFxScheduleHost
+
+var nonlinear_camera_toggle: CheckButton
+var nonlinear_camera_body: VBoxContainer
+var np_strength_slider: HSlider
+var np_start_slider: HSlider
+var np_end_slider: HSlider
+var np_bend_slider: HSlider
 
 @onready var cue_container: HFlowContainer = $Margin/Scroll/Column/CueSection/CueContainer
 @onready var search_edit: LineEdit = $Margin/Scroll/Column/SearchEdit
@@ -291,8 +320,19 @@ var _noise_body: VBoxContainer
 ## Search filter rows: {section, header, body, text} — body may be null.
 var _filter_items: Array = []
 
-const PLAY_MODE_IDS := ["cycle", "random", "audio"]
-const PLAY_MODE_LABELS := ["Cycle", "Random", "Audio"]
+const PLAY_MODE_IDS := ["cycle", "random", "audio", "evolution"]
+const PLAY_MODE_LABELS := ["Cycle", "Random", "Audio", "Evolution"]
+const PLAY_MODE_TOOLTIPS := [
+	"Stagger each effect on and off independently.",
+	"Reshuffle which effects are on and their looks, several times per Active window.",
+	"Like Cycle, but loudness speeds the clocks up. Also assigns audio drivers to every effect (same as Audio reactive).",
+	"Start with two effects, then slowly add more until the full set. Inactive still mutes.",
+]
+const PLAY_ALL_AUDIO_DRIVERS: PackedStringArray = [
+	"volume", "energy", "peak", "bass", "mids", "highs", "kick", "beat",
+	"band0", "band3", "band6", "band9", "band12", "band15",
+]
+const PLAY_ALL_AUDIO_SHUFFLE_MULS: Array = [2.0, 3.0, 5.0, 10.0]
 
 
 func _ready() -> void:
@@ -335,9 +375,14 @@ func _ready() -> void:
 	for p in CAMERA_PRESETS:
 		camera_preset.add_item(p)
 	play_mode.clear()
-	for label in PLAY_MODE_LABELS:
-		play_mode.add_item(label)
+	for i in PLAY_MODE_LABELS.size():
+		play_mode.add_item(PLAY_MODE_LABELS[i])
+		if i < PLAY_MODE_TOOLTIPS.size():
+			play_mode.set_item_tooltip(i, PLAY_MODE_TOOLTIPS[i])
 	play_mode.select(0)
+	play_mode.tooltip_text = "Play All mode. Cycle, Random, Audio, and Evolution are mutually exclusive. Audio also assigns audio drivers to effect sliders."
+	if play_audio_reactive:
+		play_audio_reactive.tooltip_text = "With Play All: put every effect slider on Driver and assign an audio source (volume, bass, mids, bands, …). Shuffle mode also randomizes which source and multiplies amounts (2×–10×)."
 	reactivity_toggle.button_pressed = bool(RH.get_field("enabled", false))
 	affect_scale.button_pressed = bool(RH.get_field("affect_scale", false))
 	scale_x.button_pressed = bool(RH.get_field("scale_x", true))
@@ -450,13 +495,18 @@ func _ready() -> void:
 	camera_fx_bokeh_slider.value_changed.connect(_on_camera_fx_params)
 	camera_fx_schedule.toggled.connect(func(v: bool) -> void: _on_effect_schedule("camera_fx", v))
 
-	_setup_reaction_diffusion()
+	_setup_hole()
+	_setup_tone()
+	_setup_nonlinear_camera()
+	_setup_feedback_blur()
 	_setup_dual_ranges()
 	_setup_ascii_density_driver()
 	_attach_slider_value_fields()
 	_setup_camera_lens_control()
 	_setup_point_cloud_targets()
 	_setup_shuffle_and_random()
+	_flatten_effect_list()
+	_apply_effect_hierarchy_styling()
 	_setup_search_filter()
 	_setup_content_tabs()
 	_setup_driver_modal()
@@ -470,17 +520,13 @@ func _ready() -> void:
 	# Band sensitivity UI 1–20 maps into analyzer once (not double-applied).
 	AudioAnalyzer.band_sensitivity = sensitivity_slider.value * 0.35
 	AudioAnalyzer.set_noise_floor(noise_floor_slider.value)
-	input_device_option.item_selected.connect(_on_input_device_selected)
-	refresh_devices_btn.pressed.connect(_on_refresh_devices)
-	_device_select_timer = Timer.new()
-	_device_select_timer.one_shot = true
-	_device_select_timer.wait_time = 0.35
-	_device_select_timer.timeout.connect(_apply_pending_input_device)
-	add_child(_device_select_timer)
+	_setup_audio_source_picker()
 	_setup_spectrum_bars()
 	_setup_input_level_meter()
-	_populate_input_devices()
-	capture_status_label.text = AudioAnalyzer.get_capture_status()
+	if capture_status_label:
+		capture_status_label.text = AudioAnalyzer.get_capture_status()
+		capture_status_label.modulate = Color.WHITE
+		_on_capture_status(AudioAnalyzer.get_capture_status())
 	_rebuild_cues()
 	_sync_conditional_ui()
 	search_edit.text_changed.connect(_on_search_text_changed)
@@ -573,46 +619,28 @@ func _setup_search_filter() -> void:
 			"text": "audio reactivity master intensity band sensitivity noise floor input device spectrum equalizer graph energy bass mids highs",
 		},
 		{
-			"section": "targets",
-			"header": targets_label,
-			"body": target_row,
-			"text": "deform target main scatter environment outer lights",
-		},
-		{
-			"section": "targets",
+			"section": "fx",
 			"header": affect_scale,
 			"body": _scale_body,
-			"text": "scale scale amount driver affects main scatter outer lights schedule",
+			"text": "scale deform scale amount driver affects main scatter outer lights schedule",
 		},
 		{
-			"section": "targets",
-			"header": affect_light,
-			"body": _light_body,
-			"text": "hdri lights energy light schedule",
-		},
-		{
-			"section": "targets",
-			"header": affect_emission,
-			"body": _emission_body,
-			"text": "emission color schedule",
-		},
-		{
-			"section": "targets",
+			"section": "fx",
 			"header": affect_rotation,
 			"body": _rotation_body,
-			"text": "rotation amount axes schedule main scatter environment outer camera",
+			"text": "rotation deform amount axes schedule main scatter environment outer camera",
 		},
 		{
-			"section": "targets",
+			"section": "fx",
 			"header": affect_noise,
 			"body": _noise_body,
-			"text": "noise displace strength scale schedule main scatter environment outer",
+			"text": "noise displace deform strength scale schedule main scatter environment outer",
 		},
 		{
-			"section": "targets",
+			"section": "fx",
 			"header": camera_motion_toggle,
 			"body": camera_body,
-			"text": "camera motion lfo speed amount rotation",
+			"text": "camera motion deform lfo speed amount rotation",
 		},
 		{
 			"section": "fx",
@@ -630,7 +658,7 @@ func _setup_search_filter() -> void:
 			"section": "fx",
 			"header": feedback_toggle,
 			"body": feedback_body,
-			"text": "feedback trail mix opacity persistence schedule",
+			"text": "feedback trail mix opacity persistence blur sharp duplicate ghost echo schedule blend mode normal glow brightest darkest shadow edges contrast",
 		},
 		{
 			"section": "fx",
@@ -646,15 +674,21 @@ func _setup_search_filter() -> void:
 		},
 		{
 			"section": "fx",
+			"header": tone_toggle,
+			"body": tone_body,
+			"text": "tone invert negative brightness lightness exposure contrast saturation colour color schedule",
+		},
+		{
+			"section": "fx",
 			"header": wireframe_toggle,
 			"body": wireframe_body,
 			"text": "wireframe schedule",
 		},
 		{
 			"section": "fx",
-			"header": rd_toggle,
-			"body": rd_body,
-			"text": "reaction diffusion gray scott feed kill speed mix preset shuffle",
+			"header": hole_toggle,
+			"body": hole_body,
+			"text": "hole suck fall stretch event horizon wormhole funnel twist spiral circular rectangle",
 		},
 		{
 			"section": "fx",
@@ -667,6 +701,12 @@ func _setup_search_filter() -> void:
 			"header": camera_fx_toggle,
 			"body": camera_fx_body,
 			"text": "camera lens dof bokeh focal length aperture focus distortion fisheye equirectangular schedule lfo",
+		},
+		{
+			"section": "fx",
+			"header": nonlinear_camera_toggle,
+			"body": nonlinear_camera_body,
+			"text": "nonlinear camera projection warp bend lift top-down far near hyperspace driver input strength",
 		},
 		{
 			"section": "cues",
@@ -711,17 +751,17 @@ func _apply_search_filter() -> void:
 		if hit:
 			hits[str(item.section)] = true
 
+	# No group headers any more: one flat effect list lives in fx_section.
+	fx_label.visible = false
+	targets.visible = false
 	if filtering:
 		audio_section.visible = hits.audio
-		targets.visible = hits.targets
 		fx_section.visible = hits.fx
-		fx_label.visible = hits.fx
 		cue_section.visible = hits.cues and cue_container.get_child_count() > 0
 	else:
 		audio_section.visible = true
 		fx_section.visible = true
-		fx_label.visible = true
-		# targets + cue_section already set by accordion sync
+		# cue_section already set by accordion sync
 
 
 func _nest_react_bodies() -> void:
@@ -796,6 +836,124 @@ func _nest_react_bodies() -> void:
 	_noise_body.move_child(noise_mode_lbl, noise_source.get_index())
 
 
+func _effect_rows() -> Array:
+	## The single flat effect list, top to bottom: [header, settings body].
+	## Deform (scale / rotation / noise / camera motion) is just another effect here.
+	return [
+		[affect_scale, _scale_body],
+		[affect_rotation, _rotation_body],
+		[affect_noise, _noise_body],
+		[camera_motion_toggle, camera_body],
+		[ascii_toggle, ascii_body],
+		[feedback_toggle, feedback_body],
+		[glitch_toggle, glitch_body],
+		[chromatic_toggle, chromatic_body],
+		[tone_toggle, tone_body],
+		[hole_toggle, hole_body],
+		[wireframe_toggle, wireframe_body],
+		[point_cloud_toggle, point_cloud_body],
+		[camera_fx_toggle, camera_fx_body],
+		[nonlinear_camera_toggle, nonlinear_camera_body],
+	]
+
+
+func _flatten_effect_list() -> void:
+	## One list, no group headers. The old Deform rows move out of Targets into FxSection.
+	if fx_section == null:
+		return
+	if fx_label:
+		fx_label.visible = false
+	if targets_label:
+		targets_label.visible = false
+	var ordered: Array = []
+	if play_all_toggle:
+		ordered.append(play_all_toggle)
+	if play_all_body:
+		ordered.append(play_all_body)
+	for row_any in _effect_rows():
+		var row: Array = row_any as Array
+		for n_any in row:
+			if n_any != null and is_instance_valid(n_any):
+				ordered.append(n_any)
+	var at := 0
+	for n_any in ordered:
+		var node: Node = n_any as Node
+		if node == null:
+			continue
+		if node.get_parent() != fx_section:
+			node.reparent(fx_section)
+		fx_section.move_child(node, at)
+		at += 1
+
+
+func _setting_panel_style() -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = FX_SETTING_BG
+	sb.border_color = FX_SETTING_RULE
+	sb.border_width_left = 2
+	sb.set_corner_radius_all(3)
+	sb.content_margin_left = FX_SETTING_INDENT
+	sb.content_margin_right = FX_SETTING_PAD
+	sb.content_margin_top = FX_SETTING_PAD
+	sb.content_margin_bottom = FX_SETTING_PAD
+	return sb
+
+
+func _apply_effect_hierarchy_styling() -> void:
+	## Effect rows read as headings; their settings sit inside an indented, tinted panel with a
+	## left rule so the parent/child relationship is obvious at a glance.
+	for row_any in _effect_rows():
+		var row: Array = row_any as Array
+		var header := _live_check(row[0])
+		if header:
+			header.add_theme_font_size_override("font_size", FX_HEADER_FONT_SIZE)
+			header.add_theme_color_override("font_color", FX_HEADER_COLOR)
+			header.add_theme_color_override("font_hover_color", FX_HEADER_COLOR)
+		var body := row[1] as VBoxContainer
+		if body == null or not is_instance_valid(body):
+			continue
+		_nest_setting_body(body)
+		_quiet_setting_labels(body)
+
+
+func _nest_setting_body(body: VBoxContainer) -> void:
+	if _setting_nests.has(body):
+		return
+	var host := body.get_parent()
+	if host == null:
+		return
+	var idx := body.get_index()
+	var panel := PanelContainer.new()
+	panel.name = str(body.name) + "Nest"
+	panel.add_theme_stylebox_override("panel", _setting_panel_style())
+	host.add_child(panel)
+	host.move_child(panel, idx)
+	body.reparent(panel)
+	panel.visible = body.visible
+	_setting_nests[body] = panel
+	# Every accordion / search / Play All write still targets `body.visible`; mirror it so the
+	# indent panel never draws around a hidden body.
+	body.visibility_changed.connect(func() -> void:
+		if is_instance_valid(panel) and is_instance_valid(body):
+			panel.visible = body.visible
+	)
+
+
+func _quiet_setting_labels(root: Node) -> void:
+	for child in root.get_children():
+		if child is Label:
+			var lab := child as Label
+			lab.add_theme_font_size_override("font_size", FX_SETTING_FONT_SIZE)
+			lab.add_theme_color_override("font_color", FX_SETTING_LABEL_COLOR)
+		elif child is CheckButton:
+			var cb := child as CheckButton
+			cb.add_theme_font_size_override("font_size", FX_SETTING_FONT_SIZE + 1)
+			cb.add_theme_color_override("font_color", FX_SETTING_LABEL_COLOR)
+			cb.add_theme_color_override("font_hover_color", FX_HEADER_COLOR)
+		if child.get_child_count() > 0:
+			_quiet_setting_labels(child)
+
+
 func _make_nested_body(parent: Node, after: Control, body_name: String) -> VBoxContainer:
 	var body := VBoxContainer.new()
 	body.name = body_name
@@ -842,7 +1000,7 @@ func _hide_fx_drive_ui() -> void:
 func _hide_deform_legacy() -> void:
 	## Keep Scale/Rotation/Noise/Camera. Hide band pickers, Mode labels, light/emission.
 	if targets_label:
-		targets_label.text = "Deform"
+		targets_label.visible = false
 	for opt in [scale_source, rotation_source, noise_source, light_source, emission_source]:
 		if opt == null:
 			continue
@@ -979,8 +1137,10 @@ func _setup_dual_ranges() -> void:
 		"react_rotation": rotation_schedule_host,
 		"react_noise": noise_schedule_host,
 	}
-	if rd_schedule_host:
-		hosts["rd"] = rd_schedule_host
+	if hole_schedule_host:
+		hosts["hole"] = hole_schedule_host
+	if tone_schedule_host:
+		hosts["tone"] = tone_schedule_host
 	for eid in hosts.keys():
 		var host: VBoxContainer = hosts[eid]
 		if host == null:
@@ -1059,9 +1219,12 @@ func _refresh_effect_if_on(effect_id: String) -> void:
 		"chromatic":
 			if chromatic_toggle.button_pressed:
 				ShowDirector.set_effect("chromatic", true, _chromatic_params())
-		"rd":
-			if rd_toggle and rd_toggle.button_pressed:
-				ShowDirector.set_effect("rd", true, _rd_params())
+		"tone":
+			if tone_toggle and tone_toggle.button_pressed:
+				ShowDirector.set_effect("tone", true, _tone_params())
+		"hole":
+			if hole_toggle and hole_toggle.button_pressed:
+				ShowDirector.set_effect("hole", true, _hole_params())
 		"wireframe":
 			if wireframe_toggle.button_pressed:
 				ShowDirector.set_effect("wireframe", true, _wireframe_params())
@@ -1170,71 +1333,67 @@ func _setup_input_level_meter() -> void:
 	_input_level_fill.offset_bottom = 0.0
 	_input_level_fill.offset_right = 0.0
 	input_level_bar.add_child(_input_level_fill)
+	if intensity_slider:
+		intensity_slider.tooltip_text = "Overall drive of reactive outputs. 0 = almost still. Default 2. Kick ON value also scales with this."
+	if sensitivity_slider:
+		sensitivity_slider.tooltip_text = "How easily bass/mids/highs (and kick) cross into motion. Higher = quieter hits still fire."
 	if noise_floor_slider:
-		noise_floor_slider.tooltip_text = "Ignores quiet hiss so effects do not twitch on silence. 0 = almost no gate (soft audio still drives). Higher = only louder bands drive reactivity. Does not change the Graph Equalizer."
+		noise_floor_slider.max_value = 0.25
+		noise_floor_slider.tooltip_text = "Noise Floor Gate (noise gain). Raise to ignore mic hiss / room noise so volume stays at 0 when nothing is happening. If a mic hears the speakers, raise this. Does not change the Graph Equalizer shape, only reactivity."
 
 
-func _populate_input_devices() -> void:
-	_filling_devices = true
+func _setup_audio_source_picker() -> void:
+	## One dropdown, one status line. No banners, no call-to-action buttons.
+	if reactivity_body:
+		var label := reactivity_body.get_node_or_null("InputDeviceLabel") as Label
+		if label:
+			label.visible = true
+			label.text = "Audio Source"
+		var row := reactivity_body.get_node_or_null("InputDeviceRow") as CanvasItem
+		if row:
+			row.visible = true
+	if refresh_devices_btn:
+		refresh_devices_btn.visible = false
+	if input_device_option == null:
+		return
+	input_device_option.visible = true
+	input_device_option.tooltip_text = "Which microphone signal drives the visualizer. Music uses an unprocessed capture so the mic can hear speakers; Voice uses the Windows speech-tuned mic."
+	_fill_audio_sources()
+	input_device_option.item_selected.connect(_on_audio_source_selected)
+	AudioAnalyzer.audio_sources_changed.connect(_fill_audio_sources)
+
+
+func _fill_audio_sources() -> void:
+	if input_device_option == null:
+		return
+	var sources: Array = AudioAnalyzer.get_audio_sources()
+	var current: String = AudioAnalyzer.get_audio_source()
 	input_device_option.clear()
-	input_device_option.add_item("Default")
-	input_device_option.set_item_metadata(0, "Default")
-	var devices := AudioAnalyzer.get_input_devices()
-	var current := AudioAnalyzer.get_current_input_device()
-	var select_idx := 0
-	for i in devices.size():
-		var name := String(devices[i])
-		input_device_option.add_item(name)
-		var idx := input_device_option.item_count - 1
-		input_device_option.set_item_metadata(idx, name)
-		if name == current:
-			select_idx = idx
-	if current == "Default" or current.is_empty():
-		select_idx = 0
-	input_device_option.select(select_idx)
-	_filling_devices = false
+	_audio_source_ids.clear()
+	for i in sources.size():
+		var src: Dictionary = sources[i]
+		input_device_option.add_item(String(src.get("label", "")), i)
+		_audio_source_ids.append(String(src.get("id", "")))
+		if String(src.get("id", "")) == current:
+			input_device_option.select(i)
+
+
+func _on_audio_source_selected(index: int) -> void:
+	if index < 0 or index >= _audio_source_ids.size():
+		return
+	AudioAnalyzer.set_audio_source(_audio_source_ids[index])
 
 
 func _on_devices_changed(_devices: PackedStringArray) -> void:
-	_populate_input_devices()
-
-
-func _on_refresh_devices() -> void:
-	AudioAnalyzer.refresh_devices()
-	_populate_input_devices()
-
-
-func _on_input_device_selected(index: int) -> void:
-	if _filling_devices:
-		return
-	# Debounce rapid OptionButton picks — each AudioServer.input_device assign can invalidate WASAPI.
-	_pending_device_index = index
-	if _device_select_timer:
-		_device_select_timer.start()
-
-
-func _apply_pending_input_device() -> void:
-	if _pending_device_index < 0:
-		return
-	var index := _pending_device_index
-	_pending_device_index = -1
-	if index < 0 or index >= input_device_option.item_count:
-		return
-	var meta: Variant = input_device_option.get_item_metadata(index)
-	var name := str(meta) if meta != null else input_device_option.get_item_text(index)
-	AudioAnalyzer.set_input_device(name)
+	pass
 
 
 func _on_capture_status(status: String) -> void:
-	if capture_status_label:
-		capture_status_label.text = status
-		# Soft-fail styling when WASAPI / capture is recovering.
-		if status.contains("device lost") or status.contains("reconnecting") or status.contains("switching"):
-			capture_status_label.modulate = Color(1.0, 0.78, 0.35, 1.0)
-		elif status.begins_with("signal OK"):
-			capture_status_label.modulate = Color(0.55, 1.0, 0.65, 1.0)
-		else:
-			capture_status_label.modulate = Color.WHITE
+	if capture_status_label == null:
+		return
+	capture_status_label.text = status
+	capture_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	capture_status_label.modulate = Color.WHITE
 
 
 func _on_audio(state: AudioState) -> void:
@@ -1315,10 +1474,28 @@ func _sync_all_widgets_after_defaults_reset() -> void:
 	_set_check_no_signal(cloth_toggle, false)
 	_set_check_no_signal(point_cloud_toggle, false)
 	_set_check_no_signal(camera_fx_toggle, false)
+	_set_check_no_signal(nonlinear_camera_toggle, false)
+	_reset_np_sliders_to_defaults()
+	_apply_nonlinear_camera(false)
 	for sched2 in [ascii_schedule, particles_schedule, feedback_schedule, glitch_schedule, chromatic_schedule, pixel_sort_schedule, wireframe_schedule, cloth_schedule, point_cloud_schedule, camera_fx_schedule]:
 		_set_check_no_signal(sched2, false)
-	_set_check_no_signal(rd_toggle, false)
-	_set_check_no_signal(rd_schedule, false)
+	_set_check_no_signal(tone_toggle, false)
+	_set_check_no_signal(tone_schedule, false)
+	_reset_driven_num(tone_invert_slider, 0.0)
+	_reset_driven_num(tone_brightness_slider, 100.0)
+	_reset_driven_num(tone_contrast_slider, 100.0)
+	_reset_driven_num(tone_saturation_slider, 100.0)
+	_set_check_no_signal(hole_toggle, false)
+	_set_check_no_signal(hole_schedule, false)
+	if hole_shape and hole_shape.item_count > 0:
+		hole_shape.select(0)
+	_reset_driven_num(hole_strength_slider, 75.0)
+	_reset_driven_num(hole_size_slider, 20.0)
+	_reset_driven_num(hole_twist_slider, 0.0)
+	_reset_driven_num(hole_softness_slider, 30.0)
+	_reset_driven_num(hole_flow_slider, 50.0)
+	_reset_driven_num(hole_cx_slider, 50.0)
+	_reset_driven_num(hole_cy_slider, 50.0)
 	for slot_any in _shuffle_slots.values():
 		if slot_any is Dictionary:
 			CycleRandomScr.reset_slot(slot_any)
@@ -1328,6 +1505,7 @@ func _sync_all_widgets_after_defaults_reset() -> void:
 	_set_check_no_signal(style_switch_toggle, false)
 	_set_check_no_signal(ascii_density_random, false)
 	_set_check_no_signal(play_audio_reactive, false)
+	_restore_play_all_audio_drivers()
 	_set_check_no_signal(ascii_invert, false)
 	_set_check_no_signal(particles_target_main, false)
 	_set_check_no_signal(particles_target_scatter, false)
@@ -1351,6 +1529,9 @@ func _sync_all_widgets_after_defaults_reset() -> void:
 	_reset_driven_num(style_interval_slider, 5.0)
 	_reset_driven_num(feedback_mix_slider, 70.0)
 	_reset_driven_num(feedback_persist_slider, 85.0)
+	_reset_driven_num(feedback_blur_slider, 35.0)
+	if feedback_blend and feedback_blend.item_count > 0:
+		feedback_blend.select(0)
 	_reset_driven_num(glitch_amount_slider, 85.0)
 	_reset_driven_num(glitch_speed_slider, 6.0)
 	_reset_driven_num(glitch_hsize_slider, 80.0)
@@ -1439,18 +1620,24 @@ func _sync_conditional_ui() -> void:
 	feedback_body.visible = feedback_toggle.button_pressed
 	glitch_body.visible = glitch_toggle.button_pressed
 	chromatic_body.visible = chromatic_toggle.button_pressed
-	if rd_toggle and rd_body:
-		rd_body.visible = rd_toggle.button_pressed
+	if tone_toggle and tone_body:
+		tone_body.visible = tone_toggle.button_pressed
+	if hole_toggle and hole_body:
+		hole_body.visible = hole_toggle.button_pressed
 	wireframe_body.visible = wireframe_toggle.button_pressed
 	point_cloud_body.visible = point_cloud_toggle.button_pressed
 	camera_fx_body.visible = camera_fx_toggle.button_pressed
+	if nonlinear_camera_toggle and nonlinear_camera_body:
+		nonlinear_camera_body.visible = nonlinear_camera_toggle.button_pressed
 	play_all_body.visible = play_all_toggle.button_pressed
 	ascii_schedule_host.visible = ascii_toggle.button_pressed and ascii_schedule.button_pressed
 	feedback_schedule_host.visible = feedback_toggle.button_pressed and feedback_schedule.button_pressed
 	glitch_schedule_host.visible = glitch_toggle.button_pressed and glitch_schedule.button_pressed
 	chromatic_schedule_host.visible = chromatic_toggle.button_pressed and chromatic_schedule.button_pressed
-	if rd_schedule_host and rd_toggle and rd_schedule:
-		rd_schedule_host.visible = rd_toggle.button_pressed and rd_schedule.button_pressed
+	if tone_schedule_host and tone_toggle and tone_schedule:
+		tone_schedule_host.visible = tone_toggle.button_pressed and tone_schedule.button_pressed
+	if hole_schedule_host and hole_toggle and hole_schedule:
+		hole_schedule_host.visible = hole_toggle.button_pressed and hole_schedule.button_pressed
 	wireframe_schedule_host.visible = wireframe_toggle.button_pressed and wireframe_schedule.button_pressed
 	point_cloud_schedule_host.visible = point_cloud_toggle.button_pressed and point_cloud_schedule.button_pressed
 	camera_fx_schedule_host.visible = camera_fx_toggle.button_pressed and camera_fx_schedule.button_pressed
@@ -1478,8 +1665,10 @@ func _sync_fx_lfo_ui() -> void:
 				on = glitch_toggle.button_pressed
 			"chromatic":
 				on = chromatic_toggle.button_pressed
-			"rd":
-				on = rd_toggle.button_pressed if rd_toggle else false
+			"tone":
+				on = tone_toggle.button_pressed if tone_toggle else false
+			"hole":
+				on = hole_toggle.button_pressed if hole_toggle else false
 			"wireframe":
 				on = wireframe_toggle.button_pressed
 			"point_cloud":
@@ -1794,7 +1983,16 @@ func _feedback_params() -> Dictionary:
 		"mix_amount": op,
 		"opacity": op,
 		"persistence": SliderSpinLinkScr.mapped_param(feedback_persist_slider, 100.0),
+		"blur": SliderSpinLinkScr.mapped_param(feedback_blur_slider, 100.0) if feedback_blur_slider else 0.35,
+		"blend": _feedback_blend_name(),
 	}
+
+
+func _feedback_blend_name() -> String:
+	var idx := feedback_blend.selected if feedback_blend else 0
+	if idx < 0 or idx >= FEEDBACK_BLEND_NAMES.size():
+		return "Normal"
+	return str(FEEDBACK_BLEND_NAMES[idx])
 
 
 func _on_feedback_toggled(enabled: bool) -> void:
@@ -1822,9 +2020,12 @@ func _sync_feedback_mode_ui() -> void:
 		return
 	## Shared Audio amount replaces the old Feedback-only sensitivity slider.
 	SliderSpinLinkScr.set_row_visible(feedback_sens_slider, false)
-	$Margin/Scroll/Column/FxSection/FeedbackBody/FeedbackSensLabel.visible = false
 	SliderSpinLinkScr.set_row_visible(feedback_lfo_rate, false)
-	$Margin/Scroll/Column/FxSection/FeedbackBody/FeedbackLfoRateLabel.visible = false
+	# Looked up by name: FeedbackBody is reparented into its nesting panel at startup.
+	for lbl_name in ["FeedbackSensLabel", "FeedbackLfoRateLabel"]:
+		var lbl := _live_canvas(feedback_body.get_node_or_null(lbl_name))
+		if lbl:
+			lbl.visible = false
 	# Opacity (was Mix) + persistence always editable — Static applies them directly.
 	SliderSpinLinkScr.set_row_visible(feedback_mix_slider, true)
 	SliderSpinLinkScr.set_row_visible(feedback_persist_slider, true)
@@ -1884,6 +2085,8 @@ func _on_pixel_sort_params(_v: float = 0.0) -> void:
 
 
 func _wireframe_params() -> Dictionary:
+	if not _play_all_audio_wireframe_expr.is_empty():
+		return {"intensity": _play_all_audio_wireframe_expr}
 	return {
 		"intensity": 1.0,
 	}
@@ -1996,7 +2199,7 @@ func _on_effect_schedule_range(effect_id: String, active: float, inactive: float
 
 
 func _on_play_schedule_range(active: float, inactive: float) -> void:
-	## Random: Active/Inactive is the master mute clock. Cycle/audio: base hint for independent rolls.
+	## Random / Evolution: Active/Inactive is the master mute clock. Cycle/audio: base hint for independent rolls.
 	ShowDirector.fx_automation.set_gate_active_inactive("play_all", active, inactive)
 	if not play_all_toggle.button_pressed:
 		return
@@ -2008,7 +2211,7 @@ func _on_play_schedule_range(active: float, inactive: float) -> void:
 		active,
 		inactive
 	)
-	if mode == "random":
+	if _play_mode_uses_subset(mode):
 		# Master schedule only — do not re-roll per-effect Active/Inactive.
 		for eid in FX_IDS:
 			ShowDirector.refresh_effect(eid)
@@ -2050,7 +2253,8 @@ func _on_play_all_toggled(on: bool) -> void:
 			[feedback_toggle, feedback_schedule, "feedback"],
 			[glitch_toggle, glitch_schedule, "glitch"],
 			[chromatic_toggle, chromatic_schedule, "chromatic"],
-			[rd_toggle, rd_schedule, "rd"],
+			[tone_toggle, tone_schedule, "tone"],
+			[hole_toggle, hole_schedule, "hole"],
 			[wireframe_toggle, wireframe_schedule, "wireframe"],
 			[point_cloud_toggle, point_cloud_schedule, "point_cloud"],
 			[camera_fx_toggle, camera_fx_schedule, "camera_fx"],
@@ -2065,25 +2269,27 @@ func _on_play_all_toggled(on: bool) -> void:
 				sched.button_pressed = true
 		style_switch_toggle.button_pressed = true
 		_syncing_ui = false
+		_enable_deform_for_play_all()
 		# Apply each effect with current params (UI toggles may no-op under _syncing_ui).
 		ShowDirector.set_effect("ascii", true, _ascii_params())
 		ShowDirector.set_effect("feedback", true, _feedback_params())
 		ShowDirector.set_effect("glitch", true, _glitch_params())
 		ShowDirector.set_effect("chromatic", true, _chromatic_params())
-		ShowDirector.set_effect("rd", true, _rd_params())
+		ShowDirector.set_effect("tone", true, _tone_params())
+		ShowDirector.set_effect("hole", true, _hole_params())
 		ShowDirector.set_effect("wireframe", true, _wireframe_params())
 		ShowDirector.set_effect("point_cloud", true, _point_cloud_params())
 		ShowDirector.set_effect("camera_fx", true, _camera_fx_params())
 		ShowDirector.fx_automation.set_style_interval(maxf(0.5, _eval_slider_num(style_interval_slider) / maxf(speed, 0.25)))
 		ShowDirector.fx_automation.set_style_active(true)
 		ShowDirector.fx_automation.configure_play_all(mode, speed, audio_on, active, inactive)
-		# enable_play_all: Random uses master schedule; cycle/audio rolls independent FX schedules.
+		# enable_play_all: Random/Evolution uses master schedule; cycle/audio rolls independent FX schedules.
 		ShowDirector.set_play_all_effects(true, active + inactive, active)
 		_syncing_ui = true
 		for eid_ui in FX_IDS:
 			if not _schedule_ranges.has(eid_ui):
 				continue
-			if mode == "random":
+			if _play_mode_uses_subset(mode):
 				# Mirror master Active/Inactive on per-effect schedule UI for clarity.
 				_schedule_ranges[eid_ui].set_range_values(active, inactive)
 			else:
@@ -2094,8 +2300,13 @@ func _on_play_all_toggled(on: bool) -> void:
 		_syncing_ui = false
 		for eid2 in FX_IDS:
 			ShowDirector.refresh_effect(str(eid2))
+		if audio_on:
+			_set_check_no_signal(play_audio_reactive, true)
+			ShowDirector.fx_automation.set_play_all_audio_reactive(true)
+			_apply_play_all_audio_drivers(_play_mode_shuffle_on())
 		_sync_conditional_ui()
 	else:
+		_restore_play_all_audio_drivers()
 		ShowDirector.set_play_all_effects(false)
 		ShowDirector.fx_automation.configure_play_all("cycle", 1.0, false, 4.0, 4.0)
 		_syncing_ui = true
@@ -2103,8 +2314,10 @@ func _on_play_all_toggled(on: bool) -> void:
 		feedback_schedule.button_pressed = false
 		glitch_schedule.button_pressed = false
 		chromatic_schedule.button_pressed = false
-		if rd_schedule:
-			rd_schedule.button_pressed = false
+		if tone_schedule:
+			tone_schedule.button_pressed = false
+		if hole_schedule:
+			hole_schedule.button_pressed = false
 		wireframe_schedule.button_pressed = false
 		point_cloud_schedule.button_pressed = false
 		camera_fx_schedule.button_pressed = false
@@ -2118,11 +2331,37 @@ func _on_play_all_toggled(on: bool) -> void:
 		_sync_conditional_ui()
 
 
+func _enable_deform_for_play_all() -> void:
+	## Play All means every effect, and Deform is an effect now. Turn the rows on, give them
+	## layers to act on, and enable their react_* schedules so they cycle like the post FX.
+	for key in ["target_main", "target_scatter", "target_environment",
+			"rotation_target_main", "rotation_target_scatter", "rotation_target_environment",
+			"noise_target_main", "noise_target_scatter", "noise_target_environment"]:
+		RH.set_field(key, true)
+	_syncing_ui = true
+	_sync_target_checkboxes_from_rh()
+	_syncing_ui = false
+	for pair in [[affect_scale, scale_schedule], [affect_rotation, rotation_schedule], [affect_noise, noise_schedule]]:
+		var master := _live_check(pair[0])
+		var sched := _live_check(pair[1])
+		if master and not master.button_pressed:
+			master.button_pressed = true
+		if sched and not sched.button_pressed:
+			sched.button_pressed = true
+	if camera_motion_toggle and not camera_motion_toggle.button_pressed:
+		camera_motion_toggle.button_pressed = true
+
+
 func _play_mode_id() -> String:
 	var i := play_mode.selected
 	if i < 0 or i >= PLAY_MODE_IDS.size():
 		return "cycle"
 	return PLAY_MODE_IDS[i]
+
+
+func _play_mode_uses_subset(mode: String = "") -> bool:
+	var m := mode if mode != "" else _play_mode_id()
+	return m == "random" or m == "evolution"
 
 
 func _on_play_mode_selected(index: int) -> void:
@@ -2133,6 +2372,7 @@ func _on_play_mode_selected(index: int) -> void:
 		mode = str(PLAY_MODE_IDS[index])
 	if mode == "audio":
 		play_audio_reactive.button_pressed = true
+		_apply_play_all_audio_drivers(_play_mode_shuffle_on())
 	var active := float(_play_schedule_range.get_active()) if _play_schedule_range else 4.0
 	var inactive := float(_play_schedule_range.get_inactive()) if _play_schedule_range else 4.0
 	ShowDirector.fx_automation.configure_play_all(
@@ -2142,7 +2382,7 @@ func _on_play_mode_selected(index: int) -> void:
 		active,
 		inactive
 	)
-	if mode == "random":
+	if _play_mode_uses_subset(mode):
 		_syncing_ui = true
 		for eid_ui in FX_IDS:
 			if _schedule_ranges.has(eid_ui):
@@ -2165,9 +2405,249 @@ func _on_play_speed(_v: float = 0.0) -> void:
 
 func _on_play_audio_reactive(on: bool) -> void:
 	ShowDirector.fx_automation.set_play_all_audio_reactive(on)
-	if on and play_mode.selected != 2:
-		# Prefer Audio mode when the dedicated toggle is on.
-		pass
+	if not play_all_toggle.button_pressed:
+		return
+	# Do not force Mode=Audio — Shuffle mode still cycles Cycle/Random/Audio/Evolution.
+	if on:
+		_apply_play_all_audio_drivers(_play_mode_shuffle_on())
+	else:
+		_restore_play_all_audio_drivers()
+
+
+func _play_mode_shuffle_on() -> bool:
+	var slot: Dictionary = _shuffle_slots.get("play_mode", {})
+	var toggle: Variant = slot.get("toggle")
+	return toggle is CheckButton and (toggle as CheckButton).button_pressed
+
+
+func _play_all_audio_wanted() -> bool:
+	if play_all_toggle == null or not play_all_toggle.button_pressed:
+		return false
+	if play_audio_reactive != null and play_audio_reactive.button_pressed:
+		return true
+	return _play_mode_id() == "audio"
+
+
+func _fmt_audio_drive_expr(driver: String, scale: float) -> String:
+	## Whole-number gains only. Decimal scales (0.2, 0.25) made a weak mic even quieter.
+	var s := maxf(1.0, roundf(scale))
+	if is_equal_approx(s, 1.0):
+		return driver
+	return "%s * %d" % [driver, int(s)]
+
+
+func _play_all_deform_audio_targets() -> Array:
+	## Deform is part of the one effect list, so Play All drives it too. Gains stay whole
+	## numbers via _fmt_audio_drive_expr; these sliders are pushed every frame from
+	## _push_driven_reactivity, so no per-effect refresh is needed.
+	var out: Array = []
+	if _scale_amount_slider:
+		out.append({"kind": "slider", "slider": _scale_amount_slider, "scale": 2.0, "key": "deform_scale", "mul_max": 3.0})
+	if _rotation_amount_slider:
+		out.append({"kind": "slider", "slider": _rotation_amount_slider, "scale": 3.0, "key": "deform_rotation"})
+	if noise_amount:
+		out.append({"kind": "slider", "slider": noise_amount, "scale": 25.0, "key": "deform_noise_amount"})
+	if noise_scale:
+		out.append({"kind": "slider", "slider": noise_scale, "scale": 5.0, "key": "deform_noise_scale"})
+	if camera_rate:
+		out.append({"kind": "slider", "slider": camera_rate, "scale": 3.0, "key": "deform_camera_rate", "mul_max": 3.0})
+	if camera_depth:
+		out.append({"kind": "slider", "slider": camera_depth, "scale": 1.0, "key": "deform_camera_depth", "mul_max": 1.0})
+	return out
+
+
+func _play_all_fx_audio_targets() -> Array:
+	## Play All FX driver expressions. Scale is a whole-number gain (>= 1), never 0.x.
+	var out: Array = _play_all_deform_audio_targets()
+	if _ascii_density_slider:
+		out.append({"kind": "slider", "slider": _ascii_density_slider, "scale": 80.0, "key": "ascii_density"})
+	if ascii_preset:
+		out.append({"kind": "choice", "opt": ascii_preset, "scale": 8.0, "key": "ascii_style"})
+	if feedback_mix_slider:
+		out.append({"kind": "slider", "slider": feedback_mix_slider, "scale": 2.0, "key": "feedback_mix"})
+	if feedback_persist_slider:
+		out.append({"kind": "slider", "slider": feedback_persist_slider, "scale": 2.0, "key": "feedback_persist"})
+	if glitch_amount_slider:
+		out.append({"kind": "slider", "slider": glitch_amount_slider, "scale": 3.0, "key": "glitch_amount"})
+	if glitch_speed_slider:
+		out.append({"kind": "slider", "slider": glitch_speed_slider, "scale": 2.0, "key": "glitch_speed"})
+	if glitch_hsize_slider:
+		out.append({"kind": "slider", "slider": glitch_hsize_slider, "scale": 2.0, "key": "glitch_hsize"})
+	if glitch_rgb_slider:
+		out.append({"kind": "slider", "slider": glitch_rgb_slider, "scale": 2.0, "key": "glitch_rgb"})
+	if glitch_chaos_slider:
+		out.append({"kind": "slider", "slider": glitch_chaos_slider, "scale": 2.0, "key": "glitch_chaos"})
+	if chromatic_amount_slider:
+		out.append({"kind": "slider", "slider": chromatic_amount_slider, "scale": 3.0, "key": "chromatic"})
+	if feedback_blur_slider:
+		out.append({"kind": "slider", "slider": feedback_blur_slider, "scale": 2.0, "key": "feedback_blur"})
+	if tone_invert_slider:
+		out.append({"kind": "slider", "slider": tone_invert_slider, "scale": 2.0, "key": "tone_invert"})
+	if tone_brightness_slider:
+		out.append({"kind": "slider", "slider": tone_brightness_slider, "scale": 2.0, "key": "tone_brightness", "mul_max": 2.0})
+	if tone_contrast_slider:
+		out.append({"kind": "slider", "slider": tone_contrast_slider, "scale": 2.0, "key": "tone_contrast", "mul_max": 2.0})
+	if tone_saturation_slider:
+		out.append({"kind": "slider", "slider": tone_saturation_slider, "scale": 2.0, "key": "tone_saturation", "mul_max": 2.0})
+	if hole_strength_slider:
+		out.append({"kind": "slider", "slider": hole_strength_slider, "scale": 3.0, "key": "hole_strength"})
+	if hole_size_slider:
+		out.append({"kind": "slider", "slider": hole_size_slider, "scale": 2.0, "key": "hole_size"})
+	if hole_twist_slider:
+		out.append({"kind": "slider", "slider": hole_twist_slider, "scale": 25.0, "key": "hole_twist"})
+	if hole_softness_slider:
+		out.append({"kind": "slider", "slider": hole_softness_slider, "scale": 3.0, "key": "hole_softness"})
+	if hole_flow_slider:
+		out.append({"kind": "slider", "slider": hole_flow_slider, "scale": 5.0, "key": "hole_flow"})
+	if hole_cx_slider:
+		out.append({"kind": "slider", "slider": hole_cx_slider, "scale": 2.0, "key": "hole_cx", "mul_max": 2.0})
+	if hole_cy_slider:
+		out.append({"kind": "slider", "slider": hole_cy_slider, "scale": 2.0, "key": "hole_cy", "mul_max": 2.0})
+	out.append({"kind": "wireframe", "scale": 2.0, "key": "wireframe"})
+	if point_cloud_size_slider:
+		out.append({"kind": "slider", "slider": point_cloud_size_slider, "scale": 6.0, "key": "pc_size"})
+	if camera_fx_focal_slider:
+		out.append({"kind": "slider", "slider": camera_fx_focal_slider, "scale": 28.0, "key": "cam_focal"})
+	if camera_fx_aperture_slider:
+		out.append({"kind": "slider", "slider": camera_fx_aperture_slider, "scale": 3.0, "key": "cam_aperture"})
+	if camera_fx_focus_slider:
+		out.append({"kind": "slider", "slider": camera_fx_focus_slider, "scale": 8.0, "key": "cam_focus"})
+	if camera_fx_bokeh_slider:
+		out.append({"kind": "slider", "slider": camera_fx_bokeh_slider, "scale": 2.0, "key": "cam_bokeh"})
+	if _camera_fx_lens_slider:
+		out.append({"kind": "slider", "slider": _camera_fx_lens_slider, "scale": 3.0, "key": "cam_lens"})
+	if np_strength_slider:
+		out.append({"kind": "slider", "slider": np_strength_slider, "scale": 1.0, "key": "np_strength"})
+	if np_start_slider:
+		out.append({"kind": "slider", "slider": np_start_slider, "scale": 4.0, "key": "np_near"})
+	if np_end_slider:
+		out.append({"kind": "slider", "slider": np_end_slider, "scale": 35.0, "key": "np_far"})
+	if np_bend_slider:
+		out.append({"kind": "slider", "slider": np_bend_slider, "scale": 90.0, "key": "np_bend"})
+	return out
+
+
+func _snapshot_play_all_audio_drivers(targets: Array) -> void:
+	_play_all_audio_snapshot.clear()
+	for t_any in targets:
+		if not (t_any is Dictionary):
+			continue
+		var t: Dictionary = t_any
+		var key := str(t.get("key", ""))
+		if key.is_empty():
+			continue
+		match str(t.get("kind", "")):
+			"slider":
+				var sl: HSlider = t.get("slider") as HSlider
+				if sl:
+					_play_all_audio_snapshot[key] = SliderSpinLinkScr.expr_of(sl)
+			"choice":
+				var opt: OptionButton = t.get("opt") as OptionButton
+				if opt:
+					_play_all_audio_snapshot[key] = SliderSpinLinkScr.choice_expr_of(opt)
+			"wireframe":
+				_play_all_audio_snapshot[key] = _play_all_audio_wireframe_expr
+
+
+func _assign_audio_target(t: Dictionary, expr: String) -> void:
+	match str(t.get("kind", "")):
+		"slider":
+			var sl: HSlider = t.get("slider") as HSlider
+			if sl:
+				SliderSpinLinkScr.set_expr(sl, expr, false)
+		"choice":
+			var opt: OptionButton = t.get("opt") as OptionButton
+			if opt:
+				SliderSpinLinkScr.set_choice_expr(opt, expr, false)
+		"wireframe":
+			_play_all_audio_wireframe_expr = expr
+
+
+func _refresh_play_all_fx_after_audio_assign() -> void:
+	if ascii_toggle and ascii_toggle.button_pressed:
+		ShowDirector.set_effect("ascii", true, _ascii_params())
+	if feedback_toggle and feedback_toggle.button_pressed:
+		ShowDirector.set_effect("feedback", true, _feedback_params())
+	if glitch_toggle and glitch_toggle.button_pressed:
+		ShowDirector.set_effect("glitch", true, _glitch_params())
+	if chromatic_toggle and chromatic_toggle.button_pressed:
+		ShowDirector.set_effect("chromatic", true, _chromatic_params())
+	if tone_toggle and tone_toggle.button_pressed:
+		ShowDirector.set_effect("tone", true, _tone_params())
+	if hole_toggle and hole_toggle.button_pressed:
+		ShowDirector.set_effect("hole", true, _hole_params())
+	if wireframe_toggle and wireframe_toggle.button_pressed:
+		ShowDirector.set_effect("wireframe", true, _wireframe_params())
+	if point_cloud_toggle and point_cloud_toggle.button_pressed:
+		ShowDirector.set_effect("point_cloud", true, _point_cloud_params())
+	if camera_fx_toggle and camera_fx_toggle.button_pressed:
+		ShowDirector.set_effect("camera_fx", true, _camera_fx_params())
+	if nonlinear_camera_toggle and nonlinear_camera_toggle.button_pressed:
+		_apply_nonlinear_camera(true)
+
+
+func _apply_play_all_audio_drivers(with_multipliers: bool) -> void:
+	if not _play_all_audio_wanted():
+		return
+	var targets := _play_all_fx_audio_targets()
+	if targets.is_empty():
+		return
+	if not _play_all_audio_drivers_active:
+		_snapshot_play_all_audio_drivers(targets)
+		_play_all_audio_drivers_active = true
+	var n := PLAY_ALL_AUDIO_DRIVERS.size()
+	if n <= 0:
+		return
+	var order: Array = []
+	for i in n:
+		order.append(i)
+	order.shuffle()
+	var di := 0
+	for t_any in targets:
+		if not (t_any is Dictionary):
+			continue
+		var t: Dictionary = t_any
+		var drv := str(PLAY_ALL_AUDIO_DRIVERS[int(order[di % n])])
+		di += 1
+		var scale := float(t.get("scale", 1.0))
+		if with_multipliers:
+			var mul := float(PLAY_ALL_AUDIO_SHUFFLE_MULS[randi() % PLAY_ALL_AUDIO_SHUFFLE_MULS.size()])
+			var mul_max := float(t.get("mul_max", 10.0))
+			scale *= minf(mul, mul_max)
+		_assign_audio_target(t, _fmt_audio_drive_expr(drv, scale))
+	_refresh_play_all_fx_after_audio_assign()
+
+
+func _restore_play_all_audio_drivers() -> void:
+	if not _play_all_audio_drivers_active:
+		_play_all_audio_wireframe_expr = ""
+		return
+	var targets := _play_all_fx_audio_targets()
+	for t_any in targets:
+		if not (t_any is Dictionary):
+			continue
+		var t: Dictionary = t_any
+		var key := str(t.get("key", ""))
+		var prev := str(_play_all_audio_snapshot.get(key, ""))
+		match str(t.get("kind", "")):
+			"slider":
+				var sl: HSlider = t.get("slider") as HSlider
+				if sl and not prev.is_empty():
+					SliderSpinLinkScr.set_expr(sl, prev, false)
+			"choice":
+				var opt: OptionButton = t.get("opt") as OptionButton
+				if opt and not prev.is_empty():
+					SliderSpinLinkScr.set_choice_expr(opt, prev, false)
+			"wireframe":
+				_play_all_audio_wireframe_expr = prev
+	_play_all_audio_snapshot.clear()
+	_play_all_audio_drivers_active = false
+	_refresh_play_all_fx_after_audio_assign()
+
+
+func _on_play_mode_shuffle_toggled(on: bool) -> void:
+	if on and _play_all_audio_wanted():
+		_apply_play_all_audio_drivers(true)
 
 
 func _on_style_switch_toggled(on: bool) -> void:
@@ -2219,54 +2699,68 @@ func _process(delta: float) -> void:
 	SliderSpinLinkScr.refresh_all_previews()
 	_push_driven_reactivity()
 	_tick_shuffle_and_random(delta)
+	_sync_nonlinear_camera_from_autoload()
 
 
-func _setup_reaction_diffusion() -> void:
-	var after: Node = chromatic_schedule_host if chromatic_schedule_host else chromatic_body
-	if after == null or fx_section == null:
+func _setup_hole() -> void:
+	# Anchor on a direct FxSection sibling. Anchoring on chromatic_schedule_host used an index
+	# from inside ChromaticBody, which dropped Hole between FeedbackToggle and FeedbackBody.
+	var after: Node = chromatic_body
+	if after == null or fx_section == null or after.get_parent() != fx_section:
 		return
-	rd_toggle = CheckButton.new()
-	rd_toggle.text = "Reaction Diffusion"
-	rd_toggle.tooltip_text = "Gray-Scott overlay. Tints the live frame — works under ASCII / feedback."
-	fx_section.add_child(rd_toggle)
-	fx_section.move_child(rd_toggle, after.get_index() + 1)
-	rd_body = VBoxContainer.new()
-	rd_body.visible = false
-	rd_body.add_theme_constant_override("separation", 4)
-	fx_section.add_child(rd_body)
-	fx_section.move_child(rd_body, rd_toggle.get_index() + 1)
-	var preset_lbl := Label.new()
-	preset_lbl.text = "Look"
-	rd_body.add_child(preset_lbl)
-	rd_preset = OptionButton.new()
-	for n in RD_PRESET_NAMES:
-		rd_preset.add_item(n)
-	rd_preset.select(0)
-	rd_preset.item_selected.connect(_on_rd_preset)
-	rd_body.add_child(rd_preset)
-	rd_feed_slider = _rd_slider(rd_body, "Feed", 1.0, 10.0, 5.5)
-	rd_kill_slider = _rd_slider(rd_body, "Kill", 4.0, 8.0, 6.2)
-	rd_speed_slider = _rd_slider(rd_body, "Speed", 10.0, 300.0, 100.0)
-	rd_mix_slider = _rd_slider(rd_body, "Mix", 0.0, 100.0, 55.0)
-	rd_feed_slider.tooltip_text = "Gray-Scott feed. Type a number or pick Driver."
-	rd_kill_slider.tooltip_text = "Gray-Scott kill. Type a number or pick Driver."
-	rd_speed_slider.tooltip_text = "Simulation speed. Type a number or pick Driver."
-	rd_mix_slider.tooltip_text = "How strongly the pattern tints the scene. 0 = hidden."
-	SliderSpinLinkScr.attach_driven(rd_feed_slider, _on_rd_params, 100.0)
-	SliderSpinLinkScr.attach_driven(rd_kill_slider, _on_rd_params, 100.0)
-	SliderSpinLinkScr.attach_driven(rd_speed_slider, _on_rd_params, 100.0)
-	SliderSpinLinkScr.attach_driven(rd_mix_slider, _on_rd_params, 100.0)
-	rd_schedule = CheckButton.new()
-	rd_schedule.text = "RD schedule"
-	rd_body.add_child(rd_schedule)
-	rd_schedule_host = VBoxContainer.new()
-	rd_schedule_host.visible = false
-	rd_body.add_child(rd_schedule_host)
-	rd_toggle.toggled.connect(_on_rd_toggled)
-	rd_schedule.toggled.connect(func(v: bool) -> void: _on_effect_schedule("rd", v))
+	hole_toggle = CheckButton.new()
+	hole_toggle.name = "HoleToggle"
+	hole_toggle.text = "Hole"
+	hole_toggle.tooltip_text = "Stretch the frame into a hole, then breathe back out. Distorts the 3D view; ASCII can still overlay."
+	fx_section.add_child(hole_toggle)
+	fx_section.move_child(hole_toggle, after.get_index() + 1)
+	hole_body = VBoxContainer.new()
+	hole_body.name = "HoleBody"
+	hole_body.visible = false
+	hole_body.add_theme_constant_override("separation", 4)
+	fx_section.add_child(hole_body)
+	fx_section.move_child(hole_body, hole_toggle.get_index() + 1)
+	var shape_lbl := Label.new()
+	shape_lbl.text = "Shape"
+	hole_body.add_child(shape_lbl)
+	hole_shape = OptionButton.new()
+	for n in HOLE_SHAPE_NAMES:
+		hole_shape.add_item(n)
+	hole_shape.select(0)
+	hole_shape.item_selected.connect(_on_hole_shape)
+	hole_body.add_child(hole_shape)
+	hole_strength_slider = _fx_labeled_slider(hole_body, "Strength", 0.0, 100.0, 75.0)
+	hole_size_slider = _fx_labeled_slider(hole_body, "Size", 5.0, 80.0, 20.0)
+	hole_twist_slider = _fx_labeled_slider(hole_body, "Twist", 0.0, 100.0, 0.0)
+	hole_softness_slider = _fx_labeled_slider(hole_body, "Softness", 2.0, 80.0, 30.0)
+	hole_flow_slider = _fx_labeled_slider(hole_body, "Flow", 0.0, 100.0, 50.0)
+	hole_cx_slider = _fx_labeled_slider(hole_body, "Offset X", 0.0, 100.0, 50.0)
+	hole_cy_slider = _fx_labeled_slider(hole_body, "Offset Y", 0.0, 100.0, 50.0)
+	hole_strength_slider.tooltip_text = "How far the frame falls in at peak. 0 = no warp. Type a number or pick Driver."
+	hole_size_slider.tooltip_text = "Hole radius (circle) or rectangular aperture size."
+	hole_twist_slider.tooltip_text = "Optional spiral on top of the stretch. Default 0 = fall-in only."
+	hole_softness_slider.tooltip_text = "How wide the falloff is. Higher = softer suck at the edges."
+	hole_flow_slider.tooltip_text = "How fast the collapse/emerge cycle breathes."
+	hole_cx_slider.tooltip_text = "Hole center X. 50 = middle."
+	hole_cy_slider.tooltip_text = "Hole center Y. 50 = middle."
+	SliderSpinLinkScr.attach_driven(hole_strength_slider, _on_hole_params, 100.0)
+	SliderSpinLinkScr.attach_driven(hole_size_slider, _on_hole_params, 100.0)
+	SliderSpinLinkScr.attach_driven(hole_twist_slider, _on_hole_params, 25.0)
+	SliderSpinLinkScr.attach_driven(hole_softness_slider, _on_hole_params, 100.0)
+	SliderSpinLinkScr.attach_driven(hole_flow_slider, _on_hole_params, 100.0)
+	SliderSpinLinkScr.attach_driven(hole_cx_slider, _on_hole_params, 100.0)
+	SliderSpinLinkScr.attach_driven(hole_cy_slider, _on_hole_params, 100.0)
+	hole_schedule = CheckButton.new()
+	hole_schedule.text = "Hole schedule"
+	hole_body.add_child(hole_schedule)
+	hole_schedule_host = VBoxContainer.new()
+	hole_schedule_host.visible = false
+	hole_body.add_child(hole_schedule_host)
+	hole_toggle.toggled.connect(_on_hole_toggled)
+	hole_schedule.toggled.connect(func(v: bool) -> void: _on_effect_schedule("hole", v))
 
 
-func _rd_slider(parent: VBoxContainer, title: String, lo: float, hi: float, val: float) -> HSlider:
+func _fx_labeled_slider(parent: VBoxContainer, title: String, lo: float, hi: float, val: float) -> HSlider:
 	var lbl := Label.new()
 	lbl.text = title
 	parent.add_child(lbl)
@@ -2279,40 +2773,231 @@ func _rd_slider(parent: VBoxContainer, title: String, lo: float, hi: float, val:
 	return sl
 
 
-func _rd_params() -> Dictionary:
-	var idx := rd_preset.selected if rd_preset else 0
-	var preset_name: String = "Coral"
-	if idx >= 0 and idx < RD_PRESET_NAMES.size():
-		preset_name = str(RD_PRESET_NAMES[idx])
-	return {
-		"preset": preset_name,
-		"feed": SliderSpinLinkScr.mapped_param(rd_feed_slider, 100.0) if rd_feed_slider else 0.055,
-		"kill": SliderSpinLinkScr.mapped_param(rd_kill_slider, 100.0) if rd_kill_slider else 0.062,
-		"speed": SliderSpinLinkScr.mapped_param(rd_speed_slider, 100.0) if rd_speed_slider else 1.0,
-		"mix_amount": SliderSpinLinkScr.mapped_param(rd_mix_slider, 100.0) if rd_mix_slider else 0.55,
-	}
+func _np() -> Node:
+	return get_node_or_null("/root/NonlinearProjection")
 
 
-func _on_rd_toggled(on: bool) -> void:
-	ShowDirector.set_effect("rd", on, _rd_params())
+func _setup_nonlinear_camera() -> void:
+	if fx_section == null:
+		return
+	nonlinear_camera_toggle = CheckButton.new()
+	nonlinear_camera_toggle.name = "NonlinearCameraToggle"
+	nonlinear_camera_toggle.text = "Nonlinear camera"
+	nonlinear_camera_toggle.button_pressed = false
+	nonlinear_camera_toggle.tooltip_text = "Near geometry stays perspective; far geometry lifts toward a top-down view. Textures stay on. Optional shortcut: F4."
+	fx_section.add_child(nonlinear_camera_toggle)
+	nonlinear_camera_body = VBoxContainer.new()
+	nonlinear_camera_body.name = "NonlinearCameraBody"
+	nonlinear_camera_body.visible = false
+	nonlinear_camera_body.add_theme_constant_override("separation", 4)
+	fx_section.add_child(nonlinear_camera_body)
+	np_strength_slider = _fx_labeled_slider(nonlinear_camera_body, "Strength", 0.0, 2.0, 1.0)
+	np_start_slider = _fx_labeled_slider(nonlinear_camera_body, "Near (m)", 0.0, 80.0, 4.0)
+	np_end_slider = _fx_labeled_slider(nonlinear_camera_body, "Far (m)", 5.0, 200.0, 35.0)
+	np_bend_slider = _fx_labeled_slider(nonlinear_camera_body, "Bend (°)", 0.0, 120.0, 90.0)
+	np_strength_slider.step = 0.05
+	np_start_slider.step = 0.5
+	np_end_slider.step = 0.5
+	np_bend_slider.step = 1.0
+	np_strength_slider.tooltip_text = "How strong the far-field lift is. Type a number or pick Driver."
+	np_start_slider.tooltip_text = "Distance where the bend starts. Nearer than this stays perspective."
+	np_end_slider.tooltip_text = "Distance where the bend reaches full angle."
+	np_bend_slider.tooltip_text = "Maximum pitch toward top-down at Far, in degrees."
+	nonlinear_camera_toggle.toggled.connect(_on_nonlinear_camera_toggled)
+	SliderSpinLinkScr.attach_driven(np_strength_slider, _on_nonlinear_camera_params, 1.0)
+	SliderSpinLinkScr.attach_driven(np_start_slider, _on_nonlinear_camera_params, 1.0)
+	SliderSpinLinkScr.attach_driven(np_end_slider, _on_nonlinear_camera_params, 1.0)
+	SliderSpinLinkScr.attach_driven(np_bend_slider, _on_nonlinear_camera_params, 1.0)
+
+
+func _on_nonlinear_camera_toggled(on: bool) -> void:
+	_apply_nonlinear_camera(on)
 	_sync_conditional_ui()
 
 
-func _on_rd_params(_v: float = 0.0) -> void:
-	if rd_toggle and rd_toggle.button_pressed:
-		ShowDirector.set_effect("rd", true, _rd_params())
+func _on_nonlinear_camera_params(_v: float = 0.0) -> void:
+	if nonlinear_camera_toggle and nonlinear_camera_toggle.button_pressed:
+		_apply_nonlinear_camera(true)
 
 
-func _on_rd_preset(index: int) -> void:
-	if index < 0 or index >= RD_PRESET_NAMES.size():
+func _apply_nonlinear_camera(on: bool) -> void:
+	var np := _np()
+	if np == null:
 		return
-	var preset_name: String = str(RD_PRESET_NAMES[index])
-	var fk: Dictionary = RD_PRESET_DATA.get(preset_name, {})
-	if rd_feed_slider and fk.has("feed"):
-		rd_feed_slider.value = float(fk["feed"]) * 100.0
-	if rd_kill_slider and fk.has("kill"):
-		rd_kill_slider.value = float(fk["kill"]) * 100.0
-	_on_rd_params()
+	np.set("enabled", on)
+	if np_strength_slider:
+		np.set("distortion_strength", SliderSpinLinkScr.eval_of(np_strength_slider, 1.0))
+	if np_start_slider:
+		np.set("transition_start", SliderSpinLinkScr.eval_of(np_start_slider, 4.0))
+	if np_end_slider:
+		np.set("transition_end", SliderSpinLinkScr.eval_of(np_end_slider, 35.0))
+	if np_bend_slider:
+		np.set("max_bend_angle_deg", SliderSpinLinkScr.eval_of(np_bend_slider, 90.0))
+
+
+func _reset_np_sliders_to_defaults() -> void:
+	_reset_driven_num(np_strength_slider, 1.0)
+	_reset_driven_num(np_start_slider, 4.0)
+	_reset_driven_num(np_end_slider, 35.0)
+	_reset_driven_num(np_bend_slider, 90.0)
+
+
+func _sync_nonlinear_camera_from_autoload() -> void:
+	var np := _np()
+	if np == null or nonlinear_camera_toggle == null:
+		return
+	var on := bool(np.get("enabled"))
+	if nonlinear_camera_toggle.button_pressed != on:
+		_set_check_no_signal(nonlinear_camera_toggle, on)
+		if nonlinear_camera_body:
+			nonlinear_camera_body.visible = on
+
+
+func _setup_tone() -> void:
+	## Image tone — Invert / Brightness / Contrast / Saturation. All four are driven sliders so every one
+	## of them is audio-mappable and can join Play All.
+	var after: Node = chromatic_body
+	if after == null or fx_section == null or after.get_parent() != fx_section:
+		return
+	tone_toggle = CheckButton.new()
+	tone_toggle.name = "ToneToggle"
+	tone_toggle.text = "Tone"
+	tone_toggle.tooltip_text = "Invert, brighten / darken, crush contrast, and shift saturation. Invert 100 = fully negative."
+	fx_section.add_child(tone_toggle)
+	fx_section.move_child(tone_toggle, after.get_index() + 1)
+	tone_body = VBoxContainer.new()
+	tone_body.name = "ToneBody"
+	tone_body.visible = false
+	tone_body.add_theme_constant_override("separation", 4)
+	fx_section.add_child(tone_body)
+	fx_section.move_child(tone_body, tone_toggle.get_index() + 1)
+	tone_invert_slider = _fx_labeled_slider(tone_body, "Invert", 0.0, 100.0, 0.0)
+	tone_brightness_slider = _fx_labeled_slider(tone_body, "Brightness", 0.0, 200.0, 100.0)
+	tone_contrast_slider = _fx_labeled_slider(tone_body, "Contrast", 0.0, 200.0, 100.0)
+	tone_saturation_slider = _fx_labeled_slider(tone_body, "Saturation", 0.0, 200.0, 100.0)
+	tone_invert_slider.name = "ToneInvertSlider"
+	tone_brightness_slider.name = "ToneBrightnessSlider"
+	tone_contrast_slider.name = "ToneContrastSlider"
+	tone_saturation_slider.name = "ToneSaturationSlider"
+	tone_invert_slider.tooltip_text = "0 = untouched, 100 = fully inverted (negative). Type a number or paste bass * 2."
+	tone_brightness_slider.tooltip_text = "Lightness. 100 = unchanged, below darkens, above lifts."
+	tone_contrast_slider.tooltip_text = "100 = unchanged. 0 flattens to grey, higher crushes blacks and whites."
+	tone_saturation_slider.tooltip_text = "Colour intensity. 0 = grayscale, 100 = unchanged, above 100 is punchier. Type a number or paste bass * 2."
+	SliderSpinLinkScr.attach_driven(tone_invert_slider, _on_tone_params, 100.0)
+	SliderSpinLinkScr.attach_driven(tone_brightness_slider, _on_tone_params, 100.0)
+	SliderSpinLinkScr.attach_driven(tone_contrast_slider, _on_tone_params, 100.0)
+	SliderSpinLinkScr.attach_driven(tone_saturation_slider, _on_tone_params, 100.0)
+	tone_schedule = CheckButton.new()
+	tone_schedule.text = "Tone schedule"
+	tone_body.add_child(tone_schedule)
+	tone_schedule_host = VBoxContainer.new()
+	tone_schedule_host.visible = false
+	tone_body.add_child(tone_schedule_host)
+	tone_toggle.toggled.connect(_on_tone_toggled)
+	tone_schedule.toggled.connect(func(v: bool) -> void: _on_effect_schedule("tone", v))
+
+
+func _tone_params() -> Dictionary:
+	return {
+		"invert": SliderSpinLinkScr.mapped_param(tone_invert_slider, 100.0) if tone_invert_slider else 0.0,
+		"brightness": SliderSpinLinkScr.mapped_param(tone_brightness_slider, 100.0) if tone_brightness_slider else 1.0,
+		"contrast": SliderSpinLinkScr.mapped_param(tone_contrast_slider, 100.0) if tone_contrast_slider else 1.0,
+		"saturation": SliderSpinLinkScr.mapped_param(tone_saturation_slider, 100.0) if tone_saturation_slider else 1.0,
+	}
+
+
+func _on_tone_toggled(on: bool) -> void:
+	ShowDirector.set_effect("tone", on, _tone_params())
+	_sync_conditional_ui()
+
+
+func _on_tone_params(_v: float = 0.0) -> void:
+	if tone_toggle and tone_toggle.button_pressed:
+		ShowDirector.set_effect("tone", true, _tone_params())
+
+
+func _setup_feedback_blur() -> void:
+	## Blur 0 = crisp duplicated frame. 35 reproduces the pre-slider look.
+	if feedback_body == null or feedback_persist_slider == null:
+		return
+	var after: Node = feedback_persist_slider.get_parent()
+	if after == null or after == feedback_body:
+		after = feedback_persist_slider
+	var lbl := Label.new()
+	lbl.text = "Blur amount"
+	feedback_body.add_child(lbl)
+	feedback_body.move_child(lbl, after.get_index() + 1)
+	feedback_blur_slider = HSlider.new()
+	feedback_blur_slider.name = "FeedbackBlurSlider"
+	feedback_blur_slider.min_value = 0.0
+	feedback_blur_slider.max_value = 100.0
+	feedback_blur_slider.step = 1.0
+	feedback_blur_slider.value = 35.0
+	feedback_blur_slider.tooltip_text = "0 = no blur at all: a sharp copy of the previous frame stacked on the live one (image duplication). Higher softens the trail into a smear."
+	feedback_body.add_child(feedback_blur_slider)
+	feedback_body.move_child(feedback_blur_slider, lbl.get_index() + 1)
+	SliderSpinLinkScr.attach_driven(feedback_blur_slider, _on_feedback_params, 100.0)
+	_setup_feedback_blend(feedback_blur_slider)
+
+
+func _setup_feedback_blend(after: Node) -> void:
+	## Discrete choice, so it gets a dropdown (+ the shuffle slot every other dropdown has)
+	## rather than a driven slider. Normal keeps the previous look.
+	if feedback_body == null or after == null:
+		return
+	var anchor: Node = after.get_parent() if after.get_parent() != feedback_body else after
+	var lbl := Label.new()
+	lbl.name = "FeedbackBlendLabel"
+	lbl.text = "Blend mode"
+	feedback_body.add_child(lbl)
+	feedback_body.move_child(lbl, anchor.get_index() + 1)
+	feedback_blend = OptionButton.new()
+	feedback_blend.name = "FeedbackBlend"
+	for n in FEEDBACK_BLEND_NAMES:
+		feedback_blend.add_item(str(n))
+	feedback_blend.select(0)
+	feedback_blend.tooltip_text = "How the previous frame is laid over the live one. Normal = fades on top (default). Glow = trails only add light. Brightest / Darkest keep whichever frame is lighter / darker. Shadow = trails darken like a stain. Edges = only what moved stays, so with Blur 0 you get sharp outlines. Contrast = trails push lights and darks apart."
+	feedback_body.add_child(feedback_blend)
+	feedback_body.move_child(feedback_blend, lbl.get_index() + 1)
+	feedback_blend.item_selected.connect(_on_feedback_blend)
+
+
+func _on_feedback_blend(_index: int) -> void:
+	_refresh_effect_if_on("feedback")
+
+
+func _hole_params() -> Dictionary:
+	var idx := hole_shape.selected if hole_shape else 0
+	var shape_name: String = "Circular"
+	if idx >= 0 and idx < HOLE_SHAPE_NAMES.size():
+		shape_name = str(HOLE_SHAPE_NAMES[idx])
+	return {
+		"shape": shape_name,
+		"strength": SliderSpinLinkScr.mapped_param(hole_strength_slider, 100.0) if hole_strength_slider else 0.75,
+		"hole_size": SliderSpinLinkScr.mapped_param(hole_size_slider, 100.0) if hole_size_slider else 0.20,
+		"twist": SliderSpinLinkScr.mapped_param(hole_twist_slider, 25.0) if hole_twist_slider else 0.0,
+		"softness": SliderSpinLinkScr.mapped_param(hole_softness_slider, 100.0) if hole_softness_slider else 0.30,
+		"flow": SliderSpinLinkScr.mapped_param(hole_flow_slider, 100.0) if hole_flow_slider else 0.50,
+		"center_x": SliderSpinLinkScr.mapped_param(hole_cx_slider, 100.0) if hole_cx_slider else 0.5,
+		"center_y": SliderSpinLinkScr.mapped_param(hole_cy_slider, 100.0) if hole_cy_slider else 0.5,
+	}
+
+
+func _on_hole_toggled(on: bool) -> void:
+	ShowDirector.set_effect("hole", on, _hole_params())
+	_sync_conditional_ui()
+
+
+func _on_hole_params(_v: float = 0.0) -> void:
+	if hole_toggle and hole_toggle.button_pressed:
+		ShowDirector.set_effect("hole", true, _hole_params())
+
+
+func _on_hole_shape(index: int) -> void:
+	if index < 0 or index >= HOLE_SHAPE_NAMES.size():
+		return
+	if hole_toggle and hole_toggle.button_pressed:
+		ShowDirector.set_effect("hole", true, _hole_params())
 
 
 func _setup_shuffle_and_random() -> void:
@@ -2326,11 +3011,22 @@ func _setup_shuffle_and_random() -> void:
 		var pm_iv: HSlider = _shuffle_slots["play_mode"].get("interval")
 		if pm_iv:
 			SliderSpinLinkScr.attach_driven(pm_iv, Callable(), 1.0)
-	if rd_body and rd_preset:
-		_shuffle_slots["rd"] = CycleRandomScr.attach_shuffle(rd_body, rd_preset, "Shuffle looks")
-		var rd_iv: HSlider = _shuffle_slots["rd"].get("interval")
-		if rd_iv:
-			SliderSpinLinkScr.attach_driven(rd_iv, Callable(), 1.0)
+		var pm_tog: Variant = _shuffle_slots["play_mode"].get("toggle")
+		if pm_tog is CheckButton:
+			(pm_tog as CheckButton).tooltip_text = "Cycle Play All Mode (Cycle / Random / Audio / Evolution). With Audio reactive, also shuffles each effect's audio driver and multiplies amounts (2x-10x)."
+			(pm_tog as CheckButton).toggled.connect(_on_play_mode_shuffle_toggled)
+	if hole_body and hole_shape:
+		_shuffle_slots["hole"] = CycleRandomScr.attach_shuffle(hole_body, hole_shape, "Shuffle shape")
+		var hole_iv: HSlider = _shuffle_slots["hole"].get("interval")
+		if hole_iv:
+			SliderSpinLinkScr.attach_driven(hole_iv, Callable(), 1.0)
+	if feedback_body and feedback_blend:
+		# Blend mode is an enum, so Play All varies it by shuffling the choice instead of
+		# writing a driver expression onto it.
+		_shuffle_slots["feedback_blend"] = CycleRandomScr.attach_shuffle(feedback_body, feedback_blend, "Shuffle blend")
+		var fb_iv: HSlider = _shuffle_slots["feedback_blend"].get("interval")
+		if fb_iv:
+			SliderSpinLinkScr.attach_driven(fb_iv, Callable(), 1.0)
 	_add_random_group("scale_affects", _scale_body, target_row, [target_main, target_scatter, target_environment], true)
 	_add_random_group("scale_axes", _scale_body, scale_z.get_parent() if scale_z else null, [scale_x, scale_y, scale_z], true)
 	_add_random_group("rot_affects", _rotation_body, rotation_target_row, [rotation_target_main, rotation_target_scatter, rotation_target_environment, rotation_target_camera], true)
@@ -2369,9 +3065,14 @@ func _tick_shuffle_and_random(delta: float) -> void:
 		CycleRandomScr.advance_option(camera_preset, PackedInt32Array([0]))
 	if CycleRandomScr.tick_slot(_shuffle_slots.get("play_mode", {}), delta):
 		CycleRandomScr.advance_option(play_mode)
-	if CycleRandomScr.tick_slot(_shuffle_slots.get("rd", {}), delta):
-		if rd_preset and not SliderSpinLinkScr.choice_is_expr(rd_preset):
-			CycleRandomScr.advance_option(rd_preset)
+		if _play_all_audio_wanted():
+			_apply_play_all_audio_drivers(true)
+	if CycleRandomScr.tick_slot(_shuffle_slots.get("hole", {}), delta):
+		if hole_shape:
+			CycleRandomScr.advance_option(hole_shape)
+	if CycleRandomScr.tick_slot(_shuffle_slots.get("feedback_blend", {}), delta):
+		if feedback_blend:
+			CycleRandomScr.advance_option(feedback_blend)
 	for gid in _random_groups.keys():
 		var g: Dictionary = _random_groups[gid]
 		if CycleRandomScr.tick_slot(g.get("slot", {}), delta):
@@ -2458,11 +3159,11 @@ func _apply_content_tab_visibility() -> void:
 	if reactivity_body:
 		reactivity_body.visible = drivers_on
 	if targets:
-		targets.visible = not drivers_on
+		targets.visible = false
 	if fx_section:
 		fx_section.visible = not drivers_on
 	if fx_label:
-		fx_label.visible = not drivers_on
+		fx_label.visible = false
 	if cue_section and drivers_on:
 		cue_section.visible = false
 
@@ -2950,6 +3651,8 @@ func _push_driven_reactivity() -> void:
 		_on_style_interval()
 	_push_driven_schedules()
 	_push_driven_analyzer()
+	if nonlinear_camera_toggle and nonlinear_camera_toggle.button_pressed:
+		_on_nonlinear_camera_params()
 	var kept_writes: Array = []
 	for w_any in _driver_card_writes:
 		if not (w_any is Dictionary):
@@ -3019,7 +3722,8 @@ func _restore_fx_sliders_from_director() -> void:
 	_set_check_no_signal(feedback_toggle, bool(enabled.get("feedback", false)))
 	_set_check_no_signal(glitch_toggle, bool(enabled.get("glitch", false)))
 	_set_check_no_signal(chromatic_toggle, bool(enabled.get("chromatic", false)))
-	_set_check_no_signal(rd_toggle, bool(enabled.get("rd", false)))
+	_set_check_no_signal(tone_toggle, bool(enabled.get("tone", false)))
+	_set_check_no_signal(hole_toggle, bool(enabled.get("hole", false)))
 	_set_check_no_signal(wireframe_toggle, bool(enabled.get("wireframe", false)))
 	_set_check_no_signal(point_cloud_toggle, bool(enabled.get("point_cloud", false)))
 	_set_check_no_signal(camera_fx_toggle, bool(enabled.get("camera_fx", false)))
@@ -3033,21 +3737,42 @@ func _restore_fx_sliders_from_director() -> void:
 	var fb_op: Variant = fb.get("opacity", fb.get("mix_amount", feedback_mix_slider.value / 100.0))
 	SliderSpinLinkScr.set_mapped_param(feedback_mix_slider, fb_op, 100.0)
 	SliderSpinLinkScr.set_mapped_param(feedback_persist_slider, fb.get("persistence", feedback_persist_slider.value / 100.0), 100.0)
+	if feedback_blur_slider:
+		# Sessions saved before Blur existed have no key — fall back to the look they had.
+		SliderSpinLinkScr.set_mapped_param(feedback_blur_slider, fb.get("blur", 0.35), 100.0)
+	if feedback_blend:
+		var bidx := FEEDBACK_BLEND_NAMES.find(str(fb.get("blend", "Normal")))
+		feedback_blend.select(bidx if bidx >= 0 else 0)
 	var ch: Dictionary = params.get("chromatic", {}) as Dictionary if params.get("chromatic", {}) is Dictionary else {}
 	SliderSpinLinkScr.set_mapped_param(chromatic_amount_slider, ch.get("amount", chromatic_amount_slider.value / 28.0), 28.0)
-	var rd: Dictionary = params.get("rd", {}) as Dictionary if params.get("rd", {}) is Dictionary else {}
-	if rd_feed_slider:
-		SliderSpinLinkScr.set_mapped_param(rd_feed_slider, rd.get("feed", 0.055), 100.0)
-	if rd_kill_slider:
-		SliderSpinLinkScr.set_mapped_param(rd_kill_slider, rd.get("kill", 0.062), 100.0)
-	if rd_speed_slider:
-		SliderSpinLinkScr.set_mapped_param(rd_speed_slider, rd.get("speed", 1.0), 100.0)
-	if rd_mix_slider:
-		SliderSpinLinkScr.set_mapped_param(rd_mix_slider, rd.get("mix_amount", 0.55), 100.0)
-	if rd_preset and rd.has("preset"):
-		var pidx := RD_PRESET_NAMES.find(str(rd["preset"]))
-		if pidx >= 0:
-			rd_preset.select(pidx)
+	var tn: Dictionary = params.get("tone", {}) as Dictionary if params.get("tone", {}) is Dictionary else {}
+	if tone_invert_slider:
+		SliderSpinLinkScr.set_mapped_param(tone_invert_slider, tn.get("invert", 0.0), 100.0)
+	if tone_brightness_slider:
+		SliderSpinLinkScr.set_mapped_param(tone_brightness_slider, tn.get("brightness", 1.0), 100.0)
+	if tone_contrast_slider:
+		SliderSpinLinkScr.set_mapped_param(tone_contrast_slider, tn.get("contrast", 1.0), 100.0)
+	if tone_saturation_slider:
+		SliderSpinLinkScr.set_mapped_param(tone_saturation_slider, tn.get("saturation", 1.0), 100.0)
+	var hole: Dictionary = params.get("hole", {}) as Dictionary if params.get("hole", {}) is Dictionary else {}
+	if hole_strength_slider:
+		SliderSpinLinkScr.set_mapped_param(hole_strength_slider, hole.get("strength", 0.75), 100.0)
+	if hole_size_slider:
+		SliderSpinLinkScr.set_mapped_param(hole_size_slider, hole.get("hole_size", 0.20), 100.0)
+	if hole_twist_slider:
+		SliderSpinLinkScr.set_mapped_param(hole_twist_slider, hole.get("twist", 0.0), 25.0)
+	if hole_softness_slider:
+		SliderSpinLinkScr.set_mapped_param(hole_softness_slider, hole.get("softness", 0.30), 100.0)
+	if hole_flow_slider:
+		SliderSpinLinkScr.set_mapped_param(hole_flow_slider, hole.get("flow", 0.50), 100.0)
+	if hole_cx_slider:
+		SliderSpinLinkScr.set_mapped_param(hole_cx_slider, hole.get("center_x", 0.5), 100.0)
+	if hole_cy_slider:
+		SliderSpinLinkScr.set_mapped_param(hole_cy_slider, hole.get("center_y", 0.5), 100.0)
+	if hole_shape and hole.has("shape"):
+		var sidx := HOLE_SHAPE_NAMES.find(str(hole["shape"]))
+		if sidx >= 0:
+			hole_shape.select(sidx)
 	var pc: Dictionary = params.get("point_cloud", {}) as Dictionary if params.get("point_cloud", {}) is Dictionary else {}
 	SliderSpinLinkScr.set_mapped_param(point_cloud_size_slider, pc.get("point_size", point_cloud_size_slider.value), 1.0)
 	var cam: Dictionary = params.get("camera_fx", {}) as Dictionary if params.get("camera_fx", {}) is Dictionary else {}

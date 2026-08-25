@@ -70,6 +70,10 @@ func has_raw_param(key: String) -> bool:
 	return _raw_params.has(key)
 
 
+func raw_param(key: String, fallback: Variant = null) -> Variant:
+	return _raw_params.get(key, fallback)
+
+
 const EXPR_CLAMP := 1.0e6
 
 
@@ -170,7 +174,9 @@ func band01(state: AudioState, band: String) -> float:
 			raw = state.peak
 		_:
 			raw = state.energy
-	return clampf(pow(clampf(raw, 0.0, 1.0), 0.55), 0.0, 1.0)
+	if band == "kick":
+		return 1.0 if raw > 0.5 else 0.0
+	return clampf(raw, 0.0, 1.0)
 
 
 func audio_scale(base: float, drive01: float, floor_ratio: float = 0.0) -> float:

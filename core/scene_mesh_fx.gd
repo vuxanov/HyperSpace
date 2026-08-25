@@ -8,6 +8,8 @@ const SOFTBODY_VERT_LIMIT := 1600
 const SOFTBODY_MAX_PLANE := 8.0
 const POINT_MESH_LIMIT := 512
 const POINT_VERT_LIMIT := 24000
+## UV grid for a single image/GIF/video plane (scatter keeps source verts).
+const MEDIA_POINT_GRID := 80
 ## Camera cull bit used to hide originals while the overlay child stays on layer 1.
 const PC_HIDE_LAYER_BIT := 19
 ## Cached PRIMITIVE_POINTS meshes keyed by source Mesh instance_id (shared by scatter clones).
@@ -28,6 +30,14 @@ const POINT_DEFORM_SHADER: Shader = preload("res://effects/point_cloud.gdshader"
 static func is_live(obj: Variant) -> bool:
 	## Safe before `is` / cast — Godot crashes if the left operand of `is` was already freed.
 	return obj != null and is_instance_valid(obj)
+
+
+static func is_media_instance(node: Node) -> bool:
+	if not is_live(node):
+		return false
+	if bool(node.get_meta("media_screen", false)):
+		return true
+	return node.get_parent() is FlythroughMediaProp or node is FlythroughMediaProp
 
 
 static func collect_meshes(root: Node, out: Array, skip_particles: bool = true, skip_media: bool = false) -> void:
@@ -120,14 +130,13 @@ static func pc_targets_from(params: Dictionary) -> Dictionary:
 	}
 
 
-static func make_points_mesh_from(mi: MeshInstance3D) -> ArrayMesh:
+static func make_points_mesh_from(mi: MeshInstance3D, dense_media: bool = true) -> ArrayMesh:
 	## Public wrapper so scatter MultiMesh can share the cached points mesh.
-	return _mesh_to_points(mi)
+	return _mesh_to_points(mi, dense_media)
 
 
-static func apply_point_cloud(root: Node, on: bool, point_size: float, _include_media: bool = false) -> Array:
-	## Media planes are never converted to points.
-	return apply_point_cloud_layers(root, [root], on, point_size, false)
+static func apply_point_cloud(root: Node, on: bool, point_size: float, include_media: bool = true) -> Array:
+	return apply_point_cloud_layers(root, [root], on, point_size, include_media)
 
 
 static func apply_point_cloud_layers(
@@ -135,9 +144,10 @@ static func apply_point_cloud_layers(
 	layer_roots: Array,
 	on: bool,
 	point_size: float,
-	_include_media: bool = false
+	include_media: bool = true
 ) -> Array:
 	## Build overlays once per mesh (cached ArrayMesh). Returns overlay nodes for size-only updates.
+	## Image/GIF/video screens use the same overlay path when include_media is true.
 	if world == null:
 		return []
 	if not on:
@@ -151,9 +161,8 @@ static func apply_point_cloud_layers(
 		if not is_live(root_any) or not (root_any is Node):
 			continue
 		var batch: Array = []
-		collect_meshes(root_any as Node, batch, true, true)
+		collect_meshes(root_any as Node, batch, true, not include_media)
 		_overlay_batch(batch, point_size, overlays, active)
-	# Media planes are never point-clouded.
 	_prune_point_overlays(world, active)
 	return overlays
 
@@ -233,11 +242,12 @@ static func _restore_pc_camera_cull(camera: Camera3D) -> void:
 
 static func _ensure_point_overlay(mi: MeshInstance3D, point_size: float) -> MeshInstance3D:
 	var overlay: MeshInstance3D = null
+	var media := is_media_instance(mi)
 	if mi.has_meta(META_PC):
 		var existing: Variant = mi.get_meta(META_PC)
 		if is_live(existing) and existing is MeshInstance3D:
 			overlay = existing as MeshInstance3D
-	if overlay != null and not overlay.has_meta("hs_pc_vcol"):
+	if overlay != null and (not overlay.has_meta("hs_pc_vcol") or (media and not overlay.has_meta("hs_pc_live_tex"))):
 		overlay.queue_free()
 		overlay = null
 		mi.remove_meta(META_PC)
@@ -254,14 +264,23 @@ static func _ensure_point_overlay(mi: MeshInstance3D, point_size: float) -> Mesh
 		overlay.layers = 1
 		overlay.set_meta("hs_pc_vcol", true)
 		overlay.material_override = make_point_deform_material(point_size)
+		if media:
+			overlay.set_meta("hs_pc_live_tex", true)
 		mi.add_child(overlay)
 		mi.set_meta(META_PC, overlay)
 		_hide_original_pc_layers(mi)
+		if media:
+			bind_overlay_live_texture(overlay, mi)
 	else:
 		overlay.layers = 1
 		_hide_original_pc_layers(mi)
 		ensure_point_deform_material(overlay, point_size)
 		update_overlay_point_size([overlay], point_size)
+		if media:
+			var want: ArrayMesh = _mesh_to_points(mi)
+			if want != null and overlay.mesh != want:
+				overlay.mesh = want
+			bind_overlay_live_texture(overlay, mi)
 	return overlay
 
 
@@ -309,21 +328,24 @@ static func _prune_point_overlays(root: Node, active: Dictionary) -> void:
 			_restore_point_overlay(mi)
 
 
-static func _mesh_to_points(mi: MeshInstance3D) -> ArrayMesh:
+static func _mesh_to_points(mi: MeshInstance3D, dense_media: bool = true) -> ArrayMesh:
 	if mi == null or mi.mesh == null:
 		return null
+	var live_tex := is_media_instance(mi)
+	if live_tex and dense_media:
+		return _media_grid_points(mi)
 	var mesh: Mesh = mi.mesh
 	var src_info: Dictionary = _albedo_source(mi)
 	var tex_id := 0
-	if src_info.get("tex") is Texture2D:
+	if (not live_tex) and src_info.get("tex") is Texture2D:
 		tex_id = (src_info["tex"] as Texture2D).get_instance_id()
-	var key := "%d_%d_n" % [mesh.get_instance_id(), tex_id]
+	var key := "%d_%d_%s" % [mesh.get_instance_id(), tex_id, "live" if live_tex else "n"]
 	if _pc_mesh_cache.has(key):
 		var cached: Variant = _pc_mesh_cache[key]
 		if is_live(cached) and cached is ArrayMesh and (cached as ArrayMesh).get_surface_count() > 0:
 			return cached as ArrayMesh
 		_pc_mesh_cache.erase(key)
-	var img: Image = _albedo_image(src_info.get("tex") as Texture2D)
+	var img: Image = null if live_tex else _albedo_image(src_info.get("tex") as Texture2D)
 	var tint: Color = src_info.get("tint", Color.WHITE)
 	var out := ArrayMesh.new()
 	var total := 0
@@ -347,7 +369,13 @@ static func _mesh_to_points(mi: MeshInstance3D) -> ArrayMesh:
 		total += pv.size()
 		if total > POINT_VERT_LIMIT * 2:
 			break
-		var baked: PackedColorArray = _bake_point_colors(pv, uvs, colors, img, tint)
+		var baked: PackedColorArray
+		if live_tex:
+			baked = PackedColorArray()
+			baked.resize(pv.size())
+			baked.fill(Color.WHITE)
+		else:
+			baked = _bake_point_colors(pv, uvs, colors, img, tint)
 		var packed: Array = []
 		packed.resize(Mesh.ARRAY_MAX)
 		packed[Mesh.ARRAY_VERTEX] = pv
@@ -445,6 +473,94 @@ static func _albedo_source(mi: MeshInstance3D) -> Dictionary:
 		if modu is Color:
 			alb *= modu as Color
 	return {"tex": tex, "tint": alb}
+
+
+static func bind_overlay_live_texture(overlay: GeometryInstance3D, source: GeometryInstance3D) -> void:
+	## Copy the current albedo texture onto a point overlay so GIF/video frames keep moving.
+	if not is_live(overlay) or not is_live(source):
+		return
+	var mat: Material = overlay.material_override
+	if not (mat is ShaderMaterial):
+		return
+	var sm := mat as ShaderMaterial
+	if not shader_usable(sm):
+		return
+	var src_mat: Material = source.material_override
+	var tex: Texture2D = null
+	var tint := Color.WHITE
+	var exposure := 1.0
+	if src_mat is ShaderMaterial:
+		var shm := src_mat as ShaderMaterial
+		var bound: Variant = shm.get_shader_parameter("tex_albedo")
+		if bound == null:
+			bound = shm.get_shader_parameter("albedo_tex")
+		if bound is Texture2D:
+			tex = bound as Texture2D
+		var alb_c: Variant = shm.get_shader_parameter("albedo_color")
+		if alb_c is Color:
+			tint = alb_c as Color
+		var modu: Variant = shm.get_shader_parameter("modulate")
+		if modu is Color:
+			tint *= modu as Color
+		var exp: Variant = shm.get_shader_parameter("exposure_comp")
+		if typeof(exp) == TYPE_FLOAT or typeof(exp) == TYPE_INT:
+			exposure = float(exp)
+	elif src_mat is BaseMaterial3D:
+		var bm := src_mat as BaseMaterial3D
+		tex = bm.albedo_texture
+		tint = bm.albedo_color
+	if tex != null:
+		sm.set_shader_parameter("tex_albedo", tex)
+		sm.set_shader_parameter("has_tex", 1.0)
+		sm.set_shader_parameter("albedo", tint)
+		sm.set_shader_parameter("exposure_comp", exposure)
+	else:
+		sm.set_shader_parameter("has_tex", 0.0)
+
+
+static func _media_grid_points(mi: MeshInstance3D) -> ArrayMesh:
+	## Denser UV lattice than the deform grid so a still/GIF reads as a point image.
+	var size := Vector2(1.6, 1.0)
+	if mi.mesh is PlaneMesh:
+		size = (mi.mesh as PlaneMesh).size
+	var n := maxi(MEDIA_POINT_GRID, 8)
+	var key := "media_grid_%.4f_%.4f_%d" % [size.x, size.y, n]
+	if _pc_mesh_cache.has(key):
+		var cached: Variant = _pc_mesh_cache[key]
+		if is_live(cached) and cached is ArrayMesh and (cached as ArrayMesh).get_surface_count() > 0:
+			return cached as ArrayMesh
+		_pc_mesh_cache.erase(key)
+	var count := n * n
+	var verts := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	var nrm := PackedVector3Array()
+	var cols := PackedColorArray()
+	verts.resize(count)
+	uvs.resize(count)
+	nrm.resize(count)
+	cols.resize(count)
+	var i := 0
+	for y in n:
+		var v := float(y) / float(n - 1)
+		for x in n:
+			var u := float(x) / float(n - 1)
+			verts[i] = Vector3((u - 0.5) * size.x, (0.5 - v) * size.y, 0.0)
+			uvs[i] = Vector2(u, v)
+			nrm[i] = Vector3(0.0, 0.0, 1.0)
+			cols[i] = Color.WHITE
+			i += 1
+	var packed: Array = []
+	packed.resize(Mesh.ARRAY_MAX)
+	packed[Mesh.ARRAY_VERTEX] = verts
+	packed[Mesh.ARRAY_TEX_UV] = uvs
+	packed[Mesh.ARRAY_NORMAL] = nrm
+	packed[Mesh.ARRAY_COLOR] = cols
+	var out := ArrayMesh.new()
+	out.add_surface_from_arrays(Mesh.PRIMITIVE_POINTS, packed)
+	if _pc_mesh_cache.size() > 256:
+		_pc_mesh_cache.clear()
+	_pc_mesh_cache[key] = out
+	return out
 
 
 static func _albedo_image(tex: Texture2D) -> Image:

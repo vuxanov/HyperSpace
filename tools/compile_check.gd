@@ -12,13 +12,14 @@ func _init() -> void:
 		"res://ui/dual_range_slider.gd",
 		"res://effects/effect_layer.gd",
 		"res://effects/fx_automation.gd",
-		"res://effects/reaction_diffusion_effect.gd",
+		"res://effects/hole_effect.gd",
 		"res://effects/point_cloud_effect.gd",
 		"res://effects/camera_fx_effect.gd",
 		"res://effects/ascii_effect.gd",
 		"res://effects/ascii_charset.gd",
 		"res://core/scene_mesh_fx.gd",
 		"res://effects/feedback_effect.gd",
+		"res://effects/tone_effect.gd",
 		"res://effects/effect_stack.gd",
 		"res://core/reactivity_hub.gd",
 		"res://autoload/reactivity_settings.gd",
@@ -34,6 +35,8 @@ func _init() -> void:
 		"res://effects/media_screen.gdshader",
 		"res://effects/point_cloud.gdshader",
 		"res://effects/lens_distort.gdshader",
+		"res://effects/tone_effect.gdshader",
+		"res://effects/feedback_effect.gdshader",
 	])
 	var failed := 0
 	for path in paths:

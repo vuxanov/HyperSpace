@@ -114,9 +114,26 @@ func _apply_session_sidebar_params(data: Dictionary) -> void:
 		item.params["camera_path"] = style_val
 		ShowDirector.set_active_cue_param("path_style", style_val)
 	if sb.has("env_scale"):
-		var scale_val := maxf(float(sb["env_scale"]), 0.01)
+		var raw: Variant = sb["env_scale"]
 		var env_cfg: Dictionary = (item.params.get("environment", {}) as Dictionary).duplicate(true)
-		env_cfg["user_scale"] = scale_val
+		var scale_val := 1.0
+		var raw_s := str(raw).strip_edges()
+		if raw is String and not raw_s.is_empty() and not raw_s.is_valid_float():
+			env_cfg["user_scale_expr"] = raw_s
+			if not env_cfg.has("user_scale") or float(env_cfg.get("user_scale", 0.0)) <= 0.0:
+				env_cfg["user_scale"] = 1.0
+			var hub := get_node_or_null("/root/DriverHub")
+			if hub != null and hub.has_method("eval_value"):
+				scale_val = maxf(float(hub.call("eval_value", raw_s, 1.0)), 0.01)
+			else:
+				scale_val = maxf(float(env_cfg.get("user_scale", 1.0)), 0.01)
+		else:
+			scale_val = maxf(float(raw), 0.01)
+			# 0.01 is the old float(expression) floor — a vanished world, not a real size.
+			if scale_val < 0.05 and not env_cfg.has("user_scale_expr"):
+				scale_val = 1.0
+			env_cfg["user_scale"] = scale_val
+			env_cfg.erase("user_scale_expr")
 		item.params["environment"] = env_cfg
 		ShowDirector.set_active_cue_param("env_scale", scale_val)
 	if sb.has("scatter_global_scale") and (sb["scatter_global_scale"] is float or sb["scatter_global_scale"] is int):

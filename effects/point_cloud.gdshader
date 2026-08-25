@@ -21,6 +21,11 @@ uniform float cloth_wind = 0.0;
 uniform float cloth_time = 0.0;
 uniform float cloth_gravity = 1.0;
 
+#include "res://nonlinear_projection/nonlinear_projection_instance_uniforms.gdshaderinc"
+#include "res://nonlinear_projection/nonlinear_projection.gdshaderinc"
+
+varying float np_t;
+
 float hash31(vec3 p) {
 	p = fract(p * 0.1031);
 	p += dot(p, p.yzx + 33.33);
@@ -96,14 +101,20 @@ void vertex() {
 		);
 		VERTEX += force * loose * (0.35 + hang);
 	}
+	np_t = np_warp_vertex_and_normal(VERTEX, NORMAL, MODELVIEW_MATRIX, PROJECTION_MATRIX[3][3], CAMERA_POSITION_WORLD);
 }
 
 void fragment() {
 	vec3 rgb = albedo.rgb * COLOR.rgb;
 	if (has_tex > 0.5) {
-		rgb *= texture(tex_albedo, UV).rgb;
+		vec4 t = texture(tex_albedo, UV);
+		if (t.a < 0.06) {
+			discard;
+		}
+		rgb *= t.rgb;
 	}
 	rgb *= exposure_comp;
 	ALBEDO = rgb;
 	EMISSION = rgb;
+	np_apply_debug_albedo(ALBEDO, EMISSION, np_t);
 }

@@ -23,7 +23,7 @@ func _run() -> void:
 		quit(2)
 		return
 
-	for eid in ["glitch", "chromatic", "rd"]:
+	for eid in ["glitch", "chromatic", "hole"]:
 		director.call("set_effect", str(eid), true, {
 			"intensity": 1.2,
 			"amount": 1.5,

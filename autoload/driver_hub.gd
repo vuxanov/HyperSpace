@@ -17,14 +17,14 @@ const TYPE_RANDOM := "random"
 ## Shown in the Drivers tab Built-in section (name, one-line hint). Picker uses the same ids.
 const BUILTIN_HINTS: Array = [
 	["time", "Seconds since session start"],
-	["volume", "Overall level from the EQ spectrum (~1 when loud)"],
-	["energy", "Mean of the 16 EQ bins (~1 when loud)"],
-	["peak", "Loudest EQ bin (~1 when loud)"],
-	["bass", "Low EQ bins (~1 when loud, 0 silence)"],
-	["mids", "Mid EQ bins (~1 when loud)"],
-	["highs", "High EQ bins (~1 when loud)"],
-	["kick", "Onset envelope (~1 on hits)"],
-	["beat", "1 on beat/onset frame, else 0"],
+	["volume", "Gated overall loudness (0 when silent)"],
+	["energy", "Mean band presence after the noise gate"],
+	["peak", "Loudest gated band"],
+	["bass", "Bass loudness the mic can hear (~125–500 Hz)"],
+	["mids", "Mid loudness (~315–3150 Hz)"],
+	["highs", "Hats / cymbals / air (~3–20 kHz)"],
+	["kick", "Kick gate: 1 on a 40–130 Hz hit, 0 otherwise"],
+	["beat", "1 on a hit (kick, clap, snare, plosive), else 0"],
 	["lfo1", "Default LFO — oscillates around 1 (tweak rate/depth/wave below)"],
 	["lfo2", "Second default LFO — oscillates around 1"],
 	["noise", "Smoothed noise around 1 (0–2)"],
@@ -132,7 +132,7 @@ func _norm_wave(wave: String) -> String:
 
 
 func _on_analyzer_state(_state: Variant = null) -> void:
-	## Ignore the AudioState payload. Sample the same ui_bands the EQ uses.
+	## Ignore the AudioState payload. Sample get_driver_audio (EQ bins + onset).
 	_sample_audio()
 
 
@@ -196,7 +196,7 @@ func _apply_ui_bands(bands: PackedFloat32Array) -> void:
 	_values["energy"] = energy_ui
 	_values["peak"] = peak_ui
 	_values["volume"] = maxf(energy_ui, peak_ui)
-	_values["kick"] = bass_ui
+	_values["kick"] = 0.0  # fallback path has no onset detector
 	_values["beat"] = 0.0
 	_write_bands(bands)
 	_renorm_audio_levels()
@@ -220,33 +220,14 @@ func _mean_range(bands: PackedFloat32Array, from_idx: int, to_idx: int) -> float
 
 
 func _renorm_audio_levels() -> void:
-	## Map whatever the analyzer emitted (often 1e-3 FFT leftover) so loud ≈ 1, silence ≈ 0.
-	var peak := 0.0
-	for k in ["volume", "energy", "peak", "bass", "mids", "highs"]:
-		peak = maxf(peak, float(_values.get(k, 0.0)))
-	for i in 16:
-		peak = maxf(peak, float(_values.get("band%d" % i, 0.0)))
-	if peak > 1e-8:
-		if peak > _audio_peak_ema:
-			_audio_peak_ema = lerpf(_audio_peak_ema, peak, 0.4)
-		else:
-			_audio_peak_ema = lerpf(_audio_peak_ema, peak, 0.02)
-		_audio_peak_ema = maxf(_audio_peak_ema, peak * 0.9)
-	else:
-		_audio_peak_ema = lerpf(_audio_peak_ema, 0.0, 0.12)
-		if _audio_peak_ema < 1e-6:
-			_audio_peak_ema = 0.0
-		return
-	if _audio_peak_ema <= 1e-8:
-		return
-	var scale := 1.0 / _audio_peak_ema
-	for k in ["volume", "energy", "peak", "bass", "mids", "highs"]:
-		_values[k] = clampf(float(_values.get(k, 0.0)) * scale, 0.0, 2.0)
+	## Analyzer already gates, differentiates, and applies intensity/sensitivity.
+	## Peak-renormalizing here made every band look the same and killed the sliders.
+	for k in ["volume", "energy", "peak", "bass", "mids", "highs", "kick", "beat"]:
+		_values[k] = clampf(float(_values.get(k, 0.0)), 0.0, 2.0)
 	for i in 16:
 		var bk := "band%d" % i
-		_values[bk] = clampf(float(_values.get(bk, 0.0)) * scale, 0.0, 2.0)
-	## Kick is an onset envelope (0–1). Lift with scaled bass so it is not left at 0.000x.
-	_values["kick"] = clampf(maxf(float(_values.get("kick", 0.0)), float(_values.get("bass", 0.0))), 0.0, 2.0)
+		_values[bk] = clampf(float(_values.get(bk, 0.0)), 0.0, 2.0)
+	_audio_peak_ema = 0.0
 
 
 func _tick_generated(delta: float) -> void:

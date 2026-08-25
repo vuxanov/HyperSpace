@@ -3,6 +3,7 @@ render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_burley, specular_sc
 
 // Vertex noise deformation — feature size via noise_scale; amount in world units.
 // noise_axes masks X/Y/Z displace independently (like Scale X/Y/Z).
+// Samplers first; warp instance uniforms after so they cannot steal albedo slots.
 
 uniform vec4 albedo_color : source_color = vec4(1.0);
 uniform sampler2D albedo_tex : source_color, filter_linear_mipmap, repeat_enable;
@@ -20,7 +21,11 @@ uniform float cloth_wind = 0.0;
 uniform float cloth_time = 0.0;
 uniform float cloth_gravity = 1.0;
 uniform float use_vertex_color = 0.0;
-uniform float point_size = 0.0;
+
+#include "res://nonlinear_projection/nonlinear_projection_instance_uniforms.gdshaderinc"
+#include "res://nonlinear_projection/nonlinear_projection.gdshaderinc"
+
+varying float np_t;
 
 float hash31(vec3 p) {
 	p = fract(p * 0.1031);
@@ -62,9 +67,6 @@ float fbm(vec3 p) {
 }
 
 void vertex() {
-	if (point_size > 0.5) {
-		POINT_SIZE = max(point_size, 1.0);
-	}
 	if (noise_amount > 0.0005) {
 		float feature = max(noise_scale, 0.35);
 		float freq = 1.0 / feature;
@@ -101,6 +103,7 @@ void vertex() {
 		);
 		VERTEX += force * loose * (0.35 + hang);
 	}
+	np_t = np_warp_vertex_and_normal(VERTEX, NORMAL, MODELVIEW_MATRIX, PROJECTION_MATRIX[3][3], CAMERA_POSITION_WORLD);
 }
 
 void fragment() {
@@ -120,4 +123,5 @@ void fragment() {
 		ROUGHNESS = roughness;
 		METALLIC = metallic;
 	}
+	np_apply_debug_albedo(ALBEDO, EMISSION, np_t);
 }

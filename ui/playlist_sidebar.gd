@@ -314,15 +314,22 @@ func _entry_user_scale(entry: Dictionary) -> float:
 
 
 func _set_entry_user_scale(entry: Dictionary, scale_val: float, scale_raw: Variant = null) -> void:
-	var s := maxf(scale_val, 0.0)
-	entry["user_scale"] = s
-	var cfg: Dictionary = (entry.get("config", {}) as Dictionary).duplicate(true)
-	cfg["user_scale"] = s
 	var expr := ""
 	if scale_raw == null:
 		expr = _entry_scale_expr(entry)
 	elif _is_scale_expr(scale_raw):
 		expr = str(scale_raw).strip_edges()
+	var s: float
+	if expr.is_empty():
+		s = maxf(scale_val, 0.0)
+	else:
+		# Live eval must not ratchet/reset the stored numeric base.
+		s = _entry_scale_snapshot(entry)
+		if s <= 0.0:
+			s = 1.0
+	entry["user_scale"] = s
+	var cfg: Dictionary = (entry.get("config", {}) as Dictionary).duplicate(true)
+	cfg["user_scale"] = s
 	if expr.is_empty():
 		entry.erase("user_scale_expr")
 		cfg.erase("user_scale_expr")
@@ -333,11 +340,13 @@ func _set_entry_user_scale(entry: Dictionary, scale_val: float, scale_raw: Varia
 
 
 func _stamp_scale_on_cfg(cfg: Dictionary, entry: Dictionary, scale_val: float) -> void:
-	cfg["user_scale"] = maxf(scale_val, 0.0)
 	var expr := _entry_scale_expr(entry)
 	if expr.is_empty():
+		cfg["user_scale"] = maxf(scale_val, 0.0)
 		cfg.erase("user_scale_expr")
 	else:
+		var base := _entry_scale_snapshot(entry)
+		cfg["user_scale"] = base if base > 0.0 else 1.0
 		cfg["user_scale_expr"] = expr
 
 
@@ -431,33 +440,39 @@ func _push_live_scale(tab: int, scale_val: float) -> void:
 			if idx < ShowDirector.items.size():
 				var params: Dictionary = ShowDirector.items[idx].params
 				var env_cfg: Dictionary = (params.get("environment", {}) as Dictionary).duplicate(true)
-				env_cfg["user_scale"] = scale_val
 				if expr.is_empty():
+					env_cfg["user_scale"] = scale_val
 					env_cfg.erase("user_scale_expr")
 				else:
 					env_cfg["user_scale_expr"] = expr
+					if not env_cfg.has("user_scale") or float(env_cfg.get("user_scale", 0.0)) <= 0.0:
+						env_cfg["user_scale"] = 1.0
 				params["environment"] = env_cfg
 			ShowDirector.set_active_cue_param("env_scale", scale_val)
 		TAB_MAIN:
 			if idx < ShowDirector.items.size():
 				var params_m: Dictionary = ShowDirector.items[idx].params
 				var main_cfg: Dictionary = (params_m.get("centerpiece", {}) as Dictionary).duplicate(true)
-				main_cfg["user_scale"] = scale_val
 				if expr.is_empty():
+					main_cfg["user_scale"] = scale_val
 					main_cfg.erase("user_scale_expr")
 				else:
 					main_cfg["user_scale_expr"] = expr
+					if not main_cfg.has("user_scale") or float(main_cfg.get("user_scale", 0.0)) <= 0.0:
+						main_cfg["user_scale"] = 1.0
 				params_m["centerpiece"] = main_cfg
 			ShowDirector.set_active_cue_param("centerpiece_scale", scale_val)
 		TAB_SCATTER:
 			if idx < ShowDirector.items.size():
 				var params_s: Dictionary = ShowDirector.items[idx].params
 				var sc_cfg: Dictionary = (params_s.get("scatter", {}) as Dictionary).duplicate(true)
-				sc_cfg["user_scale"] = scale_val
 				if expr.is_empty():
+					sc_cfg["user_scale"] = scale_val
 					sc_cfg.erase("user_scale_expr")
 				else:
 					sc_cfg["user_scale_expr"] = expr
+					if not sc_cfg.has("user_scale") or float(sc_cfg.get("user_scale", 0.0)) <= 0.0:
+						sc_cfg["user_scale"] = 1.0
 				params_s["scatter"] = sc_cfg
 			ShowDirector.set_active_cue_param("scatter_scale", scale_val)
 
@@ -752,10 +767,8 @@ func _tick_entry_scale_driver(tab: int) -> void:
 			# Header Env scale already has this driver; that path ticks it.
 			return
 	var scale_val := maxf(_eval_driven_value(expr, _entry_scale_snapshot(entry)), 0.0)
-	entry["user_scale"] = scale_val
 	var cfg: Dictionary = entry.get("config", {}) as Dictionary
 	if not cfg.is_empty():
-		cfg["user_scale"] = scale_val
 		if not cfg.has("user_scale_expr"):
 			cfg["user_scale_expr"] = expr
 	_push_live_scale(tab, scale_val)
@@ -957,21 +970,23 @@ func _on_env_scale_changed(value: float) -> void:
 	if idx < 0:
 		return
 	var scale_val := maxf(value, 0.01)
+	var raw: Variant = SliderSpinLinkScr.param_of_spin(env_scale) if env_scale else scale_val
+	var driven := _is_scale_expr(raw)
 	if idx < ShowDirector.items.size():
 		var params: Dictionary = ShowDirector.items[idx].params
 		var env_cfg: Dictionary = (params.get("environment", {}) as Dictionary).duplicate(true)
-		env_cfg["user_scale"] = scale_val
-		var raw: Variant = SliderSpinLinkScr.param_of_spin(env_scale) if env_scale else scale_val
-		if _is_scale_expr(raw):
+		if driven:
 			env_cfg["user_scale_expr"] = str(raw).strip_edges()
+			if not env_cfg.has("user_scale") or float(env_cfg.get("user_scale", 0.0)) <= 0.0:
+				env_cfg["user_scale"] = 1.0
 		else:
+			env_cfg["user_scale"] = scale_val
 			env_cfg.erase("user_scale_expr")
 		params["environment"] = env_cfg
 	# Keep selected list entry in sync with header Env scale (number or expression).
 	if _sel_env >= 0 and _sel_env < _env_entries.size():
-		var entry_raw: Variant = SliderSpinLinkScr.param_of_spin(env_scale) if env_scale else scale_val
-		_set_entry_user_scale(_env_entries[_sel_env], scale_val, entry_raw)
-	# Live scale only — avoid full env reload.
+		_set_entry_user_scale(_env_entries[_sel_env], scale_val, raw)
+	# Live scale only — avoid full env reload. Stored base stays if driven.
 	ShowDirector.set_active_cue_param("env_scale", scale_val)
 	_maybe_autosave_spin(env_scale)
 

@@ -60,6 +60,9 @@ uniform float u_hs_noise_scale = 4.0;
 uniform float u_hs_noise_time = 0.0;
 uniform vec3 u_hs_noise_axes = vec3(1.0, 1.0, 1.0);
 
+#include "res://nonlinear_projection/nonlinear_projection_instance_uniforms.gdshaderinc"
+#include "res://nonlinear_projection/nonlinear_projection.gdshaderinc"
+
 #ifdef COLORMAP_PER_VERTEX
 varying float v_hole;
 varying vec3 v_tint0;
@@ -75,6 +78,7 @@ varying vec2 v_ground_uv1;
 varying vec2 v_ground_uv2;
 varying vec3 v_ground_uv3;
 varying float v_distance_to_camera;
+varying float np_t;
 
 
 vec3 unpack_normal(vec4 rgba) {
@@ -271,6 +275,7 @@ void vertex() {
 	NORMAL = u_terrain_normal_basis * unpack_normal(texture(u_terrain_normalmap, UV));
 
 	v_distance_to_camera = distance(wpos.xyz, CAMERA_POSITION_WORLD);
+	np_t = np_warp_vertex_and_normal(VERTEX, NORMAL, MODELVIEW_MATRIX, PROJECTION_MATRIX[3][3], CAMERA_POSITION_WORLD);
 }
 
 void fragment() {
@@ -420,4 +425,5 @@ void fragment() {
 
 	NORMAL = (VIEW_MATRIX * (vec4(normal, 0.0))).xyz;
 	SPECULAR = u_specular;
+	np_apply_debug_albedo(ALBEDO, EMISSION, np_t);
 }

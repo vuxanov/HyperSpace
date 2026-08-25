@@ -55,7 +55,7 @@ stretch = true
 
 [node name="OutputViewport" type="SubViewport" parent="Root/OutputPane/OutputColumn/OutputViewportContainer" unique_id=214036692]
 handle_input_locally = false
-size = Vector2i(1008, 1049)
+size = Vector2i(1111, 1049)
 render_target_update_mode = 4
 
 [node name="OutputStack" type="Control" parent="Root/OutputPane/OutputColumn/OutputViewportContainer/OutputViewport" unique_id=1048436927]

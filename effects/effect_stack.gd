@@ -3,6 +3,8 @@ class_name EffectStack
 
 ## Factory and container for stackable effect layers on the output.
 
+const _HoleEffect := preload("res://effects/hole_effect.gd")
+
 
 func create_effect(effect_id: String) -> EffectLayer:
 	match effect_id:
@@ -14,8 +16,10 @@ func create_effect(effect_id: String) -> EffectLayer:
 			return GlitchEffect.new()
 		"chromatic":
 			return ChromaticEffect.new()
-		"rd":
-			return ReactionDiffusionEffect.new()
+		"tone":
+			return ToneEffect.new()
+		"hole":
+			return _HoleEffect.new() as EffectLayer
 		"wireframe":
 			return WireframeEffect.new()
 		"point_cloud":

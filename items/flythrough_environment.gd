@@ -161,7 +161,10 @@ func configure_from_params(params: Dictionary) -> void:
 	if params.has("env_scale") or params.has("environment_scale"):
 		var top_scale := float(params.get("env_scale", params.get("environment_scale", 1.0)))
 		var env_cfg: Dictionary = (_layer_configs.get("environment", {}) as Dictionary).duplicate(true)
-		env_cfg["user_scale"] = top_scale
+		# Top-level env_scale is the live eval. Do not bake it over a stored driver base.
+		var expr := str(env_cfg.get("user_scale_expr", "")).strip_edges()
+		if expr.is_empty() or expr.is_valid_float():
+			env_cfg["user_scale"] = top_scale
 		_layer_configs["environment"] = env_cfg
 	if params.has("scatter_global_scale"):
 		var sc_cfg: Dictionary = (_layer_configs.get("scatter", {}) as Dictionary).duplicate(true)
@@ -274,7 +277,7 @@ func _apply_point_cloud_now() -> void:
 		_clear_point_cloud()
 		return
 	_pc_overlays = SceneMeshFx.apply_point_cloud_layers(
-		self, roots, true, _point_cloud_size, false
+		self, roots, true, _point_cloud_size, true
 	)
 	_sync_scatter_mm_point_cloud()
 	_pc_built = true
@@ -315,15 +318,18 @@ func _sync_scatter_mm_point_cloud() -> void:
 	if not _point_cloud_on or not bool(_point_cloud_targets.get("target_scatter", true)):
 		return
 	for mmi in _scatter_mm_nodes:
-		if not is_instance_valid(mmi) or bool(mmi.get_meta("media_screen", false)):
+		if not is_instance_valid(mmi):
 			continue
+		var is_media := bool(mmi.get_meta("media_screen", false))
 		var src_mm: MultiMesh = mmi.multimesh
 		if src_mm == null or src_mm.mesh == null:
 			continue
 		var tmp := MeshInstance3D.new()
 		tmp.mesh = src_mm.mesh
 		tmp.material_override = mmi.material_override
-		var pts: ArrayMesh = _SceneMeshFx.make_points_mesh_from(tmp)
+		if is_media:
+			tmp.set_meta("media_screen", true)
+		var pts: ArrayMesh = _SceneMeshFx.make_points_mesh_from(tmp, not is_media)
 		tmp.free()
 		if pts == null:
 			continue
@@ -348,6 +354,8 @@ func _sync_scatter_mm_point_cloud() -> void:
 			mmi.set_meta("hs_pc_shadow", mmi.cast_shadow)
 		mmi.layers = 1 << 19
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		if is_media:
+			SceneMeshFx.bind_overlay_live_texture(pc_mi, mmi)
 
 
 func _restamp_pc_deform() -> void:
@@ -1756,6 +1764,31 @@ func _process(delta: float) -> void:
 		_light.global_position = _camera.global_position + Vector3(0, 1.2, 0)
 	_update_centerpiece_transform(delta)
 	_sync_particles()
+	_sync_pc_media_textures()
+
+
+func _sync_pc_media_textures() -> void:
+	## GIF swaps ImageTexture objects; video updates pixels in place. Keep overlay samplers current.
+	if not _point_cloud_on:
+		return
+	for ov_any in _pc_overlays:
+		if not SceneMeshFx.is_live(ov_any) or not (ov_any is MeshInstance3D):
+			continue
+		var ov := ov_any as MeshInstance3D
+		var parent := ov.get_parent()
+		if not SceneMeshFx.is_live(parent) or not (parent is GeometryInstance3D):
+			continue
+		var pgi := parent as GeometryInstance3D
+		if SceneMeshFx.is_media_instance(pgi):
+			SceneMeshFx.bind_overlay_live_texture(ov, pgi)
+	for mmi in _scatter_mm_nodes:
+		if not is_instance_valid(mmi) or not bool(mmi.get_meta("media_screen", false)):
+			continue
+		if not mmi.has_meta("hs_pc_overlay"):
+			continue
+		var pc_any: Variant = mmi.get_meta("hs_pc_overlay")
+		if SceneMeshFx.is_live(pc_any) and pc_any is GeometryInstance3D:
+			SceneMeshFx.bind_overlay_live_texture(pc_any as GeometryInstance3D, mmi)
 
 
 func _sync_particles() -> void:
@@ -2013,11 +2046,10 @@ func _set_particle_amount_stable(particles: GPUParticles3D, target: int, cache_f
 
 func _apply_environment_audio(state: AudioState, lfo: float) -> void:
 	_apply_environment_rotation(state, lfo)
-	if RH.property_active("scale"):
-		var amt := RH.scale_multiplier()
-		_apply_env_display_scale(RH.scale_vector(amt))
-	else:
-		_apply_env_display_scale()
+	# World size is Environment Scale only. Scale deform (Play All / squash) must
+	# not multiply _env_root — camera path ignores this scale, so 1+amount (default
+	# 25 → 26×, or kick*2 snapping to 0) hid Xconvento and jumped to the driver base.
+	_apply_env_display_scale()
 	if RH.property_active("emission"):
 		var ed := RH.drive_value("emission", state, lfo)
 		_drive_mesh_emission(_env_root, ed, false)
@@ -2752,11 +2784,14 @@ func _stamp_one_pc_overlay(
 	var nseed := Vector3.ZERO
 	var parent := gi.get_parent()
 	if SceneMeshFx.is_live(parent) and parent is GeometryInstance3D:
-		var pmat: Material = (parent as GeometryInstance3D).material_override
+		var pgi := parent as GeometryInstance3D
+		var pmat: Material = pgi.material_override
 		if pmat is ShaderMaterial and (pmat as ShaderMaterial).shader != null:
 			var ns: Variant = (pmat as ShaderMaterial).get_shader_parameter("noise_seed")
 			if ns is Vector3:
 				nseed = ns as Vector3
+		if SceneMeshFx.is_media_instance(pgi):
+			SceneMeshFx.bind_overlay_live_texture(gi, pgi)
 	if nseed == Vector3.ZERO:
 		nseed = Vector3(float(gi.get_instance_id() % 997), 0.37, 0.19)
 	sm.set_shader_parameter("noise_seed", nseed)
@@ -2802,8 +2837,7 @@ func _make_noise_shader_from(base: Material, nseed: Vector3, for_points: bool = 
 	sm.set_shader_parameter("cloth_wind", 0.0)
 	sm.set_shader_parameter("cloth_gravity", 1.0)
 	sm.set_shader_parameter("cloth_time", 0.0)
-	sm.set_shader_parameter("use_vertex_color", 1.0 if for_points else 0.0)
-	sm.set_shader_parameter("point_size", _point_cloud_size if for_points else 0.0)
+	sm.set_shader_parameter("use_vertex_color", 0.0)
 	if tex != null:
 		sm.set_shader_parameter("albedo_tex", tex)
 		sm.set_shader_parameter("use_albedo_tex", 1.0)
