@@ -21,8 +21,6 @@ var rotation_z: bool = true
 ## Peak spin strength (UI: Rotation Amount). Scales reactive angular rate.
 var rotation_amount: float = 1.0
 var affect_noise: bool = false
-## When true, Camera motion section also drives camera look via rotation amount/axes.
-var affect_camera_rotation: bool = false
 var scale_amount: float = 25.0
 ## World-unit displace strength (UI: Displace Strength).
 var noise_amount: float = 28.0
@@ -55,7 +53,7 @@ var rotation_target_lights: bool = false
 var rotation_target_camera: bool = false
 
 ## Per-property drivers: off | bass | mids | highs | kick | energy | lfo
-var scale_source: String = "bass"
+var scale_source: String = "off"
 var emission_source: String = "mids"
 var rotation_source: String = "highs"
 var light_source: String = "energy"
@@ -129,7 +127,6 @@ func reset_to_defaults() -> void:
 	rotation_z = true
 	rotation_amount = 1.0
 	affect_noise = false
-	affect_camera_rotation = false
 	scale_amount = 25.0
 	noise_amount = 28.0
 	noise_scale = 4.0
@@ -154,7 +151,7 @@ func reset_to_defaults() -> void:
 	rotation_target_environment = false
 	rotation_target_lights = false
 	rotation_target_camera = false
-	scale_source = "bass"
+	scale_source = "off"
 	emission_source = "mids"
 	rotation_source = "highs"
 	light_source = "energy"

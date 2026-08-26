@@ -1,5 +1,641 @@
 # HyperSpace Issue Log
 
+## 2026-08-26 - ASCII glyphs not showing (need bundled fonts)
+
+**Issue.** User: "For ASCII characters I think you need to include some fonts, Google fonts, I don't know because they're not really showing characters that they should be showing." Missing/wrong ASCII and special glyphs in the ASCII post-process (tofu, blanks, or unrecognizable stand-ins).
+
+**Why (plan).**
+1. Log this (done). No commit.
+2. ASCII is a luminance→charset atlas shader (`effects/ascii_charset.gd` + `ascii_effect.gd`). Atlas is a handmade 5×7 bitmap table, not a font. `filter_charset` **drops** any character not in that table — many real ASCII letters are absent (e, s, g, y, 2–7, 9, A, D, E, F, …). Preset symbols (blocks, runes, Cyrillic, emoji) are crude 5×7 stand-ins, so they do not read as the intended characters. Project has **no** `.ttf`/`.otf` at all.
+3. Bundle OFL Google Noto fonts with ASCII + the Unicode the presets actually use (block elements, braille, Cyrillic, runes, symbols, katakana, emoji). Import as FontFile. Rasterize the atlas from the font (bitmap table only as fallback). Apply in `AsciiCharset.build_atlas` / `filter_charset`.
+4. Verify filter keeps preset glyphs; playtest ASCII styles so letters/symbols match the charset.
+
+**Resolution.** ASCII post-process was a handmade 5×7 bitmap table (`AsciiCharset.BITMAPS`), not a font. `filter_charset` dropped any character missing from that table — including common ASCII letters (e, s, g, y, 2–7, 9, A, D, E, …) — so those glyphs never appeared. Preset symbols were crude stand-ins. Bundled OFL Google Noto fonts under `res://assets/fonts/` and rasterize the shader atlas from them (viewport bake, then FontFile, then bitmap fallback): Noto Sans Mono (ASCII/Latin/Cyrillic), Noto Sans Symbols + Symbols 2 (blocks, braille, dingbats), Noto Sans Runic, Noto Emoji. Applied in `AsciiCharset.build_atlas` / `filter_charset` (used by `AsciiEffect`). Vulkan bake of `eAs2` (letters with no bitmaps) rendered real Mono glyphs. Enable ASCII in Effects and step Style (Standard / Cyrillic / Blocks / Emoji) — letters and symbols should match the charset, not tofu or 5×7 blobs. No commit.
+
+## 2026-08-25 - Reset to default does not clear Material Override
+
+**Issue.** User: "And resetting back to default doesn't reset the material override?" After Reset defaults, the Material Override checkbox can turn off while cladding / chrome / gold still sits on the meshes.
+
+**Why (plan).** Same workstream as Noise Displace on Main/Outer — they share `material_override` slots.
+1. Log this (done). No commit.
+2. `ShowDirector.reset_stage_to_defaults` turns the FX off first (`set_effect(false)` restores `hs_mat_ov_backup`). Flythrough then `_clear_noise_deform`, which can write `_noise_backup` back onto the mesh. If noise wrapped a stamped PBR look, that backup **is** the cladding — reset puts it back with no `hs_mat_ov` meta, so a later restore is a no-op.
+3. Flythrough `reset_stage_to_defaults` never forces `_mat_override_on = false` or a post-noise restore. `_restore_material_override_one` also skips meshes that have our shared PBR override but no meta.
+4. Fix: after noise clear, force-off + restore + strip leftover `hs_mat_ov_ours` overrides. Related to the displace bug (same slot fight), not a separate FX stack.
+
+**Resolution.** Related to Noise Displace on Main/Outer (same `material_override` slot). Reset turned the FX toggle off, then `_clear_noise_deform` could write a PBR cladding backup back onto the mesh with no `hs_mat_ov` meta, so restore was a no-op. Fix: after noise clear, force `_mat_override_on` off and `restore_material_override`; restore also strips leftover `hs_mat_ov_ours` overrides that have no backup meta. Toggle off + Reset defaults now returns authored textures.
+
+## 2026-08-25 - Noise Displace only warps scatter, not Main / Outer
+
+**Issue.** User: "Noise displace doesn't work now. I think it's just displacing the scattered, but not main outer." Scatter instances warp; the Main (centerpiece) mesh and Outer (environment / primary shell + tiles) stay still.
+
+**Why (plan).**
+1. Log this (done). No commit.
+2. Dual path: scatter is mostly MultiMesh (`_ensure_noise_materials_gi` sets `material_override` to `noise_deform`). Main/Outer are MeshInstance3D; `_ensure_noise_materials` caches shaders then returns them even if something else (material override, Bend wrap, emission dup, `_reapply_live_mesh_fx` order) replaced the live slot — stamps go to orphaned materials. `_reapply_live_mesh_fx` currently applies noise **then** material override, which hides surface noise behind a PBR override.
+3. Centerpiece still uses `NOISE_MESH_LIMIT = 48`; DFS can hit inner/detail meshes first and skip the outer shell. Env was already made unlimited for tiles.
+4. Fix: rebind if cached noise shaders are not the live draw materials; apply noise **after** material override; unlimited meshes for Main as well as Outer. Playtest Main + Outer + Scatter.
+
+**Resolution.** User was right: scatter MultiMeshes stayed bound to `noise_deform`, but Main/Outer MeshInstances often were not. Causes: (1) `_reapply_live_mesh_fx` stamped Material Override **after** noise, hiding displace and leaving `_noise_mats` stamping orphaned shaders; (2) Main was capped at 48 meshes so the outer shell could be skipped. Fix: apply looks first, then noise; rebind if the live material is not the cached deform shader; unlimited meshes for Main like Outer; still apply to hidden (point-cloud) solids. Check Noise Displace + Affects Main/Outer/Scatter — all three should warp. Residual PBR after Reset is the companion issue above.
+
+## 2026-08-25 - MCP console errors after dual-focus slider removal
+
+**Issue.** Editor console spam: `effects_sidebar.gd` failed to load (parse error). Game cannot start. Repeated:
+1. `Identifier "_camera_fx_focus_range" not declared` (lines ~2649–2651, 4146, 4148) — leftover DualRangeSlider after it was removed from Camera / Lens.
+2. `The variable type is being inferred from a Variant value` treated as error at `_camera_fx_params` (`var near_m := SliderSpinLinkScr.mapped_param(...)` / `far_m`). `mapped_param` returns Variant (number or expression string).
+
+**Plan.**
+1. Log this (done). No commit.
+2. Confirm `_camera_fx_focus_range` is already gone; replace `:=` with explicit `Variant` (or float) so inference is not treated as error.
+3. `script_check` / console / playtest. Hunt remaining shader, missing-node, null-ref, material override, point cloud, fog, nonlinear, playlist errors.
+
+**Resolution.** Console spam was `effects_sidebar.gd` failing to load, which blocked the game. `_camera_fx_focus_range` leftovers were already removed. The live error was `var near_m := mapped_param(...)` / `far_m` — `mapped_param` returns Variant (number or expression string) and INFERRED_DECLARATION is treated as error. Fix: `var near_m: Variant` / `var far_m: Variant`. Project compile 75/75 clean. Fresh playtest: sidebar + Focus far slider live; camera_fx params build; camera_fx / point_cloud / fog / material_override / Bend space / wireframe enabled with no shader, null-ref, or missing-method errors. Remaining noise: HDR metadata warnings; MCP `progress_dialog` errors on play (addon/engine, documented benign). No commit.
+
+## 2026-08-25 - Remove dual-thumb focus slider; two normal sliders
+
+**Issue.** User: remove the double/dual range slider. Keep **Focus near** and **Focus far** as two normal sidebar sliders. Remove the strange range widget between them (dual-thumb / two-handle track from `DualRangeSlider`). Keep the same DoF mapping and bokeh. Also: **aperture should influence blur like a real lens** (lower f-number = more smear). Do not commit.
+
+**Plan.**
+1. Log this (done). Camera / Lens UI only. DualRangeSlider stays for ASCII density.
+2. Restore Focus near as a normal HSlider; add Focus far the same way. Drop `_camera_fx_focus_range` and the blue two-thumb track from Camera / Lens.
+3. Remap `dof_blur_amount = bokeh × clamp(2.4 / f-stop, 0.12, 1.0)` so aperture is primary. Do not force amount=1.0 at bokeh 100. Scale near/far transition with f-stop (wide open = tighter / shallower).
+
+**Resolution.** Camera / Lens uses two independent HSliders (Focus near / Focus far). Dual-thumb track gone; `dual_range_slider.gd` kept for ASCII density. Blur: `dof_blur_amount = clamp(bokeh01 * clamp(2.4 / f-stop, 0.12, 1.0), 0, 1)` — f/2.8 + bokeh 100 ≈ 0.86, f/22 + bokeh 100 ≈ 0.11. Transitions shorter when wide open. No commit.
+
+## 2026-08-25 - Material Override flashing white lights
+
+**Issue.** User: when Material Override is on (global Effects and/or per-item Material on playlist gear — White cladding, Chrome, Gold, Normal, Shiny black), the scene **flashes white lights**.
+
+**Why.** `MaterialOverrideEffect.apply_audio_state` restamps every audio tick. `FlythroughEnvironment._apply_material_override_now` **restores all overrides then re-applies** each call, so originals (often emissive) flash for a frame. `_stamp_material_override` also reassigns the shared PBR `material_override` even when the look is already on, which **unwraps Bend-space wrap shaders** every tick (StandardMaterial ↔ wrap = specular/white pop). Reactive emission then duplicates the shared near-white cladding and drives `emission_energy` up to ~6.5, so HDR/bloom reads as strobing lights. Point-cloud hide is unrelated as long as we do not restamp overlays.
+
+**Plan.**
+1. Log this (done). No commit. Own material override path only (do not touch camera_fx_effect / lens sliders).
+2. Stop per-tick restamp; restore+stamp only on enable, look/target change, item change, or world rebuild. Skip assign if the look is already stamped (leave Bend wrap in place).
+3. Keep emission off on the five looks; skip reactive emission drive on stamped geometry so white cladding cannot become a light. Global still wins over per-item while FX is on.
+4. MCP screenshot with override on — no white strobe.
+
+**Resolution.** Flash was per-tick restore+restamp: `apply_audio_state` pushed every audio frame; `_apply_material_override_now` restored originals then reassigned PBR, which also unwrapped Bend wrap (`StandardMaterial` ↔ wrap = white specular pop). Reactive emission duplicated the shared cladding and drove energy ~6.5. Fix: no audio restamp; stamp only on enable/look/item/rebuild and skip if the look is already on (leave wrap); emission stays off and is not driven on stamped meshes. Global still wins on targeted layers. Playtest: White cladding stamped (`hs_mat_ov_look`, `emission_enabled=false`); two frames stayed uniform cladding, no strobe.
+
+## 2026-08-25 - Focus is a range (two ends); bokeh 100 must be extreme
+
+**Issue.** User: Focus distance should be a **range slider with two ends**, not a single plane. In front of the near handle (very close to camera) = blurred. Between handles = sharp (hero lives here, often ~3 m). Behind the far handle: if far sits at **max/infinity**, the rest stays sharp; if they pull far in, the background can go soft too. Bokeh slider stays 0–100, but **100 must be much more blurred** than today. Keep focal length / aperture / lens distortion. Do not re-add Near blur / Tilt-shift extras. Current Focus mapping does nothing useful (max-blur plane can sit behind the camera).
+
+**Why.** Godot `CameraAttributesPractical`: `dof_blur_near_distance` / `dof_blur_far_distance` are the **zero-blur edges** (meters). Full near blur is at `near_distance - near_transition` — if that is behind the camera, close env never smears. A single `focus_distance` cannot encode “sharp slab + optional infinity far”. `dof_blur_amount` is 0–1; at f/2.8 bokeh 100 only reached ~0.66, so max never looked extreme.
+
+**Plan.**
+1. Log this (done). No commit. Do not touch point cloud.
+2. UI: dual-handle focus range (existing `DualRangeSlider` + Focus near / Focus far ends, meters). Default near ~1.5 m (close env soft, hero ~3 m sharp), far at slider max = infinity (far DoF **off**).
+3. Map near always on; far on only when far handle is pulled in from max. Keep full-blur plane in front of the camera (`near_transition < near_distance - cam.near`).
+4. Remap `dof_blur_amount` so slider 100 hits engine max (1.0) regardless of aperture. 0–100 UI unchanged.
+5. MCP playtest: near env blur, hero sharp, far sharp when far is max.
+
+**Resolution.** Focus is a dual-handle range in meters (`DualRangeSlider`: Focus near / Focus far, far max = ∞). Godot `dof_blur_near` always on; full-blur plane stays in front of the camera (`near_distance - near_transition > cam.near`). `dof_blur_far` is **off** when far is at max so the rest stays sharp; pulling far in enables far DoF. Bokeh 0–100 UI unchanged; slider 100 maps `dof_blur_amount` to engine max 1.0. Headless map: near 1.5 m / far max → near on, far off, amount 1.0 at bokeh 100; far 12 m → far on. Playtest: hero ~3 m, near 2.2 m + far ∞ stayed sharp; near 12 m smeared the hero (DoF actually running). No commit. Point cloud untouched.
+
+## 2026-08-25 - Revert bad near/tilt extras; real macro DoF
+
+**Issue.** User: Camera effects blurring is **not good — revert**. They still want the **main object sharp**, **stuff close to the camera blurred**, and **focus distance** to move that plane — **like a real / macro lens**.
+
+**Why the last pass failed.** Extra Near blur / Near plane / Near transition / Tilt-shift. Near sharp-edge was at **80% of focus**, so the Focus slider was not the plane of sharpness. Far still used a long `0.85 * focus` falloff (not macro). Extra `near_amount` boost + tilt-shift made the image mushy. Godot `dof_blur_near_distance` / `dof_blur_far_distance` are the **zero-blur edges**; they must sit **on the focus plane** (positive, in front of the near clip).
+
+**Plan.**
+1. Log this (done). No commit. Do not touch point cloud.
+2. Revert tilt-shift shader and extra Near/Tilt sliders. Keep Focal length, Aperture, Focus distance, Bokeh, Lens distortion.
+3. Macro map: near + far enabled; both distances = focus; short symmetric transitions from aperture/focal length so only a thin slab around focus is sharp. Close env bokeh; hero at focus sharp; background soft. Focus slider moves that slab.
+
+**Resolution.** Reverted Near blur / Near plane / Near transition / Tilt-shift UI and `tilt_shift.gdshader`. Camera / Lens is again Focal length, Aperture, Focus distance, Bokeh, Lens distortion. DoF: `near_distance` = `far_distance` = **focus** (always > camera near clip). Transitions are a thin slab (~5–18% of focus from f-stop + focal length) so foreground and background go soft like a macro; the hero at the focus plane stays sharp. Playtest screenshot blocked (runtime WS timeout). No commit.
+
+## 2026-08-25 - Near field stays sharp (lens DOF / close bokeh)
+
+**Issue.** Camera / Lens focus distance can keep the hero sharp, but everything **between the camera and the subject stays sharp** too. Objects right in front of the lens should be **strongly blurred** with bokeh on close highlights. Far DOF can stay as designed. Optional tilt-shift (vertical sharpness band).
+
+**Why.** `SceneMeshFx.apply_camera_fx` already enables `dof_blur_near`, but Godot’s `dof_blur_near_distance` is the **sharp edge** (blur → 0), and full blur is at `near_distance - near_transition`. The old map used `near_distance = 0.22 * focus` and `near_transition = 0.28 * focus`, so for focus ~12 the full-blur plane is **behind the camera** and 2.6m→hero is completely sharp. Shared `dof_blur_amount` never got a chance to smear the near field. Near distance must stay **in front of** focus so the hero is not blurred.
+
+**Plan.**
+1. Log this (done). No commit. Do not rewrite point cloud.
+2. Remap near: sharp edge just in front of the hero (`near_plane` fraction of focus); **tight** transition so 0→that plane is fully smeared. Keep far distance = focus. Expose Near blur / Near plane / Near transition. Bump DOF bokeh quality. Persist with other lens FX.
+3. Optional tilt-shift post shader (horizontal sharp band, blur toward top/bottom) on the camera FX stack.
+4. MCP screenshot: close env fog/geometry smeared, hero at focus still sharp.
+
+**Resolution.** Old map used `near_distance = 0.22 * focus` and `near_transition = 0.28 * focus`, so Godot’s full-blur plane (`distance - transition`) sat behind the camera and the whole foreground stayed sharp. Near sharp-edge is now `focus * near_plane` (default 80%, always < focus) with a tight transition so camera → near plane is fully smeared and the hero at focus stays sharp. Far DOF unchanged (`far_distance = focus`). New Camera / Lens sliders: Near blur, Near plane, Near transition, Tilt-shift (screen-space horizontal sharp band). Circular bokeh + medium quality. Runtime screenshot blocked by MCP playtest auth timeout (not a freeze). No commit.
+
+## 2026-08-25 - Point Cloud toggle freezes HyperSpace
+
+**Issue.** User turned on Point Cloud and everything froze (editor/game unresponsive).
+
+**Why.** Overlay path is QuadMesh **MultiMesh per source vertex**, sibling `HSPointCloud`, hide solid, ~8k vert cap **per mesh**. Env tiling can be **hundreds of meshes**. `apply_point_cloud_layers` builds every overlay synchronously on the main thread: 189+ meshes × thousands of verts = hitch/freeze. Also possible: shader compile stall or GPU OOM from millions of billboard quads. Solids can vanish for a whole frame before any overlay exists → blank freeze.
+
+**Plan.**
+
+1. Log this (done). No commit. Point-cloud budget/chunking only. Wireframe stays independent. Keep vertex colors, Vertex size, Noise distort + Bend (`albedo_color`, GeometryInstance3D stamp).
+2. CPU budget: lower per-mesh vert cap, stride subsample, global instance cap. Primary env + main + scatter first; env tiles skipped or heavily subsampled. Share MultiMesh across tiles that use the same Mesh.
+3. Build incrementally (idle-frame chunks with a ms budget). Never hide a solid until its overlay exists. Prefer a coarser cloud over freeze.
+
+**Resolution.** Freeze was synchronous overlay build: QuadMesh MultiMesh per vertex, up to 8k instances **per mesh**, all env tiles in one frame. Budget: 1200 verts main/scatter/primary, 180 on at most 8 env tiles, 28k instance cap, 48 overlays max, 3 meshes / 6–8 ms per idle chunk. Tiles share a cached MultiMesh. Solids stay until their overlay exists. Playtest Ex-convento 4×1×3 tiles: toggle did not freeze; 11 overlays (main 1199, scatter 1170, primary 1198, 8 tiles × 180); remaining tiles stay solid. Dots visible, editor/game still responded, wireframe untouched.
+
+## 2026-08-25 - Noise distort does not warp outer environment (Bend or always)
+
+**Issue.** User: "Some noise displaced doesn't seem to be displacing the outer to the environment, maybe when just when the band space is on, or always." Noise distort must visibly move environment / Outer meshes (primary + grid tiles), Bend space on **and** off. Main still warps.
+
+**Plan.**
+
+1. Log this (done). No commit. Keep fog-noise removal, point-cloud distort, tint/density. Do not skip env because it is large.
+2. Two causes: (A) Bend space `_resync_mesh_surfaces` / `_resync_override` see `noise_deform` has warp includes but no `np_wrap_ver`, so they **replace** it with the Bend-only wrap every frame — env/scatter fail whenever Bend is on; Main has `np_skip_warp` so it is not resynced and still wobbles. (B) `NOISE_MESH_LIMIT = 48` plus a stale `_noise_mesh_lists` cache: DFS hits primary first, so tiled **outer** copies never get the displace shader (visible with Bend off if you look at the grid; with Bend on the fold puts those tiles on-screen).
+3. Leave live FX shaders (noise/PC) in place and only stamp Bend uniforms. Apply noise to **all** env meshes; invalidate the mesh list when tiles spawn.
+
+**Resolution.** Failed **both ways**, worse with Bend: (1) Bend `_resync_*` replaced `noise_deform` (has warp includes, no `np_wrap_ver`) with the Bend-only wrap every frame — env/scatter froze, Main kept distorting via `np_skip_warp`. (2) `NOISE_MESH_LIMIT = 48` plus a stale mesh-list cache skipped tiled Outer copies. Fix: keep noise/PC shaders and stamp Bend uniforms only; unlimited env meshes; invalidate cache on tile spawn. Playtest: 189 `noise_deform` materials, `noise_amount` 28, shader path unchanged with Bend on.
+
+## 2026-08-25 - Fog density 100 not thick enough; tint needs more chroma
+
+**Issue.** User: "fog tint should be more saturated, and fog density should go to higher. So, if it's 100, it should be very visible. Currently, density 100, it's very visible." Parsed as: Tint more saturated; Density 100 should be a **strong visible haze** (speech dropped "not" — currently 100 is *not* thick enough). Mid densities stay readable. Tint 0 stays gray-white; non-zero tint is chroma only (not extra opacity). Fog Noise stays removed.
+
+**Plan.**
+
+1. Log this (done). No commit. Fog mapping / tint only. Do not restore Fog Noise overlay or the old 0.85 aerial sky wash.
+2. Why density 100 is weak: `_apply_fog_state` maps slider 0–100 → param 0–1 then `fog_density = lerp(0.38, 0.70, d)` so max opacity is 0.70. Aerial max 0.55 / sky_affect max 0.38. Raise the high end so 100 is thick mist (architecture clearly fogged) without white-out.
+3. Tint: raise `TINT_SAT` / `TINT_MIX` so non-zero Tint is a stronger hue at the same density. Playtest density 30 vs 100.
+
+## 2026-08-25 - Noise distort does not warp point cloud
+
+**Issue.** Point cloud works (colored MultiMesh quads), but **Noise distort** does not move the dots. Other 3D warps; points stay put.
+
+**Plan.**
+
+1. Log this (done). No commit. Do not reintroduce `uniform albedo` (Bend space / `np_apply_debug_albedo`). Keep `albedo_color`.
+2. Why: overlays are `MultiMeshInstance3D` (`HSPointCloud`), but `_stamp_all_pc_overlays` only stamps `MeshInstance3D` — `noise_amount` stays 0. Shader also starts `vtx = vec3(0)` so every instance would sample the same noise even if uniforms landed (rigid translate, not warp). `_apply_noise_to_root` correctly skips PC meshes so solids are not given `noise_deform.gdshader`.
+3. Stamp `GeometryInstance3D` overlays. Sample/displace at instance origin (source vertex / world), then billboard. Same SubViewport as other 3D.
+
+## 2026-08-25 - Remove Fog Noise (hole overlay)
+
+**Issue.** User: "Remove the noise from the frog, it looks like that." = remove Fog **Noise** (hole-punch overlay, Intensity/Scale sliders, `fog_noise_overlay` path). Keep Density, Start, End, Tint. Fog stays opt-in. Do not leave a gray wash.
+
+**Plan.**
+
+1. Log this (done). No commit. Stop using / delete overlay. Depth fog stays on whenever Fog is on (do not zero `fog_density` for holes).
+2. Strip Noise/Scale from Fog UI. Ignore leftover `noise` keys in saved params. Do not break Bend space hero size, fog tint, or wireframe.
+
+## 2026-08-25 - Fog Noise holes not visible (maybe Bend space)
+
+**Issue.** User: "Noise display is now not working. Maybe it's not working only when the band space is on, but it's not working." Fog Noise (holes + Intensity/Scale) is not visible. Possibly only with Bend space on, or broken in general.
+
+**Plan.**
+
+1. Log this (done). No commit. Do not fight nonlinear hero pose. Tint stays chroma-only. Dark = hole.
+2. Why: Noise on zeros Environment depth fog and uses FogVolume at 0.14–0.30 with `volumetric_fog_density = 0`. Nothing left to punch holes into if the volume is too thin, the 3D texture is mostly cut, or volumetric fog is skipped. Bend space warps mesh depth; FogVolume raymarches unwarped view space, so holes vanish in the SubViewport capture.
+3. Replace FogVolume holes with a screen-space overlay that reads the rendered (warped) depth, keeps full mist opacity in the light texels, and cuts dark noise to alpha 0. Same Environment / 3D SubViewport. Playtest Bend off then on.
+
+**Resolution.** Noise was invisible because turning it on zeroed Environment depth fog and relied on FogVolume at 0.14–0.30 with `volumetric_fog_density = 0` (nothing to punch, and volumetric fog does not follow Bend-space warped depth in the 3D SubViewport). Replaced with a screen-space overlay in that same SubViewport: reads scene depth for Start/End, dark noise → alpha 0 holes, remaining mist keeps the same opacity mapping. Overlay shader is skipped by Bend wrap. Playtest: holes visible in colored fog with Bend off; overlay shader still `fog_noise_overlay.gdshader` with Bend on.
+
+## 2026-08-25 - Point cloud still not working (fix once and for all)
+
+**Issue.** User: "Point cloud isn't working. Fix point cloud once and for all." A prior pass (sibling overlays, UV2 camera-facing quads, hide solids, vertex colors, Vertex size, env/main/scatter) still showed **no dots**. Enabling it hid solids and left an empty/hazy viewport.
+
+**Why the last fix failed.** Forward+ ignores `POINT_SIZE`. Overlays stacked 4 verts on the **same** position with UV2 corners, so a failed vertex expand drew nothing. Worse: `effects/point_cloud.gdshader` used `uniform vec4 albedo`, which **redefined** `np_apply_debug_albedo(inout vec3 albedo, …)` — shader compile failed (`Redefinition of 'albedo'`). Overlays were created and solids hidden, but the material never rasterized → empty/hazy viewport.
+
+**Plan.**
+
+1. Log this (done). No commit. Point-cloud files only. Do not rewrite fog_effect or Bend-space hero pose.
+2. Real **QuadMesh MultiMesh**: one instance per source vertex, UV 0–1, instance COLOR = baked vertex albedo. Billboard in shader from `UV` + `POSITION` at the instance origin (pixel size). Cannot collapse.
+3. Overlay is a sibling; source `visible = false` plus layer-19 hide. Rename shader uniform to `albedo_color`. Same roots as wireframe. Size uniform in place. Toggle off restores solids.
+4. MCP screenshot: colored dots, size change, toggle off restores meshes.
+
+**Resolution.** Root cause of the empty viewport: `uniform vec4 albedo` collided with `np_apply_debug_albedo(inout vec3 albedo)` so the point shader never compiled. Overlay geometry was also collapsed UV2 quads. Now: extract vertex positions+baked colors, one QuadMesh MultiMesh instance per vertex (`hs_pc_mmq`), sibling overlay, hide source (`visible=false` + layer 19). Shader `skip_vertex_transform` + UV billboard in view space (`point_size` in pixels), uniform renamed `albedo_color`. Playtest Ex-convento: dots with vertex colors on main+env, size 4 vs 40 changed disc size, toggle off restored solids, 0 overlays, console clean. Fog on at the same time still showed points.
+
+## 2026-08-25 - Bend space makes the main object giant
+
+**Issue.** User: click Bend space → the main object becomes giant. It should keep its normal screen size (same as off), aside from the env fold.
+
+**Why.** The vanish fix pulled the camera-locked hero closer in Z whenever warped env sat “in front,” then frustum-clamped Z to `_hero_near_safe()` (~0.9 m). Folded env often collapses to the near plane, so the pull always fired. At `_center_distance` ~3 m that is ~3× larger on screen. `extra_cull_margin` does not scale the mesh. Main lift is Y-only and was not the scale bug.
+
+**Plan.**
+
+1. Log this (done). No commit. Stay in centerpiece camera-local pose. Do not touch Grid or Fog.
+2. Remove Z-pull and the near-plane Z clamp. Keep intended depth (`-_center_distance` + user Z) so apparent size matches Bend space off.
+3. Stay visible without moving toward the camera: XY frustum-clamp (so extra lift cannot leave the frame) + extra_cull_margin. No parent scale change. No `no_depth_test`.
+4. Screenshot Bend space off vs on — hero similar size, env still folds, hero still on-screen.
+
+**Resolution.** Removed Z-pull and the ~0.9 m near-plane clamp. Hero stays at `_center_distance` (~3 m). Playtest: camera-local z = -2.976 with Bend space on (same as off); node scale unchanged. Off vs on screenshots: figure still ~1/3 of frame height, env still folds.
+
+## 2026-08-25 - Bend space makes the main object disappear
+
+**Issue.** User: with **Bend space** on, the main / hero 3D object sometimes vanishes. It must always stay visible. Do not turn Bend space off; keep the folded environment look.
+
+**Why.** Auto-center (`_centerpiece_np_lift`) CPU-warped environment AABB corners and lifted the camera-locked hero in **camera Y** by up to 6 m so it sat “above” the fold. After a ~90° bend those corners map to a huge +Y; at `_center_distance` ~2.2–4.5 m a 6 m lift is outside the 70° frustum — the hero was still in the world, just off the top of the screen. Which AABB samples passed `|warped.x| > 6` / behind-camera filters depends on camera heading, so it only happened **sometimes**. Extra lift (0–20 m) could do the same.
+
+**Plan.**
+
+1. Log this (done). No commit. Stay in nonlinear + centerpiece placement. Do not touch Grid tiling / playlist tile spins.
+2. Stop using warped AABB max-Y as a camera-up lift. Keep the hero at its intended screen XY (bob / sway / user offset). Auto-center pulls **depth** so it stays in front of folded env near the view center. Frustum-clamp the final camera-space pose (Y including Main lift, Z in front of the near plane).
+3. While Bend space is on, bump hero `extra_cull_margin` so a large AABB is not frustum-culled. Do not use `no_depth_test` (that z-fights the hero’s own meshes).
+4. Playtest: Bend space on → hero stays centered and visible; env still folds.
+
+**Resolution.** Removed the 0–6 m camera-Y AABB lift. The locked hero stays at its screen pose; auto-center only pulls it closer in Z if folded env would sit in front near the view center; the final camera-space offset is frustum-clamped (near plane + FOV). Extra Main lift is also clamped so it cannot throw the item off-screen. Playtest with Bend space on / max bend: hero stayed centered in view, environment still folded.
+
+## 2026-08-25 - Fog Tint is washed-out gray, not a real color
+
+**Issue.** User: noise must not tint (holes only). Fog Tint is barely visible — “should be more visible” meaning **more color, not more opacity**. Current `TINT_MIX = 0.15` / `TINT_SAT = 0.48` lerps a whisper of hue into gray-white mist, so `fog_light_color` stays a gray veil. Tint 0 should stay default gray-white. Volumetric albedo should follow the same colored fog.
+
+**Plan.** Raise chroma only: mix ~0.82 of HSV (sat ~0.78, val ~0.88) into `BASE_COLOR` for `fog_light_color` and FogVolume albedo. Do not change density / start / end mapping. Density texture stays grayscale (dark = hole). No colored-grain overlay. Screenshot tint as a real hue with see-through mist.
+
+**Resolution.** Tint chroma only: `TINT_MIX = 0.85`, `TINT_SAT = 0.82`, `TINT_VAL = 0.80`. Tint 0 stays `BASE_COLOR`. Density/start/end mapping unchanged (`fog_density` still `lerpf(0.38, 0.70, density)`). Density texture is grayscale (dark = hole); FogVolume albedo follows `fog_light_color`. Playtest tint 210 → `(0.24, 0.52, 0.81)` vs old ~`(0.72, 0.79, 0.86)`.
+
+## 2026-08-25 - Fog noise is a gray wash, not holes
+
+**Issue.** User: "Noise in fog is not good. Noise in fog correctly just makes everything completely gray. This is not what noise should do. Noise should poke holes into fog. Where the noise is dark, it should be a hole, not visible. There should also be two sliders for noise: not just intensity of the noise, but also the scale of the noise."
+
+**Plan.**
+
+1. Log this (done). No commit. Fog FX only. Do not touch Bend space or Grid. Keep Tint as the slight hue slider.
+2. Stop stacking dense FogVolume on full depth fog. When Noise > 0, depth fog recedes so holes can show; FogVolume density stays modest; `volumetric_fog_density` = 0. `density_texture` dark = 0 (see-through), light = fog remains. Invert if mapping is backwards.
+3. Two sliders: **Noise** (how strongly holes cut, 0 = even mist) and **Scale** (feature size via FastNoiseLite frequency). Screenshot holes in fog.
+
+**Resolution.** Noise punches holes, it does not tint. Dark `density_texture` = 0 (see-through), light = remaining colored mist. Intensity moves the hole knee; Scale sets FastNoiseLite frequency (`0.36` → `0.026`). When Noise > 0, Environment depth fog recedes so holes are not filled; FogVolume density stays modest (`0.14–0.30`); global `volumetric_fog_density` = 0; emission off (no gray grain). UI: Noise + Scale (default 40). Tint 0 still gray-white mist. Bend space untouched.
+
+## 2026-08-25 - Bend space makes the main object disappear
+
+**Issue.** User: with **Bend space** on, the main / hero 3D object sometimes vanishes. It must always stay visible. Do not turn Bend space off; keep the folded environment look.
+
+**Why.** Auto-center (`_centerpiece_np_lift`) CPU-warps environment AABB corners and lifts the camera-locked hero in **camera Y** by up to 6 m so it sits “above” the fold. After a ~90° bend those corners map to a huge +Y; at `_center_distance` ~2.2–4.5 m a 6 m lift is far outside the 70° frustum — the hero is still there, just off the top of the screen. Which AABB samples pass `|warped.x| > 6` / behind-camera filters depends on camera heading, so it only happens **sometimes**. Extra lift (0–20 m) can do the same. Folded env can also sit closer in depth than the unwarped hero and hide it (opaque depth test; `render_priority` only helps transparents).
+
+**Plan.**
+
+1. Log this (done). No commit. Stay in nonlinear + centerpiece placement. Do not touch Grid tiling / playlist tile spins.
+2. Stop using warped AABB max-Y as a camera-up lift. Keep the hero at its intended screen XY (bob / sway / user offset). Auto-center pulls **depth** so it stays in front of folded env near the view center. Frustum-clamp the final camera-space pose (Y including Main lift, Z in front of the near plane).
+3. While Bend space is on, bump hero `extra_cull_margin` so a large AABB is not frustum-culled. Do **not** use `no_depth_test` (that z-fights the hero’s own meshes). Depth-in-front comes from Z-pull + skip-warp.
+4. Playtest: Bend space on → hero stays centered and visible; env still folds.
+
+## 2026-08-25 - Grid spins skip even sizes (1, 3, 5…)
+
+**Issue.** User: "Greed is currently acting strange. It goes 1 3 5. It should not do that. Should be 1 2 3 4 5, and so on." Speech-to-text **Greed** = **Grid**. Environment Grid X/Y/Z used odd-only cell counts because storage was copies-per-side (`cells = 1 + 2 * copies`). Even sizes like 2×2 were impossible.
+
+**Plan.**
+
+1. Log this (done). No commit. Do not touch point cloud.
+2. Store **cell counts** on `tile_x/y/z` with `tile_cells: true`. Migrate old copies-per-side (`1,0,1` → `3,1,3`). Spins step 1 from 1–100.
+3. Placement: primary stays put; it occupies index `floor((n-1)/2)` on each axis. Other cells are a regular AABB-step lattice. Odd n stays symmetric (3×3 unchanged). Even n adds the extra cell on the **+** side (2×2 = original + +X + +Z + corner). Keep 1000-mesh spawn cap; hint shows it.
+
+**Resolution.** Grid steps 1, 2, 3…100. `tile_*` are cell counts (`tile_cells` flag). Legacy copies-per-side still load. Even grids: primary is the lower-center cell; extras grow +X/+Y/+Z, flush on AABB.
+
+## 2026-08-25 - Environment Grid hard-capped at 7 cells
+
+**Issue.** User: "I have the ability to add more than seven. You should be able to add as much as I like. I don't know, maybe up to a hundred?" Environment **Grid X/Y/Z** spins only allowed odd sizes 1/3/5/7 (copies-per-side 0–3). `clamp_env_tile_count` and `ENV_TILE_MAX := 3` enforced that. No other "add" path was max=7 (playlist/scatter/layers were not the cap).
+
+**Plan.**
+
+1. Log this (done). No commit. Do not rewrite point-cloud / wireframe.
+2. Raise per-axis cell count to odd 1–99 (copies-per-side 0–49 so `1+2*n` approaches 100). Persist `tile_x/y/z` in that range.
+3. Keep odd-only spins (symmetric lattice around the original). Spawn-time cap **1000** total mesh instances so 99×99×1 cannot create ~10k copies; shrink axes proportionally and show that in the Grid hint.
+
+**Resolution.** Grid spins go to 99 cells/axis (odd). Stored copies-per-side max is 49. Requested `tile_*` persist; spawn uses at most 1000 instances (e.g. 99×99×1 → 31×31×1 = 961).
+
+## 2026-08-25 - Left-panel Reset to default leaves customizations behind
+
+**Issue.** Left sidebar **Reset to default** only restored fly speed, reactivity leftovers, and visual FX. Playlist item customizations stayed: `user_offset`, `user_scale` / scale drivers, `mat_override`, `blend_mode`, `tile_x/y/z`, scatter `global_scale` / layout / density, cam path, and the same keys on catalog rows. Re-applying an asset brought the old look back.
+
+**Plan.**
+
+1. Log this (done). No commit. Do not relocate Grid (stays in per-item Edit). Do not rewrite point-cloud / wireframe shaders.
+2. Strip those keys on every playlist item + every sidebar catalog row. Live stage applies scale 1, offset 0, tiles catalog default (3×3 ground), mat Off, blend Normal, scatter layout random / density 18 / global scale 1, path Auto.
+3. Effects (Fog, Glitch, Bend space, …) already go off via `ShowDirector.reset_stage_to_defaults` + effects sidebar sync on `stage_defaults_restored`.
+4. Environment tab: hide helper prose and Env scale (global scale). Grid stays in ✎ Edit only.
+
+**Resolution.** Left-panel **Reset to default** now strips every playlist item and catalog row (`user_offset`, scale/drivers, `mat_override`, `blend_mode`, `tile_x/y/z`, scatter layout/density/`global_scale`, cam path) and applies those defaults on the live stage. Effects still go off via the same ShowDirector call (Fog, Glitch, Bend space, …). Environment tab no longer shows helper prose or Env scale; Grid stays in per-item Edit only.
+
+## 2026-08-25 - Point Cloud broken; should match wireframe with vertices
+
+**Issue.** User: Point cloud doesn't work again. It should work the **same as wireframe**, but show **vertices** instead of edges. User must be able to **change vertex size**. **Keep vertex colors** on each vertex, just like wireframe does. Currently broken. Must apply to **all 3D elements** (env, main, scatter, any 3D meshes — same scope as wireframe).
+
+**Why it's broken (investigation).**
+
+1. Wireframe is viewport-wide `SubViewport.debug_draw = DEBUG_DRAW_WIREFRAME` — every 3D surface in the capture, albedo/vertex colors on the strokes, no per-mesh rebuild.
+2. Point cloud is a fake overlay (`HSPointCloud` child + layer-19 hide). Forward+ has no spatial `point_size` render mode, so true `PRIMITIVE_POINTS` stay 1px. A later workaround expanded verts to UV2 quads (`PRIMITIVE_TRIANGLES`) and sized them with `inverse(MODELVIEW_MATRIX)`.
+3. Those quads often draw nothing: UV2 ±1 is a bad fit for compressed ArrayMesh attributes (corners collapse → degenerate zero-area tris). Clip expansion after nonlinear warp via `inverse(MODELVIEW)` is also unstable.
+4. Originals are hidden by changing `Camera3D.cull_mask`, but `find_camera()` returns the **first** Camera3D under the env (often an imported GLB cam), not the gameplay camera. Solids keep drawing; overlays may be invisible. Wireframe still works because debug_draw does not depend on that camera lookup.
+5. Scatter MultiMesh is a separate path; MeshInstance cap 512 can drop env tiles. Not the same scope as wireframe.
+
+**Plan.**
+
+1. Log this (done). No commit. Do not touch Fog Tint (`effects/fog_effect.gd`, Fog Color→Tint in effects_sidebar).
+2. Same items as wireframe (env / main / scatter / any MeshInstance3D + MultiMesh under those layers). Hide solids on the **current** gameplay camera.
+3. Overlay = one sprite per source vertex, **COLOR from mesh** (COLOR attribute × albedo/texture bake, same idea as wireframe albedo). Size slider = **pixels** (Godot `point_size` meaning), written in clip space via `POSITION` + viewport size — Forward+ cannot use `POINT_SIZE`.
+4. Uncompressed 0–1 UV2 corners so quads don't collapse. Include MultiMesh in `SceneMeshFx` so scatter isn't a one-off. Raise mesh cap. Persist `point_size` as today.
+5. Do not change wireframe debug_draw. Playtest screenshots: wireframe vs point cloud; drag vertex size.
+
+**Resolution.** Point cloud uses the same 3D set as wireframe (env / main / scatter MeshInstance3D + MultiMesh). Each vertex keeps mesh COLOR (COLOR attribute × albedo/texture bake). Forward+ cannot size `PRIMITIVE_POINTS`, so dots are camera-facing quads; **Vertex size** is pixels (`point_size`, persisted with other FX). Overlays are **siblings** of the source mesh with the solid `visible = false` (child + layer/transparency hide also hid the dots). Billboard: `INV_VIEW_MATRIX` + viewport size. Wireframe `debug_draw` unchanged. Fog Tint files not touched.
+
+## 2026-08-25 - Fog color is way too strong
+
+**Issue.** User: Fog color is way too strong — cannot see anything. Fog color should be a slight tint on the existing grayish/whitish mist. Replace the Color picker with a **Tint** slider over the whole rainbow. Keep fog as it was, then slightly color it.
+
+**Plan.**
+
+1. Log this (done). No commit. Stay in Fog FX + sidebar Tint. Do not restore Play All auto-Fog or a gray wash.
+2. Remove ColorPicker. Add Tint hue slider (0 = no extra hue / plain mist; 1–360 = spectrum). Rainbow-gradient track. Mix a spectral hue into `Color(0.76, 0.80, 0.84)` at ~15% so the scene stays readable.
+3. Same slight tint on FogVolume albedo / volumetric_fog_albedo when Noise is on. Persist `fog.tint` (hue float). Migrate old `fog.color` RGB to hue or default 0.
+4. MCP screenshot: Tint slider visible, fog still readable.
+
+**Resolution.** Color picker removed. Effects → Fog **Tint** is a 0–360 hue slider with a rainbow track (left gray = no extra hue). Base mist stays `Color(0.76, 0.80, 0.84)`; spectral hue mixes at **15%** (`TINT_MIX`). Persist `fog.tint`. Old `fog.color` RGB migrates to hue or 0 if near-base. Playtest: tint 210 → `fog_light_color` (0.72, 0.79, 0.86) — slight cool shift, scene still readable. Fog stays opt-in.
+
+## 2026-08-25 - Fog color control
+
+**Issue.** User: "I also add color to fog." Fog FX has density / start / end / noise but no tint. Depth fog uses a hardcoded cool gray `fog_light_color`; volumetric FogVolume albedo should match.
+
+**Plan.**
+
+1. Log this (done). No commit. Stay in Fog FX + Environment. Do not fight other agents on glitch, blend, material override, or Bend space.
+2. Effects → Fog: ColorPickerButton (no alpha). Persist `color` `{r,g,b}` with the other fog params. Default cool gray-blue `Color(0.76, 0.80, 0.84)` matching the previous hardcoded mist.
+3. Drive `Environment.fog_light_color`. When Noise is on, FogVolume albedo + volumetric_fog_albedo follow the same color. Fog stays opt-in; no gray wash.
+
+**Resolution.** Fog color is `Environment.fog_light_color` (Godot 4 depth fog). Effects → Fog has a Color picker (no alpha) under Density; default cool gray-blue `Color(0.76, 0.80, 0.84)`. Session stores `color: {r,g,b}`. With Noise on, `volumetric_fog_albedo` and FogVolume `FogMaterial.albedo` use the same tint. Playtest: set color (0.55, 0.75, 0.95) → env and volume albedo matched; Fog stays opt-in.
+
+## 2026-08-25 - Glitch size is wrong; slice chaos vs speed
+
+**Issue.** User (STT "Greek"): Glitch **H size** at 1 is not really 1; Amount feels like height; slices cannot go small enough (current min is huge); want **Vertical size** and **Horizontal size** as the main controls, with other params pulled out; **Slice chaos** seems to do nothing / sounds like Speed.
+
+**Plan.**
+
+1. Log this (done). No commit. Own glitch shader + glitch UI only (do not touch fog, tiling, material override, blend modes).
+2. Size mapping: H size 1 is slider 1 / 100 = 0.01, then shader `floor(uv.y * (6 + h_size * 24))` → ~6 huge bands, never 1 px. Amount is intensity, not height. Replace with pixel-accurate Vertical size + Horizontal size (1 = 1 pixel, min 1, large still OK). Relabel Amount → Intensity and demote it below size.
+3. Slice chaos: uniform is connected, but it mostly drives extra column count + vertical shift (looks like denser/faster glitch, overlapping Speed). Rewire chaos to randomize slice *layout* (irregular band boundaries, per-slice offset jitter, mosaic blocks) on a clock independent of `rate`.
+4. MCP playtest: size=1 vs large; chaos 0 vs 1 at same speed.
+
+**Resolution.** Confirmed Glitch (not Greek). Size was `slider/100` into `6 + h_size*24` bands — displayed 1 ≈ 6 huge rows, never 1 px. Amount was intensity, not height. Primary controls are now **Vertical size** and **Horizontal size** in pixels (1 = 1 px, min 1, max 400). Amount relabeled **Intensity** and demoted below size. Slice chaos **was connected** (column count + vertical shift) but looked like Speed; it now randomizes slice layout (irregular bands, per-slice jitter, mosaic blocks) on a clock independent of `rate`. Playtest: 1×1 px = fine striations; 80×120 = large blocks; UI shows Vertical/Horizontal size first.
+
+## 2026-08-25 - Rename Nonlinear camera to Bend space
+
+**Issue.** User: instead of "non-linear camera" / "Nonlinear camera", call it something like **Bend space**. User-facing labels only.
+
+**Plan.**
+
+1. Log this (done). No commit. Only Nonlinear-camera label strings. Do not rewrite Glitch, Fog, tiling, or materials in `effects_sidebar.gd`.
+2. Case-insensitive search: nonlinear, non-linear, non_linear, Nonlinear camera.
+3. Change displayed checkbox text, tooltips, search haystack. Keep internal names (`nonlinear_projection.gd`, `NonlinearProjection`, node names, Play All keys `np_*`).
+
+**Resolution.** Effects checkbox is **Bend space**. Main-lift tooltip says Bend space. Search haystack includes "bend space" (old "nonlinear camera" kept as a synonym). No Play All display name or session key was shown to the user.
+
+## 2026-08-25 - Fog noise barely visible
+
+**Issue.** User: "For noise is barely visible, it should be much, much more extreme." Fog FX Noise slider currently leaves volumetric FogVolume / NoiseTexture3D / density almost inert — mid-high Noise looks like a faint grain, not blotchy mist. Depth fog still works; do not restore the old full-scene gray wash.
+
+**Plan.**
+
+1. Log this (done). No commit. Own Fog noise + env tiling only (another agent owns 3D material override and 2D blend).
+2. Crank FogVolume FogMaterial density, albedo, and a high-contrast NoiseTexture3D (cellular + steep ramp). Keep Environment volumetric_fog_density tiny so the frame is not a gray wash. Depth fog stays the uniform base; Noise is extra non-uniformity and must be obvious at mid-high slider.
+3. Disable volumetric temporal reprojection while noise is on so blotches are not smeared. Playtest screenshot at Noise ~50–80.
+
+**Resolution.** FogVolume uses cellular `NoiseTexture3D` (inverted distance + steep ramp), FogMaterial density ~3–10 at mid-high Noise (was ~0.04), BOX volume, temporal reprojection off. Global volumetric density stays tiny so there is no gray wash. Playtest: noise 0.75 → FogMaterial density 5.1.
+
+## 2026-08-25 - Environment tiling is axis spines, not a full grid
+
+**Issue.** User: tiling should be an array/grid, not one copy on each side. "If I go like three by three, it should actually be nine in total." Current `_apply_env_tiles` only duplicates along ±X / ±Y / ±Z spines — no corners. Tile X=1 and Z=1 gave original + 2 + 2 = 5, missing 4 corners.
+
+**Plan.**
+
+1. Log this (done). No commit. Duplicate visual mesh only (strip WorldEnvironment/lights). Offset by AABB size so cells sit flush.
+2. Fill the full integer lattice including corners (and 3D corners if Y is tiled). Keep stored `tile_*` as copies-per-side so existing 1,0,1 stays valid: per-side 1 on X and Z → 3×3 = 9.
+3. UI: show odd grid size (1/3/5/7) so "three by three" is obvious. Clamp modest (max 3 copies/side = 7 cells). Default stays a small XZ grid.
+4. Files: flythrough_environment.gd, layer_slot.gd, asset_catalog.gd, playlist_sidebar.gd (Tile X/Y/Z UI only).
+
+**Resolution.** Full integer lattice including corners. Stored `tile_*` is still copies-per-side: X=1 Z=1 Y=0 → 3×3 = 9 (8 extras + original). UI Grid spins show odd cell counts 1/3/5/7. Playtest tile names: EnvTile_-1_0_-1 through EnvTile_1_0_1 (corners included). Visual mesh only; lights/WorldEnvironment stripped.
+
+## 2026-08-25 - Fog FX does nothing when enabled
+
+**Issue.** User: "Fog doesn't seem to do anything. Doesn't work." After the gray-wash fix, enabling Effects → Fog produces no visible mist. Likely: defaults too conservative (density 12, start 40 m, end 140 m) vs this project's camera/scene scale; aerial/sky/energy zeroed; empty-params restore path; or Environment fog not actually enabling.
+
+**Plan.**
+
+1. Log this (done). No commit. Stay in Fog FX + Environment. Do not reopen Play All gray-wash.
+2. MCP: camera near/far, WorldEnvironment fog_*, enable Fog and screenshot.
+3. Tune on-defaults so mist is obvious at typical flythrough distances (hero ~4–8 m, env tens of meters, camera far ~200) without filling the whole frame gray.
+4. Keep Fog opt-in. Off still restores lighting-catalog fog.
+
+**Resolution.** Fog FX was on and writing depth fog (`fog_enabled`, `FOG_MODE_DEPTH`, begin/end), but it never set `Environment.fog_density`. In Godot 4 depth mode that property is **max opacity at End** (0 = invisible, 1 = fully obscure). After the gray-wash fix, lighting restore left it at catalog `0`, so toggling Fog did nothing. Compounding: on-defaults were Start 40 m / End 140 m while this flythrough camera is near 0.05 / far ~272 m and courtyard geometry sits a few–tens of meters (hero ~3 m) — the band never hit the scene. Fix: write depth `fog_density` from the Density slider (~0.38–0.70), and retune on-defaults to Density 32 / Start 5 m / End 32 m (sanitize remaps the old 0.12/40/140 combo). Fog stays opt-in. Off still restores lighting-catalog exponential fog.
+
+## 2026-08-25 - Diagnose Godot console errors after Fog / offset work
+
+**Issue.** Fog FX, playlist gear + XYZ, NP auto-center, and the gray-washout fix landed while Godot MCP was down. Editor is connected now. Need to read the console, script-check Fog/playlist/NP paths, playtest, and fix real parse/runtime errors. Fog stays opt-in; no gray wash by default.
+
+**Plan.**
+
+1. Log this (done). No commit.
+2. `editor_get_console` for errors/warnings. `script_check` Fog, flythrough, playlist, NP, show_director, effect_stack.
+3. Start playtest if safe; screenshot; debugger log. Fix script errors, missing methods, invalid Environment/FogVolume properties.
+4. Keep Fog off by default; restore lighting catalog fog when FX is off.
+
+**Resolution.** (in progress)
+
+## 2026-08-25 - Everything is gray after Fog FX
+
+**Issue.** User: "Everything is gray now" right after Fog/mist, playlist gear, and Y-offset landed. Almost certainly the new Fog path washing out the scene (too dense / too close, volumetric stacked, fog applied while the effect is off, lighting-catalog fog stacked with FX fog, aerial/sky fog, or Environment fog left on globally).
+
+**Plan.**
+
+1. Log this (done). No commit. Stay in Fog FX + Environment apply. Do not rewrite Feedback, Material Override, or playlist offsets.
+2. Trace FogEffect, EffectStack, ShowDirector (Play All / session / defaults), FlythroughEnvironment `_apply_fog_state` / lighting `fog_density`, Scene3DItem fallback, sidebar defaults.
+3. Likely: Fog on by default or restored; density 0.35 + start 8 m covering the frustum; `_apply_fog_state` running while FX is off; FogVolume / volumetric left on; depth + volumetric + gray `fog_light_color` + aerial/sky; lighting apply writing fog then FX overwriting without restoring.
+4. Fix: scene looks normal with Fog **off** (restore lighting-catalog exponential fog only). Fog FX only when the user enables it. Conservative on-defaults (farther start, lower density, no aerial/sky wash). Disable volumetric/FogVolume when noise is 0 or FX is off.
+5. Playtest: Fog off = no gray wash; Fog on = light distant mist; off again = previous lighting fog.
+
+**Resolution.** Root cause: Play All auto-enabled Fog with density 0.35, start 8 m, plus aerial/sky tint and a gray fog color — that painted the whole frame. Lighting apply could also stack exponential fog writes with the FX path. Fix: Fog is opt-in (not in Play All). On-defaults are density 12 / start 40 m / end 140 m with almost no aerial/sky. Fog off fully restores lighting-catalog exponential fog (single writer). First-ship 0.35/8 m params remap to the new defaults. Godot MCP still down (editor not running).
+
+## 2026-08-25 - Fog/mist, playlist gear icon, world Y offset / NP auto-center
+
+**Issue.** User asked for three features: (1) distance fog/mist with density, start/end, optional noise, wired through existing Environment + UI; (2) playlist edit pen icon should be a gear; (3) offset the world/item on Y (and XYZ) so the main item does not clip through the environment, especially with the nonlinear camera. Prefer a user-facing offset plus a robust NP auto-center if feasible.
+
+**Plan.**
+
+1. Log this (done). No commit. Stay in Environment fog, playlist edit dialog, flythrough layer transforms, and nonlinear camera UI. Do not rewrite Feedback or Material Override.
+2. Fog: new Fog effect (Camera FX pattern) applying Godot Environment depth fog (`fog_mode` depth, begin/end, density/aerial) plus optional FogVolume + NoiseTexture3D when noise > 0. Lighting catalog `fog_density` remains the fallback when the Fog effect is off.
+3. Playlist: swap ✎ for ⚙; add Offset X/Y/Z to the edit dialog for Env/Main/Scatter; stamp `user_offset` on layer configs and apply on `_env_root` / camera-locked centerpiece / `_scatter_root`.
+4. Nonlinear camera: Auto-center main (CPU warp of env AABB vs hero, clamped lift) + Main lift slider. Manual item Y offset still wins for large corrections because a 90° fold can map world Y to depth.
+5. Playtest: Fog on → mist with start/end; noise ripples; gear opens the same edit dialog; Y offset lifts/drops the item; NP auto-center keeps the hero above folded ground without shooting it off-screen.
+
+**Resolution.** Fog is a first-class FX (Effects → Fog): Environment depth fog with Density / Start / End, plus FogVolume + NoiseTexture3D when Noise > 0. Lighting catalog fog remains the fallback when Fog is off. Playlist edit uses ⚙ (same dialog) with Offset X/Y/Z; Y lifts the item so it does not clip the environment. Nonlinear camera has Auto-center main (default on, clamped 0–6 m CPU warp lift) and Main lift (m). Manual XYZ is the reliable fix for a strong 90° fold. Godot MCP was down (ECONNREFUSED :6550) so compile/playtest in-editor still needs a local Godot pass.
+
+## 2026-08-25 - Material Override: drop AO/Original/Mix; fix chrome HDRI
+
+**Issue.** User: "Frame material" (Material Override). Remove Ambient Occlusion and Original looks. Remove Mix — override is fully on when enabled. Originals return only when the effect is off. Chrome looks white (not HDRI metal). Shiny black has broken artifacts.
+
+**Plan.**
+
+1. Log this (done). No commit. Do not rewrite Feedback, nonlinear shaders, or point cloud.
+2. Looks (default when ON): White cladding, Chrome, Gold, Normal, Shiny black. No AO, no Original, no Mix.
+3. Session remap: `"AO"` / `"Ambient occlusion"` / `"Original"` / `"Off"` and old indices 5–6 → White cladding. Ignore leftover `mix`.
+4. Chrome/Gold/Shiny black: StandardMaterial3D metallic=1, low roughness, proper albedo. Dummy 1×1 metallic texture so NP wrap keeps metallic (it currently zeroes metallic without an MR map — that is why chrome reads as white cladding).
+5. Shiny black: slightly higher roughness (~0.18) and dark-grey F0 (~0.055) so HDRI shows without fireflies / dead-black metal.
+6. Playtest: no Mix/AO/Original in UI; enable = White cladding; Chrome/Gold show HDRI; disable restores originals.
+
+**Resolution.** Looks: White cladding, Chrome, Gold, Normal, Shiny black. Mix/AO/Original gone. Chrome was white because NP wrap zeroes metallic without an MR map; metals now use StandardMaterial3D (metallic=1, low roughness) plus a 1×1 white metallic texture so wrap keeps metallic and HDRI/sky IBL shows. Shiny black uses dark-grey F0 and roughness ~0.22. Sessions: AO/Original/Off → White cladding; leftover mix ignored. Playtest: 5-item dropdown, Chrome/Gold reflect HDRI, disable restores `material_override=null`.
+
+## 2026-08-25 - Remove Glow and Shadow from Feedback blend
+
+**Issue.** User: "remove Glow and Shadow blend mode from Feedback Trail."
+
+**Plan.**
+
+1. Log this (done). No commit. Stay in Feedback blend lists. Do not re-add Copies.
+   Do not touch Material Override, nonlinear, or point cloud.
+2. Remaining modes: Normal, Brightest, Darkest, Edges, Contrast. Compact shader
+   `BLEND_*` ints to match. Drop Glow/Shadow branches.
+3. Sessions already store blend as a name (`"blend": "Normal"`). Unknown names
+   (Glow, Shadow) → Normal. Legacy integer slots remap: 0 Normal, 1 Glow→Normal,
+   2 Brightest, 3 Darkest, 4 Shadow→Normal, 5 Edges, 6 Contrast.
+4. Dropdown, shuffle/cycle, search text, tooltip. Playtest: no Glow/Shadow;
+   shuffle skips them; Normal still works.
+
+**Resolution.** Remaining blends: Normal, Brightest, Darkest, Edges, Contrast.
+Sessions store names; `"Glow"` / `"Shadow"` and old integer slots 1 and 4 map to
+Normal so Brightest/Edges/Contrast do not shift. Dropdown has 5 items; shuffle
+cycles `item_count`. Playtest: Glow param → `_base_blend` 0 (Normal).
+
+## 2026-08-25 - Point Cloud size dead; Noise Displace does not move points
+
+**Issue.** User: "Point cloud doesn't work. I mean, it works, but the size doesn't work. And also, if I add noise-displaced, it doesn't really displace it."
+
+1. Point size slider does not change visible dot size (or barely does).
+2. Point Cloud + Noise Displace does not move the points.
+
+**Plan.**
+
+1. Log this (done). No commit. Stay in point cloud + noise deform + effects sidebar wiring. Do not rewrite Feedback or Material Override.
+2. Size: Godot 4.7 spatial shaders reject `render_mode point_size` (`Invalid render mode`). `POINT_SIZE` on Forward+ therefore cannot drive overlay dots. Expand overlay meshes to camera-facing UV2 quads so the `point_size` uniform scales screen-space sprites. Slider → uniform → GPU, including scatter MultiMesh overlays.
+3. Noise: displacement must run on overlay vertices independently of `np_u_skip` (centerpiece skip warp must not skip noise). Use a local `vtx` so `np_warp_vertex_and_normal(VERTEX, …)` cannot write back the rest pose. Same local-vtx pattern in `noise_deform.gdshader`. Keep include after samplers; warp after noise.
+4. Playtest: Point Cloud size grows/shrinks. Noise Displace + Point Cloud moves the dots.
+
+**Resolution.** Size was dead because Forward+ spatial has no `point_size` render mode, so `POINT_SIZE` never changed the 1px GL points. Overlays are now UV2 quads; `point_size` expands them in view space after noise+warp. Noise did not move dots because warp was passed `VERTEX` as inout (rest pose could win) and a failed `render_mode point_size` compile dropped the whole vertex shader. Local `vtx`: noise/cloth first, `np_u_skip` only skips warp, then assign VERTEX. Same pattern in `noise_deform.gdshader`. Scatter MM size updates with the slider. Confirm: Effects → Point Cloud on, drag Point size; enable Noise Displace with Affects Main/Env — dots grow and jitter.
+
+## 2026-08-25 - Reverse Copies mode; fix Blur 0 Windows trail
+
+**Issue.** User rejected the extra Feedback "Copies" / 10-copies / Sharp trail mode.
+They do NOT want discrete N full-frame duplicates. They want the existing sliders:
+Blend Normal, Blur 0, Opacity 100, Persistence 100 — a Windows window-trail: each
+new frame painted on top of an uncleared buffer, sharp, only moving things trail.
+
+**Plan.**
+
+1. Log this (done). No commit. Stay in Feedback; do not touch Material Override
+   or nonlinear_projection.
+2. Remove Copies look UI (Trail look, Copy scale/offset/rotate, shuffle look)
+   and shader `copies_mode` / zoom-offset path.
+3. Fix Blur 0: no downsample, no mipmaps, no zoom, no spread. Full-res 1:1.
+4. Normal + persist 100 + opacity 100: motion-hold Windows trail
+   `out = mix(prev, current, max(1-persist, motion))`. Persist 100 keeps unchanged
+   pixels; moving pixels stamp sharp copies. Blur > 0 keeps the old smear path.
+5. Playtest: Normal, blur 0, opacity 100, persist 100 — sharp trails, not fog.
+
+**Resolution.** Copies UI and `copies_mode` are gone. Blur 0 captures 1:1 (nearest cap 1280, no mips, zoom 1). Normal + blur 0 paints leftover stamps on the live view (`COLOR = hist` with alpha = leftover × persist × opacity) instead of fullscreen `max()` — that lighten path washed flythroughs white. Leftover = motion × (darker leftover object or more-saturated leftover), so bright walls do not freeze. Persist 100 keeps stamps; lower persist fades them. Blur > 0 keeps the old smear. Playtest: Feedback on, Normal, blur 0, opacity 100, persist 100 — sharp stacked arches/geometry on flythrough, no Copies controls, no white fog.
+
+## 2026-08-25 - Material Override effect (cladding / chrome / gold / normal / shiny black / AO)
+
+**Issue.** User: add another effect, material override, with a few looks — white cladding, chrome, gold, normal (show the normal map), shiny black, and something driven by ambient occlusion. Same as other effects otherwise: enable, cycle through looks, schedule them.
+
+**Plan.**
+
+1. Log this (done). No commit. Do not replace Camera3D / world / spawn. Do not rewrite Feedback ping-pong or `nonlinear_projection/` shaders.
+2. New `MaterialOverrideEffect` (`effects/material_override_effect.gd`) following Wireframe / Point Cloud: push to `Scene3DItem` / `FlythroughEnvironment`.
+3. Apply via `GeometryInstance3D.material_override`; cache the previous override (original or nonlinear wrap) in meta; restore on disable / Original. Do not destroy surface PBR.
+4. Looks: White cladding, Chrome, Gold, Normal, Shiny black, AO, plus Original. Mix slider via `attach_driven`. Shuffle look + Schedule like Hole / Feedback.
+5. Register in `EffectStack`, `ShowDirector` FX_IDS / Play All / random params, and `effects_sidebar` (new block; do not delete Nonlinear camera or Feedback rows).
+6. Target the same mesh set as point-cloud defaults (main + scatter + environment, skip media / point-cloud overlays). Re-stamp on `_reapply_live_mesh_fx` / item change.
+7. Playtest: enable, cycle all 6 looks, disable restores originals, schedule/shuffle work.
+
+**Resolution.** Implemented. Scripts compile. In-editor playtest of cycling looks was blocked by a stale Godot MCP runtime auth token (parallel sessions). Toggle off / Original restores cached `material_override` (surface PBR untouched).
+
+## 2026-08-25 - Exclude main object from nonlinear camera warp
+
+**Issue.** User: environment/background should still bend toward top-down with distance.
+The featured/main flythrough object (burger, skull, character, imported Main item) must
+stay in normal undistorted perspective — not skipped by depth (near env can still warp).
+
+**Plan.**
+
+1. Log this (done). No commit. Do not replace Camera3D / world / spawn. Do not rewrite Feedback.
+2. Main object = flythrough `Centerpiece` layer (`_center_root`, playlist Main tab).
+3. Add `np_u_skip` instance uniform; `np_is_enabled()` is false when skip is set.
+4. Stamp skip on GeometryInstance3D under Centerpiece; do not wrap those StandardMaterial3Ds.
+5. Re-tag on centerpiece swap / item start (same class of bug as panoramic losing Camera3D).
+6. Playtest: Nonlinear ON — main undistorted + textured; env still bends.
+
+**Resolution.** Main object is the flythrough Centerpiece (`_center_root`, playlist Main).
+Tagged `hs_np_main` / `np_skip_warp`. Instance uniform `np_u_skip` disables warp even
+when far; StandardMaterial3D wraps are unwrapped on those meshes only. Environment,
+scatter, and terrain still warp. Re-tagged on item swap via `_reapply_live_mesh_fx` →
+`NonlinearProjection.refresh_scene()`. Enable path unchanged: Effects → Nonlinear camera
+(or F4). Playtest: seated character stayed normal perspective; tiled far world still
+lifted toward top-down; textures intact.
+
+
+## 2026-08-25 - Feedback has no sharp perfect-copy trail
+
+**Issue.** User: all existing Feedback settings are very blurred. There is no mode that
+fills the image with a trail of **perfect copies** of items stacked on top of each other
+(sharp, not smeared). Want video-feedback / delayed-frame echo, not gaussian trails.
+
+**Plan.**
+
+1. Log this (done). No commit. Do not replace Camera3D / world / spawn.
+2. Inspect FeedbackEffect + shader: downsample, blur pass, linear filter, decay mix.
+3. Add a named mode (Copies / Sharp trail) that captures previous frames at full
+   resolution with no extra blur pass, composites discrete sharp copies.
+4. If Blur: 0 still internally blurs, skip blur/downsample for real. Keep existing
+   blurred modes. Match slider + number + Driver UI.
+5. Playtest: enable Feedback, pick sharp/copies, confirm stacked sharp copies.
+
+## 2026-08-25 - Env scale has a hard-coded base driver
+
+**Issue.** User: "There seems to be a hard-coded base driver to the environmental scale.
+Remove that." Env scale should start undriven like other sliders; keep the Driver widget.
+
+**Plan.**
+
+1. Log this (done). No commit.
+2. Find where env_scale is given a default expression (bass, baked driver, session restore).
+3. Remove the forced default binding only — keep `attach_driven` / Driver dropdown.
+4. Playtest: Env scale shows a plain number, Driver not pre-selected.
+
+**Resolution.** Header Env scale was sticky-driven: session saved `param_of_spin` (expression),
+`_apply_environment` stamped that Driver onto every env row, `_sync_env_scale_from_stage`
+re-bound it, and `set_spin_driven` refused to overwrite an expression with a number. Hidden
+Scale Mode still defaulted `scale_source` to `bass`. Header now saves/restores a plain number,
+never copies a Driver onto catalog rows, and `reset_to_number` clears leftover expressions.
+Driver widget remains; user can still pick one. Per-item Edit scale drivers are unchanged.
+
+## 2026-08-25 - Panoramic camera only works the first time
+
+**Issue.** User: panoramic camera works once, then after flythrough proceeds (loop / next
+item / path change) it stops. Likely bound to a Camera3D that was replaced.
+
+**Plan.**
+
+1. Log this (done). No commit. Do not replace Camera3D systems.
+2. Trace how panoramic / 360 / cubemap / lens wrap is applied (Camera FX or flythrough).
+3. Re-bind to the current gameplay Camera3D on item change, path restart, and re-enable.
+4. Playtest: enable panoramic, let flythrough cycle — still works.
+
+**Resolution.** After the first env instantiate, imported GLB `Camera3D` nodes stole
+`current` from the flythrough camera, so lens FOV/DOF landed on a camera that was no
+longer rendering. Path AABB early-out skipped reclaiming current. Hiding the Camera FX
+CanvasLayer dropped BackBufferCopy so the equirect overlay sampled a dead buffer after
+the first cycle. Fix: mute nested cameras, reclaim gameplay `current` on swap/path/item
+start, re-apply Camera FX, keep the CanvasLayer mounted and only toggle the ColorRect,
+re-push on `item_changed`.
+
+## 2026-08-25 - Nonlinear camera black spots (inverted lighting)
+
+**Issue.** User: nonlinear camera inverts normals or similar — mesh has black spots.
+Do not flip faces, cull_disabled as a lighting hack, or NORMAL *= -1 globally.
+
+**Plan.**
+
+1. Log this (done). No commit.
+2. Apply the same camera-space pitch used on VERTEX to NORMAL and TANGENT.
+3. Keep winding stable (don't pull verts behind camera). Restore cull_back if lighting is OK.
+4. Do not regress textured albedo wrap. Playtest: ON textured, bent, no black splotches.
+
+**Resolution.** Vertex warp pitched position and NORMAL but not TANGENT/BINORMAL, and
+did not inverse-transpose the horizontal/vertical scale, so lighting hit the wrong
+hemisphere (black splotches). `cull_disabled` on the wrap shader hid winding issues.
+Now `np_warp_vertex_frame` applies the same camera-space pitch to NORMAL (inverse-transpose
+scale) and TANGENT/BINORMAL (forward scale). Wrap shader restored to `cull_back`. No
+global `NORMAL *= -1`, no face flipping. WRAP_VERSION 9 so materials rebuild.
+
 ## 2026-08-25 - Camera sliders missing numeric + driver inputs
 
 **Issue.** User: "Normally in our camera sliders are missing inputs and driver inputs."
@@ -2022,6 +2658,27 @@ Then `Could not parse global class "FlythroughCameraRig"` and `flythrough_enviro
 2. Environment Scale owns `_env_root` world size only. Stop applying Scale deform as a world multiplier on the environment (exclude env world scale from Play All / audio scale). Keep deform Scale on centerpiece + scatter.
 3. If Env Scale has a driver, live-track the eval on stage without overwriting the stored numeric base or replacing the expression. Session restore must not `float()` an expression into 0.01.
 4. Verify: convento visible at a sensible scale; Env Scale stable (expression stays; no snap to base); object Scale deform still works. script_check + playtest screenshots.
+
+## 2026-08-26 - Feedback stopped working; ASCII+Feedback must sit on top of everything
+
+**Issue:** User: "feedback stopped working. and I think under the ascii, it needs to work on top of everything." Feedback Trail (grouped under ASCII in Effects) no longer produces trails/echo. ASCII and that Feedback should composite **on top of the entire image** — after Bend space, noise displace, materials, camera, glitch, etc. Feedback should feed from/onto that final composite, not a pre-ASCII or pre-effects buffer.
+
+**Likely cause (same post-process stack):**
+1. After the Noto atlas change, `AsciiCharset.build_atlas` adds a SubViewport to the tree and calls `RenderingServer.force_draw()` per glyph. That fires `frame_post_draw`, which Feedback uses to CPU-capture `Viewport.get_texture()`. Nested force-draw can steal/stale the output RT so history never lands (`has_history` stays 0) or captures a 32×32 bake.
+2. Feedback was intentionally given **no** BackBufferCopy (2026-08-13) so `hint_screen_texture` stayed the **pre-ASCII** color scene, with trails overlaid on top. Denser Noto glyphs punch cells to black; history is that dark ASCII buffer while `scene` is still the 3D/FX stack. Luma-gated overlay alpha then goes to ~0 — trails vanish. ASCII also is not the last read of the full composite.
+3. ASCII CanvasLayer 10 / Feedback 12 are already above other LFX, but Feedback sampling the pre-ASCII buffer means color/FX (or a dead buffer) can bury or starve the ASCII look.
+
+**Plan:**
+1. Log this. No commit / push. Do not revert Noto fonts or other FX.
+2. Stop per-glyph `force_draw` bake. Sync atlas = font + bitmap. Async one-shot strip bake (natural frames, baking flag so Feedback skips capture).
+3. ASCII last (layer 100) over the full stack; keep its CanvasLayer mounted. Feedback after that (110) with its **own** BackBufferCopy so `screen_texture` is the post-ASCII final image; keep layer mounted; skip capture while `AsciiCharset.baking`.
+4. Verify: Feedback trails with ASCII on and off; ASCII reads bend/noise/camera/glitch; script_check. Update Resolution.
+
+**Resolution:**
+1. **Why Feedback broke:** Two stacked bugs after the Noto atlas change. (a) `AsciiCharset.build_atlas` added a SubViewport and called `RenderingServer.force_draw()` per glyph. That nested redraw fired `frame_post_draw`, so Feedback’s CPU capture of the output RT was skipped, emptied, or stolen by the 32×32 bake. (b) Feedback had **no** BackBufferCopy (2026-08-13), so `hint_screen_texture` was the **pre-ASCII** 3D/FX buffer while history was a capture of dense Noto ASCII (black cell gaps). The luma-gated overlay alpha went to ~0 — trails vanished. Color/FX could also sit on top of the ASCII look.
+2. **ASCII + Feedback on top of everything:** ASCII is CanvasLayer **100** (after hole/glitch/chromatic/tone/camera/bend). Feedback is **110**. Feedback now has its **own** BackBufferCopy, so it samples the post-ASCII final composite and trails feed from that. Both layers stay mounted when off (only the ColorRect hides) so the copy does not die on toggle.
+3. **Atlas bake:** Sync atlas is font pages + 5×7 fallback (no force_draw). A one-shot strip SubViewport refines glyphs over natural frames; `AsciiCharset.baking` makes Feedback skip capture until the bake is gone.
+4. **Files:** `effects/ascii_charset.gd`, `effects/ascii_effect.gd`, `effects/feedback_effect.gd`, `effects/feedback_effect.gdshader`, this log. Headless `compile_check.gd`: ASCII/Feedback load OK, presets OK, `eAs2` kept. Editor MCP websocket was `ws://127.0.0.1:-1` this session (no playtest screenshot). No commit.
 
 
 

@@ -38,6 +38,7 @@ static func load_asset_into(parent: Node3D, path: String, opts: Dictionary = {})
 		var inst: Node = cached.instantiate()
 		parent.add_child(inst)
 		_SceneMeshFx.ensure_mesh_tangents(inst)
+		_SceneMeshFx.disable_nested_cameras(inst)
 		if inst is Node3D:
 			return inst as Node3D
 		inst.queue_free()
@@ -48,6 +49,7 @@ static func load_asset_into(parent: Node3D, path: String, opts: Dictionary = {})
 			var instance: Node = packed.instantiate()
 			parent.add_child(instance)
 			_SceneMeshFx.ensure_mesh_tangents(instance)
+			_SceneMeshFx.disable_nested_cameras(instance)
 			if instance is Node3D:
 				return instance as Node3D
 			instance.queue_free()
@@ -62,6 +64,7 @@ static func load_asset_into(parent: Node3D, path: String, opts: Dictionary = {})
 			var scene: Node = packed2.instantiate()
 			parent.add_child(scene)
 			_SceneMeshFx.ensure_mesh_tangents(scene)
+			_SceneMeshFx.disable_nested_cameras(scene)
 			if scene is Node3D:
 				return scene as Node3D
 			scene.queue_free()
@@ -129,15 +132,17 @@ static func fit_node_to_size(node: Node3D, target_max_dim: float) -> Vector3:
 	return node.scale
 
 
-static func compute_aabb(root: Node3D) -> AABB:
+static func compute_aabb(root: Node3D, skip_meta: String = "") -> AABB:
 	var pack: Array = [AABB(), true]
-	_accum_aabb(root, Transform3D.IDENTITY, pack)
+	_accum_aabb(root, Transform3D.IDENTITY, pack, skip_meta)
 	if pack[1]:
 		return AABB(Vector3(-2, -2, -30), Vector3(4, 4, 60))
 	return pack[0]
 
 
-static func _accum_aabb(node: Node, parent_xf: Transform3D, pack: Array) -> void:
+static func _accum_aabb(node: Node, parent_xf: Transform3D, pack: Array, skip_meta: String = "") -> void:
+	if skip_meta != "" and node.has_meta(skip_meta):
+		return
 	var local_xf := parent_xf
 	if node is Node3D:
 		local_xf = parent_xf * (node as Node3D).transform
@@ -161,4 +166,45 @@ static func _accum_aabb(node: Node, parent_xf: Transform3D, pack: Array) -> void
 			else:
 				pack[0] = (pack[0] as AABB).expand(c)
 	for child in node.get_children():
-		_accum_aabb(child, local_xf, pack)
+		_accum_aabb(child, local_xf, pack, skip_meta)
+
+
+static func make_visual_tile_copy(source: Node3D, tile_name: String) -> Node3D:
+	## Duplicate mesh only for the environment grid (corners included). No extra lights / WorldEnvironment.
+	if source == null:
+		return null
+	var copy := source.duplicate() as Node3D
+	if copy == null:
+		return null
+	copy.name = tile_name
+	if copy.has_meta("hs_env_primary"):
+		copy.remove_meta("hs_env_primary")
+	copy.set_meta("hs_env_tile", true)
+	strip_nested_lighting(copy)
+	_SceneMeshFx.disable_nested_cameras(copy)
+	return copy
+
+
+static func strip_nested_lighting(root: Node) -> void:
+	## Drop WorldEnvironment / lights from tiled copies so HDRI and stage lighting stay single.
+	if root == null:
+		return
+	var doomed: Array[Node] = []
+	_collect_nested_lighting(root, doomed)
+	for n in doomed:
+		if not is_instance_valid(n):
+			continue
+		var p := n.get_parent()
+		if p:
+			p.remove_child(n)
+		n.free()
+
+
+static func _collect_nested_lighting(node: Node, out: Array[Node]) -> void:
+	if node is WorldEnvironment or node is Light3D or node is VoxelGI or node is LightmapGI:
+		out.append(node)
+		return
+	if node is Camera3D:
+		(node as Camera3D).current = false
+	for child in node.get_children():
+		_collect_nested_lighting(child, out)

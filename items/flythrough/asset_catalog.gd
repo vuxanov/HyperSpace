@@ -7,6 +7,12 @@ class_name FlythroughAssetCatalog
 const CONVENT_GLB := "res://3D models/chiostro-ex-convento-di-civitaretenga-laquila/source/02_08_2026 (1).glb"
 const STREET_CITY_FBX := "res://3D models/street-city-buildings-8/source/улица скетч.fbx"
 const BURGER_GLB := "res://3D models/stylized-3d-cheeseburger-rapid-assets/source/438b5714-5600-4eef-b364-03f11e3a7fb8.glb"
+## Copies per side from old saves (not including the original). 49 → 99 cells.
+const ENV_TILE_LEGACY_COPIES_MAX := 49
+## Cell count shown in Grid X/Y/Z spins (integers 1–100).
+const ENV_TILE_GRID_MAX := 100
+## Spawn cap so 100×100×1 cannot create ~10k full mesh copies.
+const ENV_TILE_INSTANCE_MAX := 1000
 
 
 static func default_environment_path() -> String:
@@ -42,6 +48,7 @@ static func default_flythrough_params() -> Dictionary:
 		env_cfg = {"source": env}
 	else:
 		env_cfg = {"path": env}
+	stamp_env_tile_counts(env_cfg, default_env_tile_counts())
 	if burger.begins_with("primitive:"):
 		sc_cfg = {"source": burger, "count": 18}
 		cp_cfg = {"source": burger}
@@ -62,13 +69,15 @@ static func default_flythrough_params() -> Dictionary:
 
 ## Empty fly-through stage for the three-tab asset UI (no default props / sequence).
 static func blank_stage_params() -> Dictionary:
+	var env_cfg := {"source": "primitive:box_corridor"}
+	stamp_env_tile_counts(env_cfg, default_env_tile_counts())
 	return {
 		"style": "flythrough",
 		"speed": 2.0,
 		"path_style": "auto",
 		"centerpiece_locked": true,
 		"center_distance": 2.75,
-		"environment": {"source": "primitive:box_corridor"},
+		"environment": env_cfg,
 		"scatter": empty_scatter_config(),
 		"centerpiece": empty_centerpiece_config(),
 		"lighting": default_lighting_config(),
@@ -410,6 +419,169 @@ static func layer_config_from_entry(entry: Dictionary, role: String, scatter_cou
 		if not cfg.has("layout"):
 			cfg["layout"] = "random"
 	return cfg
+
+
+static func clamp_env_tile_count(raw: Variant) -> int:
+	## Cells along one axis including the original. 1 = no extras; 2 = original + one neighbor.
+	return clampi(int(raw), 1, ENV_TILE_GRID_MAX)
+
+
+static func env_tile_grid_size(cells: int) -> int:
+	## Alias: stored values are already cell counts.
+	return clamp_env_tile_count(cells)
+
+
+static func _legacy_copies_to_cells(copies: int) -> int:
+	return clampi(1 + 2 * clampi(copies, 0, ENV_TILE_LEGACY_COPIES_MAX), 1, ENV_TILE_GRID_MAX)
+
+
+static func stamp_env_tile_counts(into: Dictionary, counts: Vector3i) -> Vector3i:
+	## Persist cell counts and mark the new representation so old copies-per-side saves still migrate.
+	var c := Vector3i(
+		clamp_env_tile_count(counts.x),
+		clamp_env_tile_count(counts.y),
+		clamp_env_tile_count(counts.z)
+	)
+	into["tile_x"] = c.x
+	into["tile_y"] = c.y
+	into["tile_z"] = c.z
+	into["tile_cells"] = true
+	return c
+
+
+static func env_tiles_cue_value(counts: Vector3i) -> Dictionary:
+	var c := stamp_env_tile_counts({}, counts)
+	return {"x": c.x, "y": c.y, "z": c.z, "cells": true}
+
+
+static func env_tile_instance_count(counts: Vector3i) -> int:
+	return clamp_env_tile_count(counts.x) * clamp_env_tile_count(counts.y) * clamp_env_tile_count(counts.z)
+
+
+static func env_tile_counts_for_spawn(counts: Vector3i) -> Vector3i:
+	## Per-axis clamp, then shrink proportionally so grid product ≤ ENV_TILE_INSTANCE_MAX.
+	var gx := clamp_env_tile_count(counts.x)
+	var gy := clamp_env_tile_count(counts.y)
+	var gz := clamp_env_tile_count(counts.z)
+	var n := gx * gy * gz
+	if n <= ENV_TILE_INSTANCE_MAX:
+		return Vector3i(gx, gy, gz)
+	var active := 0
+	if gx > 1:
+		active += 1
+	if gy > 1:
+		active += 1
+	if gz > 1:
+		active += 1
+	if active <= 0:
+		return Vector3i(gx, gy, gz)
+	var scale := pow(float(ENV_TILE_INSTANCE_MAX) / float(n), 1.0 / float(active))
+	if gx > 1:
+		gx = maxi(1, int(floor(float(gx) * scale)))
+	if gy > 1:
+		gy = maxi(1, int(floor(float(gy) * scale)))
+	if gz > 1:
+		gz = maxi(1, int(floor(float(gz) * scale)))
+	while gx * gy * gz > ENV_TILE_INSTANCE_MAX:
+		if gx >= gy and gx >= gz and gx > 1:
+			gx -= 1
+		elif gy >= gz and gy > 1:
+			gy -= 1
+		elif gz > 1:
+			gz -= 1
+		else:
+			break
+	return Vector3i(gx, gy, gz)
+
+
+static func env_tile_cell_offsets(counts: Vector3i) -> Array[Vector3i]:
+	## Full integer lattice including corners, excluding the primary cell.
+	## Primary stays put and occupies index floor((n-1)/2) on each axis (centered when n is odd;
+	## even n grows extra cells on the + side). Steps are 1 AABB so tiles sit flush.
+	var out: Array[Vector3i] = []
+	var nx := clamp_env_tile_count(counts.x)
+	var ny := clamp_env_tile_count(counts.y)
+	var nz := clamp_env_tile_count(counts.z)
+	var hx := int((nx - 1) / 2)
+	var hy := int((ny - 1) / 2)
+	var hz := int((nz - 1) / 2)
+	for ix in range(nx):
+		for iy in range(ny):
+			for iz in range(nz):
+				var dx := ix - hx
+				var dy := iy - hy
+				var dz := iz - hz
+				if dx == 0 and dy == 0 and dz == 0:
+					continue
+				out.append(Vector3i(dx, dy, dz))
+	return out
+
+
+static func env_tile_counts_from(config: Dictionary) -> Vector3i:
+	var as_cells := bool(config.get("tile_cells", config.get("cells", false)))
+	if as_cells:
+		return Vector3i(
+			clamp_env_tile_count(config.get("tile_x", config.get("x", 1))),
+			clamp_env_tile_count(config.get("tile_y", config.get("y", 1))),
+			clamp_env_tile_count(config.get("tile_z", config.get("z", 1)))
+		)
+	return Vector3i(
+		_legacy_copies_to_cells(int(config.get("tile_x", config.get("x", 0)))),
+		_legacy_copies_to_cells(int(config.get("tile_y", config.get("y", 0)))),
+		_legacy_copies_to_cells(int(config.get("tile_z", config.get("z", 0))))
+	)
+
+
+static func env_tile_counts_from_value(value: Variant) -> Vector3i:
+	if value is Vector3i:
+		var v: Vector3i = value
+		return Vector3i(clamp_env_tile_count(v.x), clamp_env_tile_count(v.y), clamp_env_tile_count(v.z))
+	if value is Dictionary:
+		return env_tile_counts_from(value as Dictionary)
+	return Vector3i(1, 1, 1)
+
+
+static func default_env_tile_counts() -> Vector3i:
+	## Catalog / blank-stage default: 3×1×3 ground grid.
+	return Vector3i(3, 1, 3)
+
+
+static func strip_layer_customizations(cfg: Dictionary, layer_id: String) -> Dictionary:
+	## Drop per-item scale / offset / look / tiles / scatter extras. Keep the asset identity.
+	var out: Dictionary = cfg.duplicate(true)
+	for k in ["user_scale", "user_scale_expr", "user_offset", "mat_override", "material_override", "blend_mode", "scale"]:
+		out.erase(k)
+	match layer_id:
+		"environment":
+			stamp_env_tile_counts(out, default_env_tile_counts())
+		"scatter":
+			out["global_scale"] = 1.0
+			out["layout"] = "random"
+			if not is_empty_layer_config(out):
+				out["count"] = 18
+	return out
+
+
+static func strip_playlist_item_params(params: Dictionary) -> Dictionary:
+	## Factory defaults for every flythrough customization; playlist assets stay.
+	var out: Dictionary = params.duplicate(true)
+	for layer_id in ["environment", "scatter", "centerpiece"]:
+		if out.get(layer_id) is Dictionary:
+			out[layer_id] = strip_layer_customizations(out[layer_id] as Dictionary, str(layer_id))
+	for k in [
+		"env_scale", "environment_scale", "env_tiles", "environment_tiles",
+		"env_offset", "environment_offset", "centerpiece_scale", "scatter_scale",
+		"scatter_global_scale", "centerpiece_offset", "main_offset", "scatter_offset",
+		"env_mat_override", "environment_mat_override", "centerpiece_mat_override",
+		"main_mat_override", "scatter_mat_override", "env_blend", "environment_blend",
+		"centerpiece_blend", "main_blend", "scatter_blend",
+	]:
+		out.erase(k)
+	out["path_style"] = "auto"
+	out["camera_path"] = "auto"
+	out["speed"] = 2.0
+	out["fly_speed"] = 2.0
+	return out
 
 
 static func normalize_scatter_layout(raw: Variant) -> String:

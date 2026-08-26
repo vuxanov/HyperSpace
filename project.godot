@@ -50,7 +50,8 @@ window/stretch/mode="canvas_items"
 
 enabled=PackedStringArray("res://addons/godot_mcp_toolkit/plugin.cfg")
 
-[mcp_toolkit]
+[rendering]
 
-status="No .mcp.json found — use Project > Tools > MCP Toolkit > Write .mcp.json to create one."
-
+camera/depth_of_field/depth_of_field_bokeh_shape=2.0
+camera/depth_of_field/depth_of_field_bokeh_quality=2.0
+camera/depth_of_field/depth_of_field_use_jitter=true

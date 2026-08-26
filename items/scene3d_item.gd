@@ -19,6 +19,7 @@ var _pending_params: Dictionary = {}
 func _ready() -> void:
 	set_anchors_preset(PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	set_process(false)
 	_texture_rect = TextureRect.new()
 	_texture_rect.set_anchors_preset(PRESET_FULL_RECT)
 	_texture_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -153,14 +154,25 @@ func restore_reactive_poses() -> void:
 
 
 func reset_stage_to_defaults() -> void:
+	_pending_params = FlythroughAssetCatalog.strip_playlist_item_params(_pending_params)
 	if _environment != null and _environment.has_method("reset_stage_to_defaults"):
 		_environment.call("reset_stage_to_defaults")
-		if _pending_params.has("speed") or _pending_params.has("fly_speed"):
-			_pending_params["speed"] = 2.0
-			_pending_params["fly_speed"] = 2.0
+		_pending_params["speed"] = 2.0
+		_pending_params["fly_speed"] = 2.0
+		_pending_params["path_style"] = "auto"
+		_pending_params["camera_path"] = "auto"
+		if _environment.has_method("get_layer_config"):
+			for layer_id in ["environment", "scatter", "centerpiece"]:
+				var cfg: Variant = _environment.call("get_layer_config", layer_id)
+				if cfg is Dictionary:
+					_pending_params[str(layer_id)] = (cfg as Dictionary).duplicate(true)
 		return
 	# Non-flythrough fallback: drop reactive leftovers if the env knows how.
 	restore_reactive_poses()
+
+
+func get_pending_flythrough_params() -> Dictionary:
+	return _pending_params.duplicate(true)
 
 
 func set_layer_alpha(alpha: float) -> void:
@@ -233,9 +245,25 @@ func set_point_cloud(on: bool, params: Dictionary = {}) -> void:
 			or bool(targets.get("target_scatter", true))
 		if not on or not want_layers:
 			SceneMeshFx.clear_point_cloud(_sub_viewport)
+			set_process(false)
 			return
 		var roots: Array = [_sub_viewport] if want_layers else []
-		SceneMeshFx.apply_point_cloud_layers(_sub_viewport, roots, true, size, true)
+		var cam := SceneMeshFx.find_play_camera(_sub_viewport)
+		SceneMeshFx.apply_point_cloud_layers(_sub_viewport, roots, true, size, true, cam)
+		set_process(true)
+
+
+func _process(_delta: float) -> void:
+	if _environment != null:
+		set_process(false)
+		return
+	if _sub_viewport == null:
+		set_process(false)
+		return
+	if SceneMeshFx.point_cloud_build_pending(_sub_viewport):
+		SceneMeshFx.tick_point_cloud_build()
+	else:
+		set_process(false)
 
 
 func set_camera_fx(on: bool, params: Dictionary = {}) -> void:
@@ -245,6 +273,58 @@ func set_camera_fx(on: bool, params: Dictionary = {}) -> void:
 	if _sub_viewport:
 		var cam := SceneMeshFx.find_camera(_sub_viewport)
 		SceneMeshFx.apply_camera_fx(cam, on, params)
+
+
+func set_material_override(on: bool, params: Dictionary = {}) -> void:
+	if _environment != null and _environment.has_method("set_material_override"):
+		_environment.call("set_material_override", on, params)
+		return
+	if _sub_viewport:
+		var look := str(params.get("look", "White cladding"))
+		var targets: Dictionary = SceneMeshFx.pc_targets_from(params)
+		var want := bool(targets.get("target_environment", true)) \
+			or bool(targets.get("target_main", true)) \
+			or bool(targets.get("target_scatter", true))
+		var roots: Array = [_sub_viewport] if on and want else []
+		SceneMeshFx.apply_material_override_layers(_sub_viewport, roots, on and want, look)
+
+
+func set_fog(on: bool, params: Dictionary = {}) -> void:
+	if _environment != null and _environment.has_method("set_fog"):
+		_environment.call("set_fog", on, params)
+		return
+	if _sub_viewport == null:
+		return
+	var world_env: WorldEnvironment = null
+	for child in _sub_viewport.get_children():
+		if child is WorldEnvironment:
+			world_env = child as WorldEnvironment
+			break
+		world_env = child.find_child("WorldEnvironment", true, false) as WorldEnvironment
+		if world_env:
+			break
+	if world_env == null or world_env.environment == null:
+		return
+	var env: Environment = world_env.environment
+	if not on:
+		env.fog_mode = Environment.FOG_MODE_EXPONENTIAL
+		env.fog_aerial_perspective = 0.0
+		env.fog_sky_affect = 0.0
+		env.fog_sun_scatter = 0.0
+		env.fog_height_density = 0.0
+		env.volumetric_fog_enabled = false
+		env.volumetric_fog_density = 0.0
+		return
+	var density := clampf(float(params.get("density", 0.32)), 0.0, 2.0)
+	env.fog_enabled = density > 0.001
+	env.fog_mode = Environment.FOG_MODE_DEPTH
+	env.fog_depth_begin = maxf(float(params.get("begin", 5.0)), 0.0)
+	env.fog_depth_end = maxf(float(params.get("end", 32.0)), env.fog_depth_begin + 0.5)
+	env.fog_density = clampf(lerpf(0.38, 0.70, clampf(density, 0.0, 1.0)), 0.38, 0.70)
+	env.fog_light_energy = lerpf(0.95, 1.35, clampf(density, 0.0, 1.0))
+	env.fog_aerial_perspective = clampf(0.22 + density * 0.45, 0.22, 0.55)
+	env.fog_sky_affect = clampf(0.12 + density * 0.28, 0.12, 0.38)
+	env.fog_light_color = FogEffect.tinted_fog_color(FogEffect.tint_from_params(params))
 
 
 func _generic_cloth(on: bool, params: Dictionary) -> void:

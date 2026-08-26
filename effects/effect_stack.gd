@@ -26,6 +26,10 @@ func create_effect(effect_id: String) -> EffectLayer:
 			return PointCloudEffect.new()
 		"camera_fx":
 			return CameraFxEffect.new()
+		"material_override":
+			return MaterialOverrideEffect.new()
+		"fog":
+			return FogEffect.new()
 		_:
 			push_warning("EffectStack: unknown effect '%s'" % effect_id)
 			return null

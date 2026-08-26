@@ -68,7 +68,7 @@ tooltip_text = "Camera fly-through path shape (Auto keeps the env-fitted straigh
 [node name="ResetDefaultsBtn" type="Button" parent="Margin/Column/Header"]
 layout_mode = 2
 text = "Reset to default"
-tooltip_text = "Restore env/hero/scatter poses and clear rotation/reactivity leftovers"
+tooltip_text = "Reset every left-panel customization (scale, offset, grid, material, blend, scatter, path) plus effects. Playlist assets stay."
 
 [node name="AssetTabs" type="TabContainer" parent="Margin/Column"]
 layout_mode = 2
@@ -101,6 +101,7 @@ value = 8.0
 suffix = "s"
 
 [node name="EnvScaleRow" type="HBoxContainer" parent="Margin/Column/AssetTabs/Environments"]
+visible = false
 layout_mode = 2
 theme_override_constants/separation = 6
 
@@ -121,9 +122,10 @@ custom_arrow_step = 1.0
 tooltip_text = "Per-environment scale after auto-fit (decimals ok; arrows change by 1)"
 
 [node name="EnvHint" type="Label" parent="Margin/Column/AssetTabs/Environments"]
+visible = false
 layout_mode = 2
 autowrap_mode = 3
-text = "Background / world. Click a row to apply. Play cycles with this timer. Scale keeps the flythrough readable."
+text = ""
 
 [node name="EnvAddRow" type="HBoxContainer" parent="Margin/Column/AssetTabs/Environments"]
 layout_mode = 2

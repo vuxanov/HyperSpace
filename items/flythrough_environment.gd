@@ -11,6 +11,9 @@ const _SceneMeshFx := preload("res://core/scene_mesh_fx.gd")
 const ENV_TARGET_LONGEST := 48.0
 const ENV_MIN_LONGEST := 10.0
 const ENV_MAX_LONGEST := 140.0
+## Environment grid: cell counts per axis, full XYZ lattice including corners.
+const ENV_TILE_META := "hs_env_tile"
+const ENV_PRIMARY_NAME := "EnvPrimary"
 
 var fly_speed: float = 12.0
 ## Camera path shape: auto (env-fitted straight) | circle | square | dive3d.
@@ -95,6 +98,14 @@ var _pc_overlays: Array = []
 var _pc_built: bool = false
 var _camera_fx_on: bool = false
 var _camera_fx_params: Dictionary = {}
+var _mat_override_on: bool = false
+var _mat_override_params: Dictionary = {}
+var _fog_fx_on: bool = false
+var _fog_fx_params: Dictionary = {}
+var _env_user_offset := Vector3.ZERO
+var _center_user_offset := Vector3.ZERO
+var _scatter_user_offset := Vector3.ZERO
+var _np_hero_overlay_on: bool = false
 var _particle_amount_center: int = -1
 var _particle_amount_env: int = -1
 var _particle_amount_scatter: int = -1
@@ -108,6 +119,7 @@ const SCATTER_LAYOUT_GRID := "grid"
 const SCATTER_LAYOUT_CIRCULAR := "circular"
 ## Skip path rebuild when env AABB barely changes (meters).
 const PATH_AABB_EPS := 0.75
+const NP_HERO_DEPTH_META := "hs_np_hero_depth"
 
 ## Async layer swap generations — ignore stale callbacks.
 var _load_gen: Dictionary = {"environment": 0, "centerpiece": 0, "scatter": 0, "lighting": 0}
@@ -115,6 +127,9 @@ var _pending_scatter_after_env: bool = false
 var _last_path_aabb := AABB()
 var _has_path_aabb: bool = false
 var _env_source_key: String = ""
+## Tiled copies of the visual env mesh (not lights / WorldEnvironment / HDRI).
+var _env_tiles: Array[Node3D] = []
+var _env_tile_counts := Vector3i.ZERO
 var _center_source_key: String = ""
 var _scatter_source_key: String = ""
 ## Incremental scatter spawn leftover (packed path now uses MultiMesh).
@@ -148,6 +163,11 @@ func configure_from_params(params: Dictionary) -> void:
 		)
 	if params.has("environment") and params["environment"] is Dictionary:
 		_layer_configs["environment"] = (params["environment"] as Dictionary).duplicate(true)
+	if params.has("env_tiles"):
+		var env_cfg: Dictionary = (_layer_configs.get("environment", {}) as Dictionary).duplicate(true)
+		var tiles := FlythroughAssetCatalog.env_tile_counts_from_value(params["env_tiles"])
+		FlythroughAssetCatalog.stamp_env_tile_counts(env_cfg, tiles)
+		_layer_configs["environment"] = env_cfg
 	if params.has("scatter") and params["scatter"] is Dictionary:
 		_layer_configs["scatter"] = (params["scatter"] as Dictionary).duplicate(true)
 	if params.has("centerpiece") and params["centerpiece"] is Dictionary:
@@ -245,14 +265,16 @@ func set_point_cloud(on: bool, params: Dictionary = {}) -> void:
 		_clear_point_cloud()
 		_restamp_pc_deform()
 		return
-	if not _pc_built or targets_changed:
+	if targets_changed:
+		_clear_point_cloud()
+		_point_cloud_on = true
+	_apply_point_cloud_now()
+	var stale := SceneMeshFx.update_overlay_point_size(_pc_overlays, _point_cloud_size)
+	_update_scatter_mm_point_size()
+	if stale:
 		_apply_point_cloud_now()
 	else:
-		var stale := SceneMeshFx.update_overlay_point_size(_pc_overlays, _point_cloud_size)
-		if stale:
-			_apply_point_cloud_now()
-		else:
-			_restamp_pc_deform()
+		_restamp_pc_deform()
 
 
 func _pc_targets_equal(a: Dictionary, b: Dictionary) -> bool:
@@ -277,9 +299,8 @@ func _apply_point_cloud_now() -> void:
 		_clear_point_cloud()
 		return
 	_pc_overlays = SceneMeshFx.apply_point_cloud_layers(
-		self, roots, true, _point_cloud_size, true
+		self, roots, true, _point_cloud_size, true, _camera
 	)
-	_sync_scatter_mm_point_cloud()
 	_pc_built = true
 	_restamp_pc_deform()
 
@@ -305,6 +326,9 @@ func _free_scatter_mm_pc() -> void:
 			if existing != null and is_instance_valid(existing) and existing is Node:
 				(existing as Node).queue_free()
 			mmi.remove_meta("hs_pc_overlay")
+		if mmi.has_meta("hs_pc_vis"):
+			mmi.visible = bool(mmi.get_meta("hs_pc_vis"))
+			mmi.remove_meta("hs_pc_vis")
 		if mmi.has_meta("hs_pc_layers"):
 			mmi.layers = int(mmi.get_meta("hs_pc_layers"))
 			mmi.remove_meta("hs_pc_layers")
@@ -358,6 +382,17 @@ func _sync_scatter_mm_point_cloud() -> void:
 			SceneMeshFx.bind_overlay_live_texture(pc_mi, mmi)
 
 
+func _update_scatter_mm_point_size() -> void:
+	if not _point_cloud_on:
+		return
+	for mmi in _scatter_mm_nodes:
+		if not is_instance_valid(mmi) or not mmi.has_meta("hs_pc_overlay"):
+			continue
+		var pc_any: Variant = mmi.get_meta("hs_pc_overlay")
+		if SceneMeshFx.is_live(pc_any) and pc_any is GeometryInstance3D:
+			SceneMeshFx.ensure_point_deform_material(pc_any as GeometryInstance3D, _point_cloud_size)
+
+
 func _restamp_pc_deform() -> void:
 	## Overlay is a rest-pose points mesh; same noise/cloth uniforms make dots follow deform.
 	if _cloth_on or RH.property_active("noise"):
@@ -367,17 +402,152 @@ func _restamp_pc_deform() -> void:
 func set_camera_fx(on: bool, params: Dictionary = {}) -> void:
 	_camera_fx_on = on
 	_camera_fx_params = params if on else {}
+	_claim_gameplay_camera()
 	if _camera:
 		SceneMeshFx.apply_camera_fx(_camera, on, params)
 
 
+func set_material_override(on: bool, params: Dictionary = {}) -> void:
+	_mat_override_on = on
+	_mat_override_params = params if on else {}
+	_apply_material_override_now()
+
+
+func set_fog(on: bool, params: Dictionary = {}) -> void:
+	_fog_fx_on = on
+	_fog_fx_params = FogEffect.sanitize_params(params) if on else {}
+	_apply_fog_state()
+
+
+func _apply_material_override_now() -> void:
+	# Do not restore-all while on — that flashes originals every audio/rebuild tick.
+	# Untargeted layers keep per-item looks; targeted layers get global (global wins).
+	if not _mat_override_on:
+		SceneMeshFx.restore_material_override(self)
+		_apply_item_mat_overrides()
+		return
+	var look := str(_mat_override_params.get("look", "White cladding"))
+	var targets: Dictionary = SceneMeshFx.pc_targets_from(_mat_override_params)
+	if not bool(targets.get("target_environment", true)):
+		_apply_item_mat_on_root(_env_root, _layer_configs.get("environment", {}) as Dictionary)
+	if not bool(targets.get("target_main", true)):
+		_apply_item_mat_on_root(_center_root, _layer_configs.get("centerpiece", {}) as Dictionary)
+	if not bool(targets.get("target_scatter", true)):
+		_apply_item_mat_on_root(_scatter_root, _layer_configs.get("scatter", {}) as Dictionary)
+	var roots: Array = []
+	if bool(targets.get("target_environment", true)) and _env_root:
+		roots.append(_env_root)
+	if bool(targets.get("target_main", true)) and _center_root:
+		roots.append(_center_root)
+	if bool(targets.get("target_scatter", true)) and _scatter_root:
+		roots.append(_scatter_root)
+	SceneMeshFx.stamp_material_override_roots(roots, look)
+
+
+func _apply_item_mat_overrides() -> void:
+	_apply_item_mat_on_root(_env_root, _layer_configs.get("environment", {}) as Dictionary)
+	_apply_item_mat_on_root(_center_root, _layer_configs.get("centerpiece", {}) as Dictionary)
+	_apply_item_mat_on_root(_scatter_root, _layer_configs.get("scatter", {}) as Dictionary)
+
+
+func _apply_item_mat_on_root(root: Node3D, cfg: Dictionary) -> void:
+	if root == null:
+		return
+	var look := SceneMeshFx.layer_mat_override_look(cfg)
+	SceneMeshFx.apply_material_override_on_root(root, not look.is_empty(), look)
+
+
+func _apply_media_blends() -> void:
+	_apply_media_blend_on_root(_env_root, _layer_configs.get("environment", {}) as Dictionary)
+	_apply_media_blend_on_root(_center_root, _layer_configs.get("centerpiece", {}) as Dictionary)
+	_apply_media_blend_on_root(_scatter_root, _layer_configs.get("scatter", {}) as Dictionary)
+
+
+func _apply_media_blend_on_root(root: Node3D, cfg: Dictionary) -> void:
+	if root == null:
+		return
+	FlythroughMediaProp.apply_blend_on_root(root, cfg.get("blend_mode", "Normal"))
+
+
+func _apply_item_looks_for_layer(layer_id: String) -> void:
+	var root: Node3D = _env_root
+	var target_key := "target_environment"
+	match layer_id:
+		"centerpiece":
+			root = _center_root
+			target_key = "target_main"
+		"scatter":
+			root = _scatter_root
+			target_key = "target_scatter"
+	var cfg: Dictionary = _layer_configs.get(layer_id, {}) as Dictionary
+	_apply_media_blend_on_root(root, cfg)
+	_apply_item_mat_on_root(root, cfg)
+	if _mat_override_on:
+		var targets: Dictionary = SceneMeshFx.pc_targets_from(_mat_override_params)
+		if bool(targets.get(target_key, true)):
+			var look := str(_mat_override_params.get("look", "White cladding"))
+			SceneMeshFx.apply_material_override_on_root(root, true, look)
+
+
+func set_layer_item_mat_override(layer_id: String, look: String) -> void:
+	if layer_id not in ["environment", "centerpiece", "scatter"]:
+		return
+	var cfg: Dictionary = (_layer_configs.get(layer_id, {}) as Dictionary).duplicate(true)
+	var n := str(look).strip_edges()
+	if n.is_empty() or n.to_lower() == "off" or n.to_lower() == "none":
+		cfg.erase("mat_override")
+	else:
+		cfg["mat_override"] = MaterialOverrideEffect.normalize_look(n)
+	_layer_configs[layer_id] = cfg
+	_apply_item_looks_for_layer(layer_id)
+
+
+func set_layer_blend_mode(layer_id: String, blend: String) -> void:
+	if layer_id not in ["environment", "centerpiece", "scatter"]:
+		return
+	var cfg: Dictionary = (_layer_configs.get(layer_id, {}) as Dictionary).duplicate(true)
+	cfg["blend_mode"] = FlythroughMediaProp.normalize_blend(blend)
+	_layer_configs[layer_id] = cfg
+	_apply_item_looks_for_layer(layer_id)
+
+
+func on_item_started() -> void:
+	_claim_gameplay_camera()
+	_reapply_live_mesh_fx()
+
+
+func _claim_gameplay_camera() -> void:
+	## Keep the flythrough Camera3D as the live view after env/path/item swaps.
+	## Imported GLBs often add `@Camera3D@####` nodes that steal `current`.
+	if _camera == null:
+		return
+	SceneMeshFx.disable_nested_cameras(self, _camera)
+	_camera.current = true
+
+
 func _reapply_live_mesh_fx() -> void:
+	_claim_gameplay_camera()
+	if _center_root:
+		_center_root.name = "Centerpiece"
+		_center_root.set_meta("hs_np_main", true)
 	if _point_cloud_on:
 		_apply_point_cloud_now()
 	if _camera_fx_on and _camera:
 		SceneMeshFx.apply_camera_fx(_camera, true, _camera_fx_params)
+	# Looks first, then noise — otherwise PBR/Bend override hides surface displace
+	# and `_noise_mats` keeps stamping orphaned shaders (Main/Outer look frozen).
+	_apply_material_override_now()
 	if _cloth_on or RH.property_active("noise"):
 		_apply_noise_distort(null, 0.0)
+	_apply_media_blends()
+	_apply_fog_state()
+	_apply_layer_user_offsets()
+
+
+func _refresh_nonlinear_main_skip() -> void:
+	var np := get_node_or_null("/root/NonlinearProjection")
+	if np != null and np.has_method("refresh_scene"):
+		np.call("refresh_scene")
 
 
 func _build_world() -> void:
@@ -407,6 +577,7 @@ func _build_world() -> void:
 	_camera.far = 200.0
 	_camera.current = true
 	add_child(_camera)
+	_claim_gameplay_camera()
 
 	_sun = DirectionalLight3D.new()
 	_sun.name = "Sun"
@@ -427,6 +598,7 @@ func _build_world() -> void:
 	add_child(_scatter_root)
 	_center_root = Node3D.new()
 	_center_root.name = "Centerpiece"
+	_center_root.set_meta("hs_np_main", true)
 	add_child(_center_root)
 	_setup_particle_systems()
 	_apply_lighting_config(_lighting_config)
@@ -482,11 +654,6 @@ func _apply_lighting_config(config: Dictionary) -> void:
 		_light.light_color = _accent
 
 	var ambient := _color_from_dict(cfg.get("ambient_color", {}), Color(0.55, 0.55, 0.56))
-	var fog_density := float(cfg.get("fog_density", 0.0))
-	env.fog_density = fog_density
-	env.fog_enabled = fog_density > 0.00015
-	env.fog_light_color = ambient.darkened(0.45)
-	env.fog_sky_affect = 0.0
 	env.tonemap_mode = Environment.TONE_MAPPER_ACES
 	env.tonemap_exposure = float(cfg.get("tonemap_exposure", 1.0))
 	env.glow_enabled = false
@@ -512,7 +679,7 @@ func _apply_lighting_config(config: Dictionary) -> void:
 
 	if use_hdri and not hdri_path.is_empty():
 		if panorama_ready != null:
-			_apply_hdri_panorama(env, cfg, panorama_ready, lighting_key, fog_density)
+			_apply_hdri_panorama(env, cfg, panorama_ready, lighting_key)
 			return
 		# Keep previous sky visible while HDRI loads off-thread (never sync Image.load here).
 		var gen := int(_load_gen.get("lighting", 0)) + 1
@@ -525,15 +692,16 @@ func _apply_lighting_config(config: Dictionary) -> void:
 				return
 			if _world_env == null or _world_env.environment == null:
 				return
-			_apply_hdri_panorama(_world_env.environment, cfg, payload as Texture2D, lighting_key, fog_density)
+			_apply_hdri_panorama(_world_env.environment, cfg, payload as Texture2D, lighting_key)
 		)
 		if st == _AssetCache.Status.READY:
 			var tex := _AssetCache.get_texture(hdri_path)
 			if tex != null:
-				_apply_hdri_panorama(env, cfg, tex, lighting_key, fog_density)
+				_apply_hdri_panorama(env, cfg, tex, lighting_key)
 				return
 		if st == _AssetCache.Status.LOADING:
 			_applied_lighting_key = lighting_key
+			_apply_fog_state()
 			return
 		push_warning("FlythroughEnvironment: HDRI missing or unloadable: %s" % hdri_path)
 
@@ -564,9 +732,10 @@ func _apply_lighting_config(config: Dictionary) -> void:
 		env.sky = null
 	_applied_lighting_key = lighting_key
 	_world_env.environment = env
+	_apply_fog_state()
 
 
-func _apply_hdri_panorama(env: Environment, cfg: Dictionary, panorama: Texture2D, lighting_key: String, fog_density: float) -> void:
+func _apply_hdri_panorama(env: Environment, cfg: Dictionary, panorama: Texture2D, lighting_key: String) -> void:
 	var sky := Sky.new()
 	var mat := PanoramaSkyMaterial.new()
 	mat.panorama = panorama
@@ -581,11 +750,9 @@ func _apply_hdri_panorama(env: Environment, cfg: Dictionary, panorama: Texture2D
 	env.ambient_light_energy = _base_ambient_energy
 	env.ambient_light_color = Color(1, 1, 1)
 	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
-	env.fog_sky_affect = 0.0
-	if fog_density <= 0.00015:
-		env.fog_enabled = false
 	_applied_lighting_key = lighting_key
 	_world_env.environment = env
+	_apply_fog_state()
 
 
 func _load_hdri_texture_cached(path: String) -> Texture2D:
@@ -675,12 +842,20 @@ func _begin_environment_swap(config: Dictionary) -> void:
 	if source.is_empty():
 		source = FlythroughAssetCatalog.default_environment_path()
 	var key := "%s|%s" % [source, str(config.get("user_scale", config.get("scale", 1.0)))]
-	# Same asset already showing — only refresh user scale / framing.
-	if key == _env_source_key and _env_root.get_child_count() > 1:
+		# Same asset already showing — only refresh user scale / offset / tiles / framing.
+	if key == _env_source_key and _env_primary_node() != null:
 		_env_user_scale = maxf(float(config.get("user_scale", config.get("scale", 1.0))), 0.01)
+		_env_user_offset = _read_user_offset(config)
 		_apply_env_display_scale()
-		_update_framing_from_environment()
+		_apply_layer_user_offsets()
+		var tiles := _read_env_tile_counts(config)
+		if FlythroughAssetCatalog.env_tile_counts_for_spawn(tiles) != _env_tile_counts:
+			_apply_env_tiles()
+			_reapply_live_mesh_fx()
+		else:
+			_update_framing_from_environment()
 		_place_centerpiece()
+		_apply_item_looks_for_layer("environment")
 		return
 	if not FlythroughLayerSlot.is_file_path(source) or FlythroughLayerSlot.is_media_path(source):
 		_rebuild_environment()
@@ -731,15 +906,21 @@ func _swap_environment_packed(packed: PackedScene, config: Dictionary, key: Stri
 	_terrain_meta = {}
 	_env_fit_scale = 1.0
 	_mat_cache.clear()
+	_env_tiles.clear()
+	_env_tile_counts = Vector3i.ZERO
 	_env_user_scale = maxf(float(config.get("user_scale", config.get("scale", 1.0))), 0.01)
+	_env_user_offset = _read_user_offset(config)
 	_env_root.rotation = Vector3.ZERO
-	_env_root.position = Vector3.ZERO
+	_apply_layer_user_offsets()
 	_env_root.scale = Vector3.ONE * _env_user_scale
 	var instance: Node = packed.instantiate()
 	_env_root.add_child(instance)
 	_SceneMeshFx.ensure_mesh_tangents(instance)
+	_SceneMeshFx.disable_nested_cameras(instance)
 	if instance is Node3D:
 		_fit_environment_node(instance as Node3D)
+	_ensure_env_primary()
+	_apply_env_tiles()
 	_env_particles_on = false
 	_sync_particles()
 	_env_source_key = key
@@ -754,9 +935,11 @@ func _begin_centerpiece_swap(config: Dictionary) -> void:
 	var source := FlythroughLayerSlot.resolve_source_string(config)
 	var key := source
 	if key == _center_source_key:
-		# Same asset — refresh user scale without full swap.
+		# Same asset — refresh user scale / offset without full swap.
 		set_centerpiece_user_scale(float(config.get("user_scale", config.get("scale", 1.0))))
+		_center_user_offset = _read_user_offset(config)
 		_place_centerpiece()
+		_apply_item_looks_for_layer("centerpiece")
 		return
 	if source.is_empty() or not FlythroughLayerSlot.is_file_path(source) or FlythroughLayerSlot.is_media_path(source):
 		_rebuild_centerpiece()
@@ -800,6 +983,7 @@ func _swap_centerpiece_packed(packed: PackedScene, key: String, gen: int) -> voi
 	var instance: Node = packed.instantiate()
 	_center_root.add_child(instance)
 	_SceneMeshFx.ensure_mesh_tangents(instance)
+	_SceneMeshFx.disable_nested_cameras(instance)
 	if instance is Node3D:
 		_apply_centerpiece_fit_scale(instance as Node3D)
 	_raise_centerpiece_priority(_center_root)
@@ -817,6 +1001,9 @@ func _begin_scatter_swap(config: Dictionary) -> void:
 	if key == _scatter_source_key and not _scatter_nodes.is_empty():
 		set_scatter_user_scale(float(config.get("user_scale", config.get("scale", 1.0))))
 		set_scatter_global_scale(float(config.get("global_scale", 1.0)))
+		_scatter_user_offset = _read_user_offset(config)
+		_apply_layer_user_offsets()
+		_apply_item_looks_for_layer("scatter")
 		return
 	if source.is_empty() or not FlythroughLayerSlot.is_file_path(source) or FlythroughLayerSlot.is_media_path(source):
 		_rebuild_scatter()
@@ -1009,6 +1196,9 @@ func _rebuild_path_from_environment_if_needed(reset_progress: bool = true) -> vo
 		var size_delta := (aabb.size - prev.size).length()
 		if center_delta < PATH_AABB_EPS and size_delta < PATH_AABB_EPS:
 			_update_framing_from_environment()
+			_claim_gameplay_camera()
+			if _camera_fx_on and _camera:
+				SceneMeshFx.apply_camera_fx(_camera, true, _camera_fx_params)
 			return
 	_last_path_aabb = aabb
 	_has_path_aabb = true
@@ -1026,10 +1216,13 @@ func _rebuild_environment() -> void:
 	_terrain_meta = {}
 	_env_fit_scale = 1.0
 	_mat_cache.clear()
+	_env_tiles.clear()
+	_env_tile_counts = Vector3i.ZERO
 	var config: Dictionary = _layer_configs.get("environment", {})
 	_env_user_scale = maxf(float(config.get("user_scale", config.get("scale", 1.0))), 0.01)
+	_env_user_offset = _read_user_offset(config)
 	_env_root.rotation = Vector3.ZERO
-	_env_root.position = Vector3.ZERO
+	_apply_layer_user_offsets()
 	_env_root.scale = Vector3.ONE * _env_user_scale
 	var source := FlythroughLayerSlot.resolve_source_string(config)
 	if source.is_empty():
@@ -1048,6 +1241,8 @@ func _rebuild_environment() -> void:
 	else:
 		FlythroughPrimitives.spawn_environment("box_corridor", _env_root)
 		_update_framing_from_environment()
+	_ensure_env_primary()
+	_apply_env_tiles()
 	_env_particles_on = false
 	_sync_particles()
 	_env_source_key = "%s|%s" % [source, str(_env_user_scale)]
@@ -1127,9 +1322,290 @@ func _layer_user_scale_from_config(config: Dictionary, fallback: float = 1.0) ->
 	return maxf(float(config.get("user_scale", config.get("scale", fallback))), 0.01)
 
 
+func _read_user_offset(config: Dictionary) -> Vector3:
+	return _vec3_from_dict(config.get("user_offset", {}), Vector3.ZERO)
+
+
+func _apply_layer_user_offsets() -> void:
+	if _env_root:
+		_env_root.position = _env_user_offset
+	if _scatter_root:
+		_scatter_root.position = _scatter_user_offset
+
+
+func set_environment_user_offset(offset: Vector3) -> void:
+	_env_user_offset = offset
+	var cfg: Dictionary = (_layer_configs.get("environment", {}) as Dictionary).duplicate(true)
+	cfg["user_offset"] = {"x": offset.x, "y": offset.y, "z": offset.z}
+	_layer_configs["environment"] = cfg
+	_apply_layer_user_offsets()
+
+
+func set_environment_tiles(counts: Vector3i) -> void:
+	## Live tile counts — duplicate the visual mesh only, keep path on the original AABB.
+	var cfg: Dictionary = (_layer_configs.get("environment", {}) as Dictionary).duplicate(true)
+	counts = FlythroughAssetCatalog.stamp_env_tile_counts(cfg, counts)
+	_layer_configs["environment"] = cfg
+	if not is_inside_tree() or _env_root == null:
+		_env_tile_counts = FlythroughAssetCatalog.env_tile_counts_for_spawn(counts)
+		return
+	_apply_env_tiles()
+	_reapply_live_mesh_fx()
+
+
+func _read_env_tile_counts(config: Dictionary) -> Vector3i:
+	return FlythroughAssetCatalog.env_tile_counts_from(config)
+
+
+func _tile_counts_from_value(value: Variant) -> Vector3i:
+	return FlythroughAssetCatalog.env_tile_counts_from_value(value)
+
+
+func _env_primary_node() -> Node3D:
+	if _env_root == null:
+		return null
+	var n := _env_root.get_node_or_null(ENV_PRIMARY_NAME)
+	if n is Node3D:
+		return n as Node3D
+	return null
+
+
+func _ensure_env_primary() -> Node3D:
+	if _env_root == null:
+		return null
+	var existing := _env_primary_node()
+	if existing != null:
+		return existing
+	var kids: Array[Node] = []
+	for child in _env_root.get_children():
+		if child == _env_particles:
+			continue
+		if child.has_meta(ENV_TILE_META):
+			continue
+		kids.append(child)
+	if kids.is_empty():
+		return null
+	if kids.size() == 1 and kids[0] is Node3D:
+		var only := kids[0] as Node3D
+		only.name = ENV_PRIMARY_NAME
+		only.set_meta("hs_env_primary", true)
+		return only
+	var wrapper := Node3D.new()
+	wrapper.name = ENV_PRIMARY_NAME
+	wrapper.set_meta("hs_env_primary", true)
+	_env_root.add_child(wrapper)
+	for child in kids:
+		var xf := Transform3D.IDENTITY
+		if child is Node3D:
+			xf = (child as Node3D).transform
+		_env_root.remove_child(child)
+		wrapper.add_child(child)
+		if child is Node3D:
+			(child as Node3D).transform = xf
+	return wrapper
+
+
+func _clear_env_tiles() -> void:
+	for t in _env_tiles:
+		if not is_instance_valid(t):
+			continue
+		var p := t.get_parent()
+		if p:
+			p.remove_child(t)
+		t.free()
+	_env_tiles.clear()
+	if _env_root != null:
+		_noise_mesh_lists.erase(_env_root.get_instance_id())
+		for child in _env_root.get_children():
+			if child.has_meta(ENV_TILE_META):
+				_env_root.remove_child(child)
+				child.free()
+
+
+func _apply_env_tiles() -> void:
+	var cfg: Dictionary = _layer_configs.get("environment", {}) as Dictionary
+	var requested := _read_env_tile_counts(cfg)
+	var counts := FlythroughAssetCatalog.env_tile_counts_for_spawn(requested)
+	var primary := _ensure_env_primary()
+	_clear_env_tiles()
+	_env_tile_counts = counts
+	if primary == null or FlythroughAssetCatalog.env_tile_instance_count(counts) <= 1:
+		_update_framing_from_environment()
+		return
+	var aabb := FlythroughLayerSlot.compute_aabb(primary)
+	if aabb.size.length() < 0.05:
+		_update_framing_from_environment()
+		return
+	# Regular AABB lattice. Primary occupies floor((n-1)/2); odd n is centered, even n grows +axis.
+	var step := aabb.size
+	if step.x < 0.05:
+		step.x = 0.0
+	if step.y < 0.05:
+		step.y = 0.0
+	if step.z < 0.05:
+		step.z = 0.0
+	for cell in FlythroughAssetCatalog.env_tile_cell_offsets(counts):
+		var offset := Vector3(step.x * float(cell.x), step.y * float(cell.y), step.z * float(cell.z))
+		if offset.length() < 0.05:
+			continue
+		var copy := FlythroughLayerSlot.make_visual_tile_copy(primary, "EnvTile_%d_%d_%d" % [cell.x, cell.y, cell.z])
+		if copy == null:
+			continue
+		copy.position = primary.position + offset
+		_env_root.add_child(copy)
+		_env_tiles.append(copy)
+	if _env_root:
+		_noise_mesh_lists.erase(_env_root.get_instance_id())
+	_update_framing_from_environment()
+
+
+func set_centerpiece_user_offset(offset: Vector3) -> void:
+	_center_user_offset = offset
+	var cfg: Dictionary = (_layer_configs.get("centerpiece", {}) as Dictionary).duplicate(true)
+	cfg["user_offset"] = {"x": offset.x, "y": offset.y, "z": offset.z}
+	_layer_configs["centerpiece"] = cfg
+	_place_centerpiece()
+
+
+func set_scatter_user_offset(offset: Vector3) -> void:
+	_scatter_user_offset = offset
+	var cfg: Dictionary = (_layer_configs.get("scatter", {}) as Dictionary).duplicate(true)
+	cfg["user_offset"] = {"x": offset.x, "y": offset.y, "z": offset.z}
+	_layer_configs["scatter"] = cfg
+	_apply_layer_user_offsets()
+
+
+func _apply_fog_state() -> void:
+	if _world_env == null or _world_env.environment == null:
+		return
+	var env: Environment = _world_env.environment
+	if not _fog_fx_on or _fog_fx_params.is_empty():
+		_restore_lighting_fog(env)
+		return
+	var density := clampf(float(_fog_fx_params.get("density", 0.32)), 0.0, 2.0)
+	if density <= 0.001:
+		_restore_lighting_fog(env)
+		return
+	var fog_begin := maxf(float(_fog_fx_params.get("begin", _fog_fx_params.get("fog_begin", 5.0))), 0.0)
+	var fog_end := maxf(float(_fog_fx_params.get("end", _fog_fx_params.get("fog_end", 32.0))), fog_begin + 0.5)
+	var d := clampf(density, 0.0, 1.0)
+	env.fog_enabled = true
+	env.fog_mode = Environment.FOG_MODE_DEPTH
+	env.fog_depth_begin = fog_begin
+	env.fog_depth_end = fog_end
+	env.fog_depth_curve = lerpf(0.85, 0.32, d)
+	env.fog_light_energy = lerpf(0.95, 1.45, d)
+	# Depth fog: fog_density is max opacity at End. Slider 100 = thick visible mist,
+	# not a full sky wash (old aerial 0.85). Tint only changes fog_light_color chroma.
+	env.fog_density = clampf(lerpf(0.22, 0.94, d), 0.22, 0.94)
+	env.fog_aerial_perspective = clampf(0.16 + d * 0.50, 0.16, 0.66)
+	env.fog_sky_affect = clampf(0.10 + d * 0.42, 0.10, 0.52)
+	env.fog_sun_scatter = 0.0
+	env.fog_height_density = 0.0
+	env.fog_light_color = FogEffect.tinted_fog_color(FogEffect.tint_from_params(_fog_fx_params))
+	env.volumetric_fog_enabled = false
+	env.volumetric_fog_density = 0.0
+	_discard_fog_noise_overlay()
+
+
+func _restore_lighting_fog(env: Environment) -> void:
+	_discard_fog_noise_overlay()
+	var light_density := float(_lighting_config.get("fog_density", 0.0))
+	env.fog_mode = Environment.FOG_MODE_EXPONENTIAL
+	env.fog_density = light_density
+	env.fog_enabled = light_density > 0.00015
+	env.fog_light_color = _base_ambient_color.darkened(0.45)
+	env.fog_sky_affect = 0.0
+	env.fog_aerial_perspective = 0.0
+	env.fog_height_density = 0.0
+	env.fog_sun_scatter = 0.0
+	env.fog_light_energy = 1.0
+	env.fog_depth_begin = 10.0
+	env.fog_depth_end = 100.0
+	env.volumetric_fog_enabled = false
+	env.volumetric_fog_density = 0.0
+
+
+func _discard_fog_noise_overlay() -> void:
+	## Fog Noise overlay is retired. Drop any leftover node from an older session.
+	var leftover := get_node_or_null("FogNoiseOverlay")
+	if leftover != null and is_instance_valid(leftover):
+		leftover.queue_free()
+
+
+func _centerpiece_visible_cam_local(base: Vector3) -> Vector3:
+	## Bend space must not change apparent size. Keep intended camera depth.
+	## Extra lift is Y-only and XY-clamped so the hero stays in frame.
+	var local := base
+	var np := get_node_or_null("/root/NonlinearProjection")
+	if np == null or not RH.property_active("bend"):
+		return local
+	local.y += maxf(float(np.get("extra_lift")), 0.0)
+	return _clamp_cam_local_xy_on_screen(local)
+
+
+func _clamp_cam_local_xy_on_screen(local: Vector3) -> Vector3:
+	## Never pull toward the camera — that enlarges the hero. Keep Z (size).
+	## If user Z would put it behind the near plane, restore intended depth.
+	var intended_z := -_center_distance + _center_user_offset.z
+	var z := local.z
+	var near_lim := -0.25
+	if _camera:
+		near_lim = -maxf(_camera.near * 4.0, 0.25)
+	if z > near_lim:
+		z = intended_z if intended_z <= near_lim else near_lim
+	var dist := maxf(-z, 0.25)
+	var fov := 70.0
+	if _camera:
+		fov = _camera.fov
+	var half_h := tan(deg_to_rad(fov * 0.5)) * dist
+	var aspect := 16.0 / 9.0
+	if _camera:
+		var vp := _camera.get_viewport()
+		if vp:
+			var r := vp.get_visible_rect().size
+			if r.y > 1.0:
+				aspect = r.x / r.y
+	var half_w := half_h * aspect
+	return Vector3(
+		clampf(local.x, -half_w * 0.55, half_w * 0.55),
+		clampf(local.y, -half_h * 0.48, half_h * 0.48),
+		z
+	)
+
+
+func _sync_centerpiece_np_overlay() -> void:
+	var on := RH.property_active("bend")
+	if on:
+		_apply_centerpiece_np_overlay_tree(_center_root, true)
+	elif _np_hero_overlay_on:
+		_apply_centerpiece_np_overlay_tree(_center_root, false)
+	_np_hero_overlay_on = on
+
+
+func _apply_centerpiece_np_overlay_tree(node: Node, on: bool) -> void:
+	if node == null or not is_instance_valid(node):
+		return
+	if node is GeometryInstance3D and not (node is GPUParticles3D) and not (node is Label3D) and not (node is Sprite3D):
+		_apply_centerpiece_np_overlay_gi(node as GeometryInstance3D, on)
+	for child in node.get_children():
+		_apply_centerpiece_np_overlay_tree(child, on)
+
+
+func _apply_centerpiece_np_overlay_gi(gi: GeometryInstance3D, on: bool) -> void:
+	if on:
+		if not gi.has_meta(NP_HERO_DEPTH_META):
+			gi.set_meta(NP_HERO_DEPTH_META, gi.extra_cull_margin)
+		gi.extra_cull_margin = maxf(float(gi.get_meta(NP_HERO_DEPTH_META)), 48.0)
+	elif gi.has_meta(NP_HERO_DEPTH_META):
+		gi.extra_cull_margin = float(gi.get_meta(NP_HERO_DEPTH_META))
+		gi.remove_meta(NP_HERO_DEPTH_META)
+
+
 func _apply_centerpiece_fit_scale(node: Node3D) -> void:
 	var cfg: Dictionary = _layer_configs.get("centerpiece", {})
 	_center_user_scale = _layer_user_scale_from_config(cfg, 1.0)
+	_center_user_offset = _read_user_offset(cfg)
 	_center_fit_scale = FlythroughLayerSlot.fit_node_to_size(node, 1.6)
 	_center_base_scale = _center_fit_scale * _center_user_scale
 	node.scale = _center_base_scale
@@ -1138,6 +1614,7 @@ func _apply_centerpiece_fit_scale(node: Node3D) -> void:
 func _read_scatter_user_scale() -> float:
 	var cfg: Dictionary = _layer_configs.get("scatter", {})
 	_scatter_user_scale = _layer_user_scale_from_config(cfg, 1.0)
+	_scatter_user_offset = _read_user_offset(cfg)
 	return _scatter_user_scale
 
 
@@ -1168,7 +1645,7 @@ func _rescale_scatter_item_sizes(ratio: float) -> void:
 		if i < _scatter_base_scales.size():
 			_scatter_base_scales[i] = _scatter_base_scales[i] * sv
 	if _point_cloud_on:
-		_sync_scatter_mm_point_cloud()
+		_apply_point_cloud_now()
 
 
 func _finalize_scatter_instance_scale(inst: Node3D, rng: RandomNumberGenerator) -> void:
@@ -1184,6 +1661,7 @@ func _apply_env_display_scale(reactive_vec: Vector3 = Vector3.ONE) -> void:
 		return
 	var s := reactive_vec * _env_user_scale
 	_env_root.scale = s
+	_apply_layer_user_offsets()
 	# Force transform dirty so SubViewport / LOD see the change without a path rebuild.
 	_env_root.force_update_transform()
 	for child in _env_root.get_children():
@@ -1201,7 +1679,7 @@ func _fit_aabb_ignoring_user_scale() -> AABB:
 		p_vis = _env_particles.visible
 		_env_particles.visible = false
 	_env_root.scale = Vector3.ONE
-	var aabb := FlythroughLayerSlot.compute_aabb(_env_root)
+	var aabb := FlythroughLayerSlot.compute_aabb(_env_root, ENV_TILE_META)
 	_env_root.scale = saved
 	if _env_particles:
 		_env_particles.visible = p_vis
@@ -1217,7 +1695,9 @@ func _update_framing_from_environment() -> void:
 	_center_distance = clampf(2.4 + horiz * 0.012, 2.2, 4.5)
 	if _camera:
 		var span := maxf(horiz, aabb.size.y)
-		_camera.far = maxf(200.0, span * 4.0 + 80.0)
+		var max_cells := maxi(maxi(_env_tile_counts.x, _env_tile_counts.y), _env_tile_counts.z)
+		var extent := span * float(maxi(max_cells, 1))
+		_camera.far = maxf(200.0, extent * 2.5 + 80.0)
 		_camera.near = 0.05
 
 
@@ -1278,9 +1758,11 @@ func _rebuild_path_from_environment(reset_progress: bool = true) -> void:
 	if _camera and _curve:
 		var path_len := _curve.get_baked_length()
 		_camera.far = maxf(_camera.far, path_len * 1.5 + 60.0)
-		_camera.current = true
+		_claim_gameplay_camera()
 	if _rig and _camera:
 		_rig.set_curve(_curve, reset_progress)
+	if _camera_fx_on and _camera:
+		SceneMeshFx.apply_camera_fx(_camera, true, _camera_fx_params)
 
 
 func _rebuild_centerpiece() -> void:
@@ -1294,6 +1776,7 @@ func _rebuild_centerpiece() -> void:
 	_centerpiece_mesh = null
 	_mat_cache.clear()
 	var config: Dictionary = _layer_configs.get("centerpiece", {})
+	_center_user_offset = _read_user_offset(config)
 	var source := FlythroughLayerSlot.resolve_source_string(config)
 	# Explicit empty source = no main character (three-tab solo env play).
 	if source.is_empty():
@@ -1335,6 +1818,9 @@ func _rebuild_centerpiece() -> void:
 
 
 func _raise_centerpiece_priority(node: Node) -> void:
+	if node is GeometryInstance3D:
+		(node as GeometryInstance3D).set_meta("np_skip_warp", true)
+		(node as GeometryInstance3D).set_meta("hs_np_main", true)
 	if node is MeshInstance3D:
 		var mi := node as MeshInstance3D
 		mi.sorting_offset = 2.0
@@ -1377,13 +1863,21 @@ func _update_centerpiece_transform(delta: float) -> void:
 		return
 	if not is_inside_tree() or not _camera.is_inside_tree() or not _center_root.is_inside_tree():
 		return
+	_sync_centerpiece_np_overlay()
 	if not _centerpiece_locked:
+		if _center_root:
+			_center_root.position = _center_user_offset
 		return
 	_idle_t += delta
 	var bob := sin(_idle_t * 1.15) * 0.06
 	var sway := cos(_idle_t * 0.85) * 0.04
-	# Stay in the middle of the screen: fixed offset in camera space.
-	var local_offset := Vector3(sway, bob, -_center_distance)
+	# Intended screen pose; Bend space must not change camera depth (apparent size).
+	var local_offset := Vector3(
+		sway + _center_user_offset.x,
+		bob + _center_user_offset.y,
+		-_center_distance + _center_user_offset.z
+	)
+	local_offset = _centerpiece_visible_cam_local(local_offset)
 	_center_root.global_position = _camera.to_global(local_offset)
 	_center_root.global_basis = _camera.global_transform.basis
 	# Do not spin media screens (they face the camera via mesh flip / billboard).
@@ -1528,6 +2022,8 @@ func _finish_scatter_rebuild() -> void:
 func _rebuild_scatter() -> void:
 	_clear_scatter_visuals()
 	var config: Dictionary = _layer_configs.get("scatter", {})
+	_scatter_user_offset = _read_user_offset(config)
+	_apply_layer_user_offsets()
 	var count := _scatter_clamp_count(int(config.get("count", 18)))
 	if count <= 0:
 		_scatter_particles_on = false
@@ -1727,6 +2223,7 @@ func _tick_scatter_spawn() -> void:
 		var n := packed.instantiate()
 		_scatter_root.add_child(n)
 		_SceneMeshFx.ensure_mesh_tangents(n)
+		_SceneMeshFx.disable_nested_cameras(n)
 		var inst := n as Node3D
 		if inst == null:
 			n.queue_free()
@@ -1765,6 +2262,13 @@ func _process(delta: float) -> void:
 	_update_centerpiece_transform(delta)
 	_sync_particles()
 	_sync_pc_media_textures()
+	if _point_cloud_on:
+		if SceneMeshFx.point_cloud_build_pending(self):
+			var prev_n := _pc_overlays.size()
+			_pc_overlays = SceneMeshFx.tick_point_cloud_build()
+			if _pc_overlays.size() != prev_n:
+				_restamp_pc_deform()
+		SceneMeshFx.sync_pc_overlay_transforms(_pc_overlays)
 
 
 func _sync_pc_media_textures() -> void:
@@ -1772,15 +2276,16 @@ func _sync_pc_media_textures() -> void:
 	if not _point_cloud_on:
 		return
 	for ov_any in _pc_overlays:
-		if not SceneMeshFx.is_live(ov_any) or not (ov_any is MeshInstance3D):
+		if not SceneMeshFx.is_live(ov_any) or not (ov_any is GeometryInstance3D):
 			continue
-		var ov := ov_any as MeshInstance3D
-		var parent := ov.get_parent()
-		if not SceneMeshFx.is_live(parent) or not (parent is GeometryInstance3D):
-			continue
-		var pgi := parent as GeometryInstance3D
-		if SceneMeshFx.is_media_instance(pgi):
-			SceneMeshFx.bind_overlay_live_texture(ov, pgi)
+		var ov := ov_any as GeometryInstance3D
+		var src: GeometryInstance3D = null
+		if ov.has_meta("hs_pc_src"):
+			var src_any: Variant = ov.get_meta("hs_pc_src")
+			if SceneMeshFx.is_live(src_any) and src_any is GeometryInstance3D:
+				src = src_any as GeometryInstance3D
+		if src != null and SceneMeshFx.is_media_instance(src):
+			SceneMeshFx.bind_overlay_live_texture(ov, src)
 	for mmi in _scatter_mm_nodes:
 		if not is_instance_valid(mmi) or not bool(mmi.get_meta("media_screen", false)):
 			continue
@@ -2112,9 +2617,7 @@ func _apply_centerpiece_rotation(state: AudioState, lfo: float) -> void:
 func _apply_camera_rotation(state: AudioState, lfo: float) -> void:
 	if _rig == null:
 		return
-	var want := RH.rotation_applies_to("camera") and RH.schedule_open("rotation")
-	# property_active("rotation") covers affect_rotation OR affect_camera_rotation + schedule.
-	want = want and RH.property_active("rotation")
+	var want := RH.rotation_applies_to("camera") and RH.property_active("rotation")
 	if not want:
 		_rig.reset_reactive_spin()
 		_rot_driving_camera = false
@@ -2157,7 +2660,7 @@ func _capture_env_rest_rotation() -> void:
 	## Layer root rest is always identity — reactive spin is transient on `_env_root`.
 	if _env_root:
 		_env_root.rotation = Vector3.ZERO
-		_env_root.position = Vector3.ZERO
+		_apply_layer_user_offsets()
 	_env_rest_rotation = Vector3.ZERO
 	_rot_accum_env = Vector3.ZERO
 	_rot_driving_env = false
@@ -2183,7 +2686,7 @@ func _capture_scatter_rest_rotations() -> void:
 func _restore_env_rotation() -> void:
 	if _env_root:
 		_env_root.rotation = _env_rest_rotation
-		_env_root.position = Vector3.ZERO
+		_apply_layer_user_offsets()
 	_rot_accum_env = _env_rest_rotation
 
 
@@ -2215,7 +2718,7 @@ func restore_reactive_poses() -> void:
 	if not (rot_on and RH.rotation_applies_to("scatter")):
 		_restore_scatter_rotations()
 		_rot_driving_scatter = false
-	var want_cam := rot_on and RH.rotation_applies_to("camera") and RH.schedule_open("rotation")
+	var want_cam := rot_on and RH.rotation_applies_to("camera")
 	if not want_cam:
 		if _rig:
 			_rig.reset_reactive_spin()
@@ -2267,6 +2770,11 @@ func reset_stage_to_defaults() -> void:
 	_clear_media_deform()
 	_clear_softbodies()
 	_clear_noise_deform(true)
+	# Noise clear can restore a PBR look that was under the deform shader. Strip
+	# global + leftover cladding after that, so Reset defaults actually undoes Override.
+	_mat_override_on = false
+	_mat_override_params = {}
+	SceneMeshFx.restore_material_override(self)
 	_reset_layer_emission(_env_root)
 	var cnode := _centerpiece_content_node()
 	if cnode:
@@ -2279,7 +2787,7 @@ func reset_stage_to_defaults() -> void:
 	# Hard identity on env root (rest capture already zeros; belt-and-suspenders).
 	if _env_root:
 		_env_root.rotation = Vector3.ZERO
-		_env_root.position = Vector3.ZERO
+		_apply_layer_user_offsets()
 	_env_rest_rotation = Vector3.ZERO
 	if cnode:
 		cnode.rotation = _center_rest_rotation
@@ -2294,8 +2802,48 @@ func reset_stage_to_defaults() -> void:
 		_rig.fly_speed = fly_speed
 		_rig.reset_reactive_spin()
 	_apply_lighting_config(_lighting_config)
+	_reset_item_customizations()
 	_apply_env_display_scale()
 	_place_centerpiece()
+
+
+func _reset_item_customizations() -> void:
+	## Scale / offset / tiles / mat / blend / scatter extras / cam path — keep the loaded assets.
+	var old_scatter: Dictionary = (_layer_configs.get("scatter", {}) as Dictionary).duplicate(true)
+	var env_cfg := FlythroughAssetCatalog.strip_layer_customizations(
+		_layer_configs.get("environment", {}) as Dictionary, "environment")
+	var main_cfg := FlythroughAssetCatalog.strip_layer_customizations(
+		_layer_configs.get("centerpiece", {}) as Dictionary, "centerpiece")
+	var sc_cfg := FlythroughAssetCatalog.strip_layer_customizations(
+		_layer_configs.get("scatter", {}) as Dictionary, "scatter")
+	_layer_configs["environment"] = env_cfg
+	_layer_configs["centerpiece"] = main_cfg
+	_layer_configs["scatter"] = sc_cfg
+	set_environment_user_scale(1.0)
+	set_centerpiece_user_scale(1.0)
+	set_scatter_user_scale(1.0)
+	set_scatter_global_scale(1.0)
+	set_environment_user_offset(Vector3.ZERO)
+	set_centerpiece_user_offset(Vector3.ZERO)
+	set_scatter_user_offset(Vector3.ZERO)
+	set_environment_tiles(FlythroughAssetCatalog.default_env_tile_counts())
+	set_layer_item_mat_override("environment", "Off")
+	set_layer_item_mat_override("centerpiece", "Off")
+	set_layer_item_mat_override("scatter", "Off")
+	set_layer_blend_mode("environment", "Normal")
+	set_layer_blend_mode("centerpiece", "Normal")
+	set_layer_blend_mode("scatter", "Normal")
+	set_path_style(FlythroughPathBuilder.STYLE_AUTO)
+	var need_scatter_rebuild := false
+	if not FlythroughAssetCatalog.is_empty_layer_config(sc_cfg):
+		var old_layout := FlythroughAssetCatalog.normalize_scatter_layout(
+			old_scatter.get("layout", old_scatter.get("mode", "random")))
+		var new_layout := FlythroughAssetCatalog.normalize_scatter_layout(sc_cfg.get("layout", "random"))
+		var old_count := int(old_scatter.get("count", 18))
+		var new_count := int(sc_cfg.get("count", 18))
+		need_scatter_rebuild = old_layout != new_layout or old_count != new_count
+	if need_scatter_rebuild:
+		_begin_scatter_swap(_layer_configs.get("scatter", {}) as Dictionary)
 
 
 func _apply_scatter_audio(state: AudioState, lfo: float) -> void:
@@ -2345,6 +2893,8 @@ func _reset_layer_emission(root: Node) -> void:
 	for mi in key_nodes:
 		if mi == null or not is_instance_valid(mi) or not (mi is MeshInstance3D):
 			continue
+		if SceneMeshFx.geometry_has_mat_override(mi as GeometryInstance3D):
+			continue
 		var mid := (mi as MeshInstance3D).get_instance_id()
 		if not _mat_cache.has(mid):
 			continue
@@ -2359,6 +2909,8 @@ func _reset_layer_emission(root: Node) -> void:
 		if mmi_any == null or not is_instance_valid(mmi_any) or not (mmi_any is MultiMeshInstance3D):
 			continue
 		var mmi := mmi_any as MultiMeshInstance3D
+		if SceneMeshFx.geometry_has_mat_override(mmi):
+			continue
 		if mmi.material_override is BaseMaterial3D:
 			var ov := mmi.material_override as BaseMaterial3D
 			ov.emission_energy_multiplier = 0.0
@@ -2387,9 +2939,15 @@ func _collect_multimesh_instances(node: Node, out: Array) -> void:
 
 func _ensure_noise_materials_gi(gi: GeometryInstance3D, nseed: Vector3, for_points: bool = false) -> Array:
 	var key := gi.get_instance_id()
-	if _noise_mats.has(key):
+	if _noise_mats.has(key) and _noise_deform_bound(gi, _noise_mats[key]):
 		return _noise_mats[key]
+	var had_backup := _noise_backup.has(key)
 	var backup := {"override": gi.material_override, "surfaces": []}
+	if gi.material_override != null and _is_live_noise_mat(gi.material_override):
+		_noise_mats[key] = [gi.material_override]
+		if not had_backup:
+			_noise_backup[key] = backup
+		return _noise_mats[key]
 	var base: Material = gi.material_override
 	if base == null and gi is MultiMeshInstance3D:
 		var mm: MultiMesh = (gi as MultiMeshInstance3D).multimesh
@@ -2397,7 +2955,8 @@ func _ensure_noise_materials_gi(gi: GeometryInstance3D, nseed: Vector3, for_poin
 			base = mm.mesh.surface_get_material(0)
 	var sm := _make_noise_shader_from(base, nseed, for_points)
 	gi.material_override = sm
-	_noise_backup[key] = backup
+	if not had_backup:
+		_noise_backup[key] = backup
 	_noise_mats[key] = [sm]
 	return [sm]
 
@@ -2430,6 +2989,8 @@ func _drive_mesh_emission_recursive(node: Node, drive01: float, emit_col: Color,
 		# Image/video screens must stay display-referred — emission blows them to white.
 		if str(mi.name).begins_with("HSPointCloud"):
 			pass
+		elif SceneMeshFx.geometry_has_mat_override(mi):
+			pass
 		elif not (mi.get_meta("media_screen", false) or node.get_parent() is FlythroughMediaProp):
 			var mats := _materials_for_mesh(mi)
 			for mat in mats:
@@ -2447,6 +3008,8 @@ func _drive_mesh_emission_recursive(node: Node, drive01: float, emit_col: Color,
 		var mmi := node as MultiMeshInstance3D
 		if str(mmi.name).begins_with("HSPointCloud"):
 			pass
+		elif SceneMeshFx.geometry_has_mat_override(mmi):
+			pass
 		elif not bool(mmi.get_meta("media_screen", false)) and mmi.material_override is BaseMaterial3D:
 			var ov := mmi.material_override as BaseMaterial3D
 			if not ov.resource_local_to_scene:
@@ -2461,6 +3024,8 @@ func _drive_mesh_emission_recursive(node: Node, drive01: float, emit_col: Color,
 
 func _materials_for_mesh(mi: MeshInstance3D) -> Array[BaseMaterial3D]:
 	var key := mi.get_instance_id()
+	if SceneMeshFx.geometry_has_mat_override(mi):
+		return []
 	if _mat_cache.has(key):
 		return _mat_cache[key]
 	var out: Array[BaseMaterial3D] = []
@@ -2519,7 +3084,7 @@ func _apply_noise_distort(state: AudioState, lfo: float) -> void:
 		# Don't clobber reactive multi-axis rotation on the env root.
 		if not RH.property_active("rotation") or not RH.rotation_applies_to("environment"):
 			_restore_env_rotation()
-		_env_root.position = Vector3.ZERO
+		_apply_layer_user_offsets()
 	var cnode := _centerpiece_content_node()
 	if cnode and (not RH.property_active("rotation") or not RH.rotation_applies_to("centerpiece")):
 		cnode.position = Vector3.ZERO
@@ -2533,14 +3098,16 @@ func _apply_noise_distort(state: AudioState, lfo: float) -> void:
 	# Drive Classic4 material uniforms (u_hs_noise_*) for real vertex displace on hills.
 	if want_env and not _terrain_meta.is_empty() and noise_on:
 		_apply_terrain_noise_displace(amt, feature, axes)
+		# Hills use Classic4 uniforms; any MeshInstance3D props on the same layer still need noise_deform.
+		_apply_noise_to_root(_env_root, amt, feature, Vector3(0.1, 0.2, 0.3), axes, active_ids, cloth_amt, cloth_stiff, cloth_wind, cloth_grav, true)
 	elif want_env:
 		if not _terrain_meta.is_empty() and not noise_on:
 			_clear_terrain_noise_displace()
-		_apply_noise_to_root(_env_root, amt, feature, Vector3(0.1, 0.2, 0.3), axes, active_ids, cloth_amt, cloth_stiff, cloth_wind, cloth_grav)
+		_apply_noise_to_root(_env_root, amt, feature, Vector3(0.1, 0.2, 0.3), axes, active_ids, cloth_amt, cloth_stiff, cloth_wind, cloth_grav, true)
 	else:
 		_clear_terrain_noise_displace()
 	if want_center and cnode:
-		_apply_noise_to_root(cnode, amt * 0.85, feature * 0.7, Vector3(1.1, 0.4, 0.7), axes, active_ids, cloth_amt * 0.9, cloth_stiff, cloth_wind, cloth_grav)
+		_apply_noise_to_root(cnode, amt * 0.85, feature * 0.7, Vector3(1.1, 0.4, 0.7), axes, active_ids, cloth_amt * 0.9, cloth_stiff, cloth_wind, cloth_grav, true)
 	if want_scatter:
 		for i in _scatter_nodes.size():
 			if not is_instance_valid(_scatter_nodes[i]):
@@ -2569,7 +3136,7 @@ func _apply_terrain_noise_displace(amount: float, feature: float, axes: Vector3)
 		terrain.call("set_shader_param", "u_hs_noise_axes", axes)
 	# Keep root stable — displace is in the terrain shader now.
 	if _env_root:
-		_env_root.position = Vector3.ZERO
+		_apply_layer_user_offsets()
 
 
 func _clear_terrain_noise_displace() -> void:
@@ -2585,14 +3152,14 @@ func _apply_terrain_noise_wobble(amount: float, axes: Vector3) -> void:
 	_apply_terrain_noise_displace(amount, maxf(RH.noise_scale(), 0.5), axes)
 
 
-func _apply_noise_to_root(root: Node, amount: float, feature: float, nseed: Vector3, axes: Vector3, active_ids: Dictionary, cloth_amt: float = 0.0, cloth_stiff: float = 0.55, cloth_wind: float = 0.0, cloth_grav: float = 1.0) -> void:
+func _apply_noise_to_root(root: Node, amount: float, feature: float, nseed: Vector3, axes: Vector3, active_ids: Dictionary, cloth_amt: float = 0.0, cloth_stiff: float = 0.55, cloth_wind: float = 0.0, cloth_grav: float = 1.0, unlimited_meshes: bool = false) -> void:
 	if root == null or not is_instance_valid(root) or (amount <= 0.001 and cloth_amt <= 0.001):
 		return
 	var meshes := _noise_meshes_for(root)
-	var limit := mini(meshes.size(), NOISE_MESH_LIMIT)
+	var limit := meshes.size() if unlimited_meshes else mini(meshes.size(), NOISE_MESH_LIMIT)
 	for i in limit:
 		var mi: MeshInstance3D = meshes[i] as MeshInstance3D
-		if mi == null or not is_instance_valid(mi) or not mi.visible:
+		if mi == null or not is_instance_valid(mi):
 			continue
 		# Skip draw-pass meshes belonging to particle systems.
 		if mi.get_parent() is GPUParticles3D:
@@ -2610,7 +3177,9 @@ func _apply_noise_to_root(root: Node, amount: float, feature: float, nseed: Vect
 	_collect_multimesh_instances(root, mms)
 	for mmi_any in mms:
 		var mmi := mmi_any as MultiMeshInstance3D
-		if mmi == null or not is_instance_valid(mmi) or not mmi.visible:
+		if mmi == null or not is_instance_valid(mmi):
+			continue
+		if str(mmi.name).begins_with("HSPointCloud"):
 			continue
 		if bool(mmi.get_meta("media_screen", false)):
 			continue
@@ -2640,28 +3209,75 @@ func _noise_meshes_for(root: Node) -> Array:
 
 func _ensure_noise_materials(mi: MeshInstance3D, nseed: Vector3) -> Array:
 	var key := mi.get_instance_id()
-	if _noise_mats.has(key):
+	if _noise_mats.has(key) and _noise_deform_bound(mi, _noise_mats[key]):
 		return _noise_mats[key]
-	var backup := {"override": mi.material_override, "surfaces": []}
+	var had_backup := _noise_backup.has(key)
+	var backup := {"override": mi.material_override, "surfaces": [], "cull": mi.extra_cull_margin}
 	var out: Array = []
 	var for_points := _mesh_is_point_overlay(mi)
+	mi.extra_cull_margin = maxf(mi.extra_cull_margin, 96.0)
 	if mi.material_override != null:
-		var sm := _make_noise_shader_from(mi.material_override, nseed, for_points)
-		backup["override"] = mi.material_override
-		mi.material_override = sm
-		out.append(sm)
+		var base_ov: Material = mi.material_override
+		if _is_live_noise_mat(base_ov):
+			out.append(base_ov)
+		else:
+			if not had_backup:
+				backup["override"] = base_ov
+			var sm := _make_noise_shader_from(base_ov, nseed, for_points)
+			mi.material_override = sm
+			out.append(sm)
 	elif mi.mesh != null:
 		var surfaces: Array = []
 		for s in mi.mesh.get_surface_count():
 			var base := mi.get_active_material(s)
-			surfaces.append(mi.get_surface_override_material(s))
-			var sm2 := _make_noise_shader_from(base, nseed + Vector3(float(s) * 0.13, 0, 0), for_points)
-			mi.set_surface_override_material(s, sm2)
-			out.append(sm2)
-		backup["surfaces"] = surfaces
-	_noise_backup[key] = backup
+			if not had_backup:
+				surfaces.append(mi.get_surface_override_material(s))
+			if _is_live_noise_mat(base):
+				out.append(base)
+			else:
+				var sm2 := _make_noise_shader_from(base, nseed + Vector3(float(s) * 0.13, 0, 0), for_points)
+				mi.set_surface_override_material(s, sm2)
+				out.append(sm2)
+		if not had_backup:
+			backup["surfaces"] = surfaces
+	if not had_backup:
+		_noise_backup[key] = backup
 	_noise_mats[key] = out
 	return out
+
+
+func _is_live_noise_mat(mat: Material) -> bool:
+	if mat == null or not (mat is ShaderMaterial):
+		return false
+	var sh: Shader = (mat as ShaderMaterial).shader
+	if sh == NOISE_DEFORM_SHADER:
+		return true
+	return SceneMeshFx.is_point_deform_material(mat)
+
+
+func _noise_deform_bound(gi: GeometryInstance3D, mats: Array) -> bool:
+	if mats.is_empty():
+		return false
+	for m in mats:
+		if m == null or not is_instance_valid(m) or not _is_live_noise_mat(m):
+			return false
+	var ov: Material = gi.material_override
+	if ov != null:
+		return mats.has(ov) and _is_live_noise_mat(ov)
+	if gi is MeshInstance3D:
+		var mi := gi as MeshInstance3D
+		if mi.mesh == null:
+			return false
+		var any := false
+		for s in mi.mesh.get_surface_count():
+			var sov := mi.get_surface_override_material(s)
+			if sov == null:
+				continue
+			if not mats.has(sov) or not _is_live_noise_mat(sov):
+				return false
+			any = true
+		return any
+	return false
 
 
 func _mesh_is_point_overlay(mi: MeshInstance3D) -> bool:
@@ -2723,9 +3339,9 @@ func _stamp_all_pc_overlays(
 	if not _point_cloud_on:
 		return
 	for ov_any in _pc_overlays:
-		if not SceneMeshFx.is_live(ov_any) or not (ov_any is MeshInstance3D):
+		if not SceneMeshFx.is_live(ov_any) or not (ov_any is GeometryInstance3D):
 			continue
-		var ov := ov_any as MeshInstance3D
+		var ov := ov_any as GeometryInstance3D
 		var scaled: Dictionary = _pc_deform_for_node(ov, amt, feature, cloth_amt, want_env, want_center, want_scatter)
 		_stamp_one_pc_overlay(
 			ov, float(scaled["amt"]), float(scaled["feature"]), axes,
@@ -2782,16 +3398,19 @@ func _stamp_one_pc_overlay(
 	if sm == null:
 		return
 	var nseed := Vector3.ZERO
-	var parent := gi.get_parent()
-	if SceneMeshFx.is_live(parent) and parent is GeometryInstance3D:
-		var pgi := parent as GeometryInstance3D
-		var pmat: Material = pgi.material_override
+	var src: GeometryInstance3D = null
+	if gi.has_meta("hs_pc_src"):
+		var src_any: Variant = gi.get_meta("hs_pc_src")
+		if SceneMeshFx.is_live(src_any) and src_any is GeometryInstance3D:
+			src = src_any as GeometryInstance3D
+	if src:
+		var pmat: Material = src.material_override
 		if pmat is ShaderMaterial and (pmat as ShaderMaterial).shader != null:
 			var ns: Variant = (pmat as ShaderMaterial).get_shader_parameter("noise_seed")
 			if ns is Vector3:
 				nseed = ns as Vector3
-		if SceneMeshFx.is_media_instance(pgi):
-			SceneMeshFx.bind_overlay_live_texture(gi, pgi)
+		if SceneMeshFx.is_media_instance(src):
+			SceneMeshFx.bind_overlay_live_texture(gi, src)
 	if nseed == Vector3.ZERO:
 		nseed = Vector3(float(gi.get_instance_id() % 997), 0.37, 0.19)
 	sm.set_shader_parameter("noise_seed", nseed)
@@ -2818,13 +3437,23 @@ func _make_noise_shader_from(base: Material, nseed: Vector3, for_points: bool = 
 		metal = bm.metallic
 		tex = bm.albedo_texture
 	elif base is ShaderMaterial:
-		# Media screens use ShaderMaterial — pull bound albedo if present so noise
-		# never replaces a textured screen with flat gray/white.
+		# Media screens / Bend wrap / prior noise — pull bound albedo so displace
+		# never replaces a textured env with flat gray.
 		var shm := base as ShaderMaterial
 		var bound: Variant = shm.get_shader_parameter("tex_albedo")
+		if not (bound is Texture2D):
+			bound = shm.get_shader_parameter("np_albedo_tex")
+		if not (bound is Texture2D):
+			bound = shm.get_shader_parameter("albedo_tex")
 		if bound is Texture2D:
 			tex = bound as Texture2D
 			alb = Color(1, 1, 1)
+		var wrap_col: Variant = shm.get_shader_parameter("np_albedo_color")
+		if wrap_col is Color and tex == null:
+			alb = wrap_col as Color
+		var alb_col: Variant = shm.get_shader_parameter("albedo_color")
+		if alb_col is Color and tex == null:
+			alb = alb_col as Color
 	sm.set_shader_parameter("albedo_color", alb)
 	sm.set_shader_parameter("roughness", rough)
 	sm.set_shader_parameter("metallic", metal)
@@ -2871,6 +3500,8 @@ func _restore_noise_material(key: int) -> void:
 		var surfaces: Array = backup.get("surfaces", [])
 		for s in surfaces.size():
 			mi.set_surface_override_material(s, surfaces[s])
+		if backup.has("cull"):
+			mi.extra_cull_margin = float(backup["cull"])
 	elif mi_obj is GeometryInstance3D:
 		(mi_obj as GeometryInstance3D).material_override = backup.get("override", null)
 	_noise_backup.erase(key)
@@ -2904,7 +3535,7 @@ func _clear_noise_deform(force_restore_rotation: bool = false) -> void:
 		_clear_media_deform()
 		_clear_softbodies()
 	if _env_root:
-		_env_root.position = Vector3.ZERO
+		_apply_layer_user_offsets()
 		if force_restore_rotation or _terrain_meta.is_empty() and (
 			not RH.property_active("rotation") or not RH.rotation_applies_to("environment")
 		):
@@ -3053,6 +3684,35 @@ func set_cue_param(key: String, value: Variant) -> void:
 			set_scatter_user_scale(float(value))
 		"scatter_global_scale":
 			set_scatter_global_scale(float(value))
+		"env_offset", "environment_offset":
+			if value is Vector3:
+				set_environment_user_offset(value as Vector3)
+			elif value is Dictionary:
+				set_environment_user_offset(_vec3_from_dict(value, _env_user_offset))
+		"env_tiles", "environment_tiles":
+			set_environment_tiles(_tile_counts_from_value(value))
+		"centerpiece_offset", "main_offset":
+			if value is Vector3:
+				set_centerpiece_user_offset(value as Vector3)
+			elif value is Dictionary:
+				set_centerpiece_user_offset(_vec3_from_dict(value, _center_user_offset))
+		"scatter_offset":
+			if value is Vector3:
+				set_scatter_user_offset(value as Vector3)
+			elif value is Dictionary:
+				set_scatter_user_offset(_vec3_from_dict(value, _scatter_user_offset))
+		"centerpiece_mat_override", "main_mat_override":
+			set_layer_item_mat_override("centerpiece", str(value))
+		"env_mat_override", "environment_mat_override":
+			set_layer_item_mat_override("environment", str(value))
+		"scatter_mat_override":
+			set_layer_item_mat_override("scatter", str(value))
+		"centerpiece_blend", "main_blend":
+			set_layer_blend_mode("centerpiece", str(value))
+		"env_blend", "environment_blend":
+			set_layer_blend_mode("environment", str(value))
+		"scatter_blend":
+			set_layer_blend_mode("scatter", str(value))
 		"follow_centerpiece":
 			_centerpiece_locked = bool(value)
 		"centerpiece_locked":

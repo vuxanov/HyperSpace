@@ -1,990 +1,948 @@
-[gd_scene load_steps=2 format=3 uid="uid://effects_sidebar"]
+[gd_scene format=3 uid="uid://bi6ktdhmoalrv"]
 
-[ext_resource type="Script" path="res://ui/effects_sidebar.gd" id="1"]
+[ext_resource type="Script" uid="uid://djn4hcd508828" path="res://ui/effects_sidebar.gd" id="1"]
 
-[node name="EffectsSidebar" type="PanelContainer"]
+[node name="EffectsSidebar" type="PanelContainer" unique_id=923067040]
 custom_minimum_size = Vector2(340, 0)
 script = ExtResource("1")
 
-[node name="Margin" type="MarginContainer" parent="."]
+[node name="Margin" type="MarginContainer" parent="." unique_id=737746261]
 layout_mode = 2
 theme_override_constants/margin_left = 12
 theme_override_constants/margin_top = 12
 theme_override_constants/margin_right = 12
 theme_override_constants/margin_bottom = 28
 
-[node name="Scroll" type="ScrollContainer" parent="Margin"]
+[node name="Scroll" type="ScrollContainer" parent="Margin" unique_id=1622335896]
 layout_mode = 2
 size_flags_vertical = 3
 horizontal_scroll_mode = 0
 
-[node name="Column" type="VBoxContainer" parent="Margin/Scroll"]
+[node name="Column" type="VBoxContainer" parent="Margin/Scroll" unique_id=493602394]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 0
 theme_override_constants/separation = 10
 
-[node name="Title" type="Label" parent="Margin/Scroll/Column"]
+[node name="Title" type="Label" parent="Margin/Scroll/Column" unique_id=735354343]
 layout_mode = 2
 theme_override_font_sizes/font_size = 18
 text = "Effects"
 
-[node name="SearchEdit" type="LineEdit" parent="Margin/Scroll/Column"]
+[node name="SearchEdit" type="LineEdit" parent="Margin/Scroll/Column" unique_id=95352515]
 layout_mode = 2
 placeholder_text = "Search effects…"
 clear_button_enabled = true
 
-[node name="ResetDefaultsBtn" type="Button" parent="Margin/Scroll/Column"]
+[node name="ResetDefaultsBtn" type="Button" parent="Margin/Scroll/Column" unique_id=188373214]
 layout_mode = 2
-text = "Reset to default"
 tooltip_text = "Reset every Effects control (Deform and visual FX) to defaults. Playlist assets stay."
+text = "Reset to default"
 
-[node name="AudioSection" type="VBoxContainer" parent="Margin/Scroll/Column"]
+[node name="AudioSection" type="VBoxContainer" parent="Margin/Scroll/Column" unique_id=933688121]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="ReactivityToggle" type="CheckButton" parent="Margin/Scroll/Column/AudioSection"]
+[node name="ReactivityToggle" type="CheckButton" parent="Margin/Scroll/Column/AudioSection" unique_id=587004187]
 layout_mode = 2
-button_pressed = false
 text = "Audio Reactivity"
 
-[node name="ReactivityBody" type="VBoxContainer" parent="Margin/Scroll/Column/AudioSection"]
+[node name="ReactivityBody" type="VBoxContainer" parent="Margin/Scroll/Column/AudioSection" unique_id=993667059]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="InputDeviceLabel" type="Label" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
+[node name="InputDeviceLabel" type="Label" parent="Margin/Scroll/Column/AudioSection/ReactivityBody" unique_id=303006143]
 layout_mode = 2
 text = "Audio Source"
 
-[node name="InputDeviceRow" type="HBoxContainer" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
+[node name="InputDeviceRow" type="HBoxContainer" parent="Margin/Scroll/Column/AudioSection/ReactivityBody" unique_id=449999180]
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="InputDeviceOption" type="OptionButton" parent="Margin/Scroll/Column/AudioSection/ReactivityBody/InputDeviceRow"]
+[node name="InputDeviceOption" type="OptionButton" parent="Margin/Scroll/Column/AudioSection/ReactivityBody/InputDeviceRow" unique_id=1413919657]
 layout_mode = 2
 size_flags_horizontal = 3
 fit_to_longest_item = false
 
-[node name="RefreshDevicesBtn" type="Button" parent="Margin/Scroll/Column/AudioSection/ReactivityBody/InputDeviceRow"]
+[node name="RefreshDevicesBtn" type="Button" parent="Margin/Scroll/Column/AudioSection/ReactivityBody/InputDeviceRow" unique_id=2010645576]
 visible = false
 layout_mode = 2
 text = "↻"
 
-[node name="CaptureStatusLabel" type="Label" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
+[node name="CaptureStatusLabel" type="Label" parent="Margin/Scroll/Column/AudioSection/ReactivityBody" unique_id=723473125]
 layout_mode = 2
 theme_override_font_sizes/font_size = 12
 text = "listening…"
 autowrap_mode = 3
 
-[node name="InputLevelLabel" type="Label" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
+[node name="InputLevelLabel" type="Label" parent="Margin/Scroll/Column/AudioSection/ReactivityBody" unique_id=1715238690]
 layout_mode = 2
 text = "Input Level"
 
-[node name="InputLevelBar" type="ProgressBar" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
+[node name="InputLevelBar" type="ProgressBar" parent="Margin/Scroll/Column/AudioSection/ReactivityBody" unique_id=1921221771]
 custom_minimum_size = Vector2(0, 14)
 layout_mode = 2
 tooltip_text = "Live capture level. Empty = silence; typical music fills the bar."
 max_value = 1.0
 show_percentage = false
 
-[node name="SpectrumLabel" type="Label" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
+[node name="SpectrumLabel" type="Label" parent="Margin/Scroll/Column/AudioSection/ReactivityBody" unique_id=1590981765]
 layout_mode = 2
 text = "Graph Equalizer"
 
-[node name="SpectrumBars" type="HBoxContainer" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
+[node name="SpectrumBars" type="HBoxContainer" parent="Margin/Scroll/Column/AudioSection/ReactivityBody" unique_id=350844216]
 custom_minimum_size = Vector2(0, 64)
 layout_mode = 2
 theme_override_constants/separation = 2
 alignment = 1
 
-[node name="IntensityLabel" type="Label" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
+[node name="IntensityLabel" type="Label" parent="Margin/Scroll/Column/AudioSection/ReactivityBody" unique_id=1683978803]
 layout_mode = 2
 text = "Master Intensity"
 
-[node name="IntensitySlider" type="HSlider" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
+[node name="IntensitySlider" type="HSlider" parent="Margin/Scroll/Column/AudioSection/ReactivityBody" unique_id=1014486402]
 layout_mode = 2
 max_value = 10.0
 step = 0.1
 value = 2.0
 
-[node name="SensitivityLabel" type="Label" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
+[node name="SensitivityLabel" type="Label" parent="Margin/Scroll/Column/AudioSection/ReactivityBody" unique_id=334845173]
 layout_mode = 2
 text = "Band Sensitivity"
 
-[node name="SensitivitySlider" type="HSlider" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
+[node name="SensitivitySlider" type="HSlider" parent="Margin/Scroll/Column/AudioSection/ReactivityBody" unique_id=814863363]
 layout_mode = 2
 min_value = 1.0
 max_value = 20.0
 step = 0.5
 value = 5.0
 
-[node name="NoiseFloorLabel" type="Label" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
+[node name="NoiseFloorLabel" type="Label" parent="Margin/Scroll/Column/AudioSection/ReactivityBody" unique_id=401288586]
 layout_mode = 2
 text = "Noise Floor Gate"
 
-[node name="NoiseFloorSlider" type="HSlider" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
+[node name="NoiseFloorSlider" type="HSlider" parent="Margin/Scroll/Column/AudioSection/ReactivityBody" unique_id=1606854885]
 layout_mode = 2
 tooltip_text = "Ignores quiet hiss so effects do not twitch on silence. 0 = almost no gate. Higher = only louder bands drive reactivity. Does not change the Graph Equalizer."
-min_value = 0.0
 max_value = 0.12
 step = 0.002
 value = 0.018
 
-[node name="ScaleAmountLabel" type="Label" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
+[node name="ScaleAmountLabel" type="Label" parent="Margin/Scroll/Column/AudioSection/ReactivityBody" unique_id=1339601673]
 layout_mode = 2
 text = "Scale Amount"
 
-[node name="ScaleAmountSpin" type="SpinBox" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
+[node name="ScaleAmountSpin" type="SpinBox" parent="Margin/Scroll/Column/AudioSection/ReactivityBody" unique_id=244969316]
 layout_mode = 2
-min_value = 0.0
 max_value = 200.0
-step = 1.0
 value = 25.0
 allow_greater = true
 
-[node name="EnergyBar" type="ProgressBar" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
+[node name="EnergyBar" type="ProgressBar" parent="Margin/Scroll/Column/AudioSection/ReactivityBody" unique_id=1472850765]
 custom_minimum_size = Vector2(0, 16)
 layout_mode = 2
 tooltip_text = "Energy"
 max_value = 1.0
 show_percentage = false
 
-[node name="BassBar" type="ProgressBar" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
+[node name="BassBar" type="ProgressBar" parent="Margin/Scroll/Column/AudioSection/ReactivityBody" unique_id=1481774320]
 custom_minimum_size = Vector2(0, 12)
 layout_mode = 2
 tooltip_text = "Bass"
 max_value = 1.0
 show_percentage = false
 
-[node name="MidsBar" type="ProgressBar" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
+[node name="MidsBar" type="ProgressBar" parent="Margin/Scroll/Column/AudioSection/ReactivityBody" unique_id=1067211202]
 custom_minimum_size = Vector2(0, 12)
 layout_mode = 2
 tooltip_text = "Mids"
 max_value = 1.0
 show_percentage = false
 
-[node name="HighsBar" type="ProgressBar" parent="Margin/Scroll/Column/AudioSection/ReactivityBody"]
+[node name="HighsBar" type="ProgressBar" parent="Margin/Scroll/Column/AudioSection/ReactivityBody" unique_id=1112455146]
 custom_minimum_size = Vector2(0, 12)
 layout_mode = 2
 tooltip_text = "Highs"
 max_value = 1.0
 show_percentage = false
 
-[node name="Targets" type="VBoxContainer" parent="Margin/Scroll/Column"]
+[node name="Targets" type="VBoxContainer" parent="Margin/Scroll/Column" unique_id=618576542]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="TargetsLabel" type="Label" parent="Margin/Scroll/Column/Targets"]
+[node name="TargetsLabel" type="Label" parent="Margin/Scroll/Column/Targets" unique_id=2138077970]
 layout_mode = 2
 text = "What reacts"
 
-[node name="TargetRow" type="HBoxContainer" parent="Margin/Scroll/Column/Targets"]
+[node name="TargetRow" type="HBoxContainer" parent="Margin/Scroll/Column/Targets" unique_id=998487170]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="TargetMain" type="CheckButton" parent="Margin/Scroll/Column/Targets/TargetRow"]
+[node name="TargetMain" type="CheckButton" parent="Margin/Scroll/Column/Targets/TargetRow" unique_id=684684692]
 layout_mode = 2
-button_pressed = false
 text = "Main"
 
-[node name="TargetScatter" type="CheckButton" parent="Margin/Scroll/Column/Targets/TargetRow"]
+[node name="TargetScatter" type="CheckButton" parent="Margin/Scroll/Column/Targets/TargetRow" unique_id=839012148]
 layout_mode = 2
-button_pressed = false
 text = "Scatter"
 
-[node name="TargetEnvironment" type="CheckButton" parent="Margin/Scroll/Column/Targets/TargetRow"]
+[node name="TargetEnvironment" type="CheckButton" parent="Margin/Scroll/Column/Targets/TargetRow" unique_id=561464368]
 layout_mode = 2
-button_pressed = false
-text = "Outer"
 tooltip_text = "Environment / outer world layer"
+text = "Outer"
 
-[node name="TargetLights" type="CheckButton" parent="Margin/Scroll/Column/Targets/TargetRow"]
+[node name="TargetLights" type="CheckButton" parent="Margin/Scroll/Column/Targets/TargetRow" unique_id=1804848677]
 visible = false
 layout_mode = 2
-button_pressed = false
 text = "Lights"
 
-[node name="AffectScale" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
+[node name="AffectScale" type="CheckButton" parent="Margin/Scroll/Column/Targets" unique_id=331703291]
 layout_mode = 2
-button_pressed = false
 text = "Scale"
 
-[node name="ScaleSource" type="OptionButton" parent="Margin/Scroll/Column/Targets"]
+[node name="ScaleSource" type="OptionButton" parent="Margin/Scroll/Column/Targets" unique_id=37117476]
 layout_mode = 2
 
-[node name="AxisRow" type="HBoxContainer" parent="Margin/Scroll/Column/Targets"]
+[node name="AxisRow" type="HBoxContainer" parent="Margin/Scroll/Column/Targets" unique_id=1285873193]
 layout_mode = 2
 
-[node name="ScaleX" type="CheckButton" parent="Margin/Scroll/Column/Targets/AxisRow"]
+[node name="ScaleX" type="CheckButton" parent="Margin/Scroll/Column/Targets/AxisRow" unique_id=1939458314]
 layout_mode = 2
 button_pressed = true
 text = "X"
 
-[node name="ScaleY" type="CheckButton" parent="Margin/Scroll/Column/Targets/AxisRow"]
+[node name="ScaleY" type="CheckButton" parent="Margin/Scroll/Column/Targets/AxisRow" unique_id=83784065]
 layout_mode = 2
 button_pressed = true
 text = "Y"
 
-[node name="ScaleZ" type="CheckButton" parent="Margin/Scroll/Column/Targets/AxisRow"]
+[node name="ScaleZ" type="CheckButton" parent="Margin/Scroll/Column/Targets/AxisRow" unique_id=519562636]
 layout_mode = 2
 button_pressed = true
 text = "Z"
 
-[node name="ScaleSchedule" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
+[node name="ScaleSchedule" type="CheckButton" parent="Margin/Scroll/Column/Targets" unique_id=384090253]
 layout_mode = 2
 text = "Scale schedule"
 
-[node name="ScaleScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/Targets"]
+[node name="ScaleScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/Targets" unique_id=103725839]
 visible = false
 layout_mode = 2
 
-[node name="AffectLight" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
+[node name="AffectLight" type="CheckButton" parent="Margin/Scroll/Column/Targets" unique_id=33922226]
 layout_mode = 2
-button_pressed = false
 text = "HDRI / Lights energy"
 
-[node name="LightSource" type="OptionButton" parent="Margin/Scroll/Column/Targets"]
+[node name="LightSource" type="OptionButton" parent="Margin/Scroll/Column/Targets" unique_id=1531840180]
 layout_mode = 2
 
-[node name="LightSchedule" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
+[node name="LightSchedule" type="CheckButton" parent="Margin/Scroll/Column/Targets" unique_id=744944681]
 layout_mode = 2
 text = "Lights schedule"
 
-[node name="LightScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/Targets"]
+[node name="LightScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/Targets" unique_id=1268268188]
 visible = false
 layout_mode = 2
 
-[node name="AffectEmission" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
+[node name="AffectEmission" type="CheckButton" parent="Margin/Scroll/Column/Targets" unique_id=2097721165]
 layout_mode = 2
-button_pressed = false
 text = "Emission / Color"
 
-[node name="EmissionSource" type="OptionButton" parent="Margin/Scroll/Column/Targets"]
+[node name="EmissionSource" type="OptionButton" parent="Margin/Scroll/Column/Targets" unique_id=1591814204]
 layout_mode = 2
 
-[node name="EmissionSchedule" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
+[node name="EmissionSchedule" type="CheckButton" parent="Margin/Scroll/Column/Targets" unique_id=458170213]
 layout_mode = 2
 text = "Emission schedule"
 
-[node name="EmissionScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/Targets"]
+[node name="EmissionScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/Targets" unique_id=2008567563]
 visible = false
 layout_mode = 2
 
-[node name="AffectRotation" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
+[node name="AffectRotation" type="CheckButton" parent="Margin/Scroll/Column/Targets" unique_id=1268902522]
 layout_mode = 2
-button_pressed = false
 text = "Rotation"
 
-[node name="RotationSource" type="OptionButton" parent="Margin/Scroll/Column/Targets"]
+[node name="RotationSource" type="OptionButton" parent="Margin/Scroll/Column/Targets" unique_id=1248933232]
 layout_mode = 2
 
-[node name="RotationTargetLabel" type="Label" parent="Margin/Scroll/Column/Targets"]
+[node name="RotationTargetLabel" type="Label" parent="Margin/Scroll/Column/Targets" unique_id=576125490]
 layout_mode = 2
 text = "Rotation affects"
 
-[node name="RotationTargetRow" type="HBoxContainer" parent="Margin/Scroll/Column/Targets"]
+[node name="RotationTargetRow" type="HBoxContainer" parent="Margin/Scroll/Column/Targets" unique_id=1029358587]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="RotationTargetMain" type="CheckButton" parent="Margin/Scroll/Column/Targets/RotationTargetRow"]
+[node name="RotationTargetMain" type="CheckButton" parent="Margin/Scroll/Column/Targets/RotationTargetRow" unique_id=1061760099]
 layout_mode = 2
-button_pressed = false
 text = "Main"
 
-[node name="RotationTargetScatter" type="CheckButton" parent="Margin/Scroll/Column/Targets/RotationTargetRow"]
+[node name="RotationTargetScatter" type="CheckButton" parent="Margin/Scroll/Column/Targets/RotationTargetRow" unique_id=1003171367]
 layout_mode = 2
-button_pressed = false
 text = "Scatter"
 
-[node name="RotationTargetEnvironment" type="CheckButton" parent="Margin/Scroll/Column/Targets/RotationTargetRow"]
+[node name="RotationTargetEnvironment" type="CheckButton" parent="Margin/Scroll/Column/Targets/RotationTargetRow" unique_id=981268649]
 layout_mode = 2
-button_pressed = false
-text = "Outer"
 tooltip_text = "Environment / outer world layer"
+text = "Outer"
 
-[node name="RotationTargetLights" type="CheckButton" parent="Margin/Scroll/Column/Targets/RotationTargetRow"]
+[node name="RotationTargetLights" type="CheckButton" parent="Margin/Scroll/Column/Targets/RotationTargetRow" unique_id=1525263863]
 visible = false
 layout_mode = 2
-button_pressed = false
 text = "Lights"
 
-[node name="RotationTargetCamera" type="CheckButton" parent="Margin/Scroll/Column/Targets/RotationTargetRow"]
+[node name="RotationTargetCamera" type="CheckButton" parent="Margin/Scroll/Column/Targets/RotationTargetRow" unique_id=26002354]
 layout_mode = 2
-button_pressed = false
 text = "Camera"
 
-[node name="RotationAmountLabel" type="Label" parent="Margin/Scroll/Column/Targets"]
+[node name="RotationAmountLabel" type="Label" parent="Margin/Scroll/Column/Targets" unique_id=938196000]
 layout_mode = 2
 text = "Rotation Amount"
 
-[node name="RotationAmountSpin" type="SpinBox" parent="Margin/Scroll/Column/Targets"]
+[node name="RotationAmountSpin" type="SpinBox" parent="Margin/Scroll/Column/Targets" unique_id=895795763]
 layout_mode = 2
-min_value = 0.0
 max_value = 200.0
-step = 1.0
 value = 1.0
 allow_greater = true
 
-[node name="RotationAxisRow" type="HBoxContainer" parent="Margin/Scroll/Column/Targets"]
+[node name="RotationAxisRow" type="HBoxContainer" parent="Margin/Scroll/Column/Targets" unique_id=1535783024]
 layout_mode = 2
 
-[node name="RotationX" type="CheckButton" parent="Margin/Scroll/Column/Targets/RotationAxisRow"]
+[node name="RotationX" type="CheckButton" parent="Margin/Scroll/Column/Targets/RotationAxisRow" unique_id=116694786]
 layout_mode = 2
 button_pressed = true
 text = "X"
 
-[node name="RotationY" type="CheckButton" parent="Margin/Scroll/Column/Targets/RotationAxisRow"]
+[node name="RotationY" type="CheckButton" parent="Margin/Scroll/Column/Targets/RotationAxisRow" unique_id=1012028133]
 layout_mode = 2
 button_pressed = true
 text = "Y"
 
-[node name="RotationZ" type="CheckButton" parent="Margin/Scroll/Column/Targets/RotationAxisRow"]
+[node name="RotationZ" type="CheckButton" parent="Margin/Scroll/Column/Targets/RotationAxisRow" unique_id=817503501]
 layout_mode = 2
 button_pressed = true
 text = "Z"
 
-[node name="RotationSchedule" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
+[node name="RotationSchedule" type="CheckButton" parent="Margin/Scroll/Column/Targets" unique_id=1368204843]
 layout_mode = 2
 text = "Rotation schedule"
 
-[node name="RotationScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/Targets"]
+[node name="RotationScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/Targets" unique_id=1005055886]
 visible = false
 layout_mode = 2
 
-[node name="AffectNoise" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
+[node name="AffectNoise" type="CheckButton" parent="Margin/Scroll/Column/Targets" unique_id=1303283278]
 layout_mode = 2
-button_pressed = false
 text = "Noise Displace"
 
-[node name="NoiseSource" type="OptionButton" parent="Margin/Scroll/Column/Targets"]
+[node name="NoiseSource" type="OptionButton" parent="Margin/Scroll/Column/Targets" unique_id=1402543724]
 layout_mode = 2
 
-[node name="NoiseTargetLabel" type="Label" parent="Margin/Scroll/Column/Targets"]
+[node name="NoiseTargetLabel" type="Label" parent="Margin/Scroll/Column/Targets" unique_id=1187994173]
 layout_mode = 2
 text = "Noise affects"
 
-[node name="NoiseTargetRow" type="HBoxContainer" parent="Margin/Scroll/Column/Targets"]
+[node name="NoiseTargetRow" type="HBoxContainer" parent="Margin/Scroll/Column/Targets" unique_id=1474552994]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="NoiseTargetMain" type="CheckButton" parent="Margin/Scroll/Column/Targets/NoiseTargetRow"]
+[node name="NoiseTargetMain" type="CheckButton" parent="Margin/Scroll/Column/Targets/NoiseTargetRow" unique_id=1499380019]
 layout_mode = 2
-button_pressed = false
 text = "Main"
 
-[node name="NoiseTargetScatter" type="CheckButton" parent="Margin/Scroll/Column/Targets/NoiseTargetRow"]
+[node name="NoiseTargetScatter" type="CheckButton" parent="Margin/Scroll/Column/Targets/NoiseTargetRow" unique_id=946154520]
 layout_mode = 2
-button_pressed = false
 text = "Scatter"
 
-[node name="NoiseTargetEnvironment" type="CheckButton" parent="Margin/Scroll/Column/Targets/NoiseTargetRow"]
+[node name="NoiseTargetEnvironment" type="CheckButton" parent="Margin/Scroll/Column/Targets/NoiseTargetRow" unique_id=1171264393]
 layout_mode = 2
-button_pressed = false
-text = "Outer"
 tooltip_text = "Environment / outer world layer"
+text = "Outer"
 
-[node name="NoiseTargetLights" type="CheckButton" parent="Margin/Scroll/Column/Targets/NoiseTargetRow"]
+[node name="NoiseTargetLights" type="CheckButton" parent="Margin/Scroll/Column/Targets/NoiseTargetRow" unique_id=949038697]
 visible = false
 layout_mode = 2
-button_pressed = false
 text = "Lights"
 
-[node name="NoiseAmountLabel" type="Label" parent="Margin/Scroll/Column/Targets"]
+[node name="NoiseAmountLabel" type="Label" parent="Margin/Scroll/Column/Targets" unique_id=1978490103]
 layout_mode = 2
 text = "Displace Strength (how much)"
 
-[node name="NoiseAmount" type="HSlider" parent="Margin/Scroll/Column/Targets"]
+[node name="NoiseAmount" type="HSlider" parent="Margin/Scroll/Column/Targets" unique_id=1763983729]
 layout_mode = 2
-min_value = 0.0
-max_value = 100.0
-step = 1.0
 value = 28.0
 
-[node name="NoiseScaleLabel" type="Label" parent="Margin/Scroll/Column/Targets"]
+[node name="NoiseScaleLabel" type="Label" parent="Margin/Scroll/Column/Targets" unique_id=1490054248]
 layout_mode = 2
 text = "Noise Scale"
 
-[node name="NoiseScale" type="HSlider" parent="Margin/Scroll/Column/Targets"]
+[node name="NoiseScale" type="HSlider" parent="Margin/Scroll/Column/Targets" unique_id=1205082671]
 layout_mode = 2
+tooltip_text = "Spatial feature size of the deform noise (larger = bigger blobs)"
 min_value = 1.0
 max_value = 40.0
-step = 1.0
 value = 4.0
-tooltip_text = "Spatial feature size of the deform noise (larger = bigger blobs)"
 
-[node name="NoiseAxisRow" type="HBoxContainer" parent="Margin/Scroll/Column/Targets"]
+[node name="NoiseAxisRow" type="HBoxContainer" parent="Margin/Scroll/Column/Targets" unique_id=2115501585]
 layout_mode = 2
 
-[node name="NoiseX" type="CheckButton" parent="Margin/Scroll/Column/Targets/NoiseAxisRow"]
+[node name="NoiseX" type="CheckButton" parent="Margin/Scroll/Column/Targets/NoiseAxisRow" unique_id=1147943439]
 layout_mode = 2
 button_pressed = true
 text = "X"
 
-[node name="NoiseY" type="CheckButton" parent="Margin/Scroll/Column/Targets/NoiseAxisRow"]
+[node name="NoiseY" type="CheckButton" parent="Margin/Scroll/Column/Targets/NoiseAxisRow" unique_id=932421931]
 layout_mode = 2
 button_pressed = true
 text = "Y"
 
-[node name="NoiseZ" type="CheckButton" parent="Margin/Scroll/Column/Targets/NoiseAxisRow"]
+[node name="NoiseZ" type="CheckButton" parent="Margin/Scroll/Column/Targets/NoiseAxisRow" unique_id=1737303921]
 layout_mode = 2
 button_pressed = true
 text = "Z"
 
-[node name="NoiseSchedule" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
+[node name="NoiseSchedule" type="CheckButton" parent="Margin/Scroll/Column/Targets" unique_id=2144801010]
 layout_mode = 2
 text = "Noise schedule"
 
-[node name="NoiseScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/Targets"]
+[node name="NoiseScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/Targets" unique_id=161378408]
 visible = false
 layout_mode = 2
 
-[node name="CameraLabel" type="Label" parent="Margin/Scroll/Column/Targets"]
+[node name="CameraLabel" type="Label" parent="Margin/Scroll/Column/Targets" unique_id=992441146]
 visible = false
 layout_mode = 2
 text = "Camera motion (LFO)"
 
-[node name="CameraMotionToggle" type="CheckButton" parent="Margin/Scroll/Column/Targets"]
+[node name="CameraMotionToggle" type="CheckButton" parent="Margin/Scroll/Column/Targets" unique_id=1312727764]
 layout_mode = 2
-button_pressed = false
 text = "Camera motion"
 
-[node name="CameraBody" type="VBoxContainer" parent="Margin/Scroll/Column/Targets"]
+[node name="CameraBody" type="VBoxContainer" parent="Margin/Scroll/Column/Targets" unique_id=995429085]
 visible = false
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="CameraPreset" type="OptionButton" parent="Margin/Scroll/Column/Targets/CameraBody"]
+[node name="CameraPreset" type="OptionButton" parent="Margin/Scroll/Column/Targets/CameraBody" unique_id=1219374885]
 layout_mode = 2
 
-[node name="CameraRateLabel" type="Label" parent="Margin/Scroll/Column/Targets/CameraBody"]
+[node name="CameraRateLabel" type="Label" parent="Margin/Scroll/Column/Targets/CameraBody" unique_id=1497987495]
 layout_mode = 2
 text = "Speed"
 
-[node name="CameraRate" type="HSlider" parent="Margin/Scroll/Column/Targets/CameraBody"]
+[node name="CameraRate" type="HSlider" parent="Margin/Scroll/Column/Targets/CameraBody" unique_id=369275243]
 layout_mode = 2
 min_value = 1.0
-max_value = 100.0
-step = 1.0
 value = 20.0
 
-[node name="CameraDepthLabel" type="Label" parent="Margin/Scroll/Column/Targets/CameraBody"]
+[node name="CameraDepthLabel" type="Label" parent="Margin/Scroll/Column/Targets/CameraBody" unique_id=1166926025]
 layout_mode = 2
 text = "Amount"
 
-[node name="CameraDepth" type="HSlider" parent="Margin/Scroll/Column/Targets/CameraBody"]
+[node name="CameraDepth" type="HSlider" parent="Margin/Scroll/Column/Targets/CameraBody" unique_id=866362388]
 layout_mode = 2
-min_value = 0.0
-max_value = 100.0
-step = 1.0
 value = 55.0
 
-[node name="CameraRotationToggle" type="CheckButton" parent="Margin/Scroll/Column/Targets/CameraBody"]
+[node name="CameraSchedule" type="CheckButton" parent="Margin/Scroll/Column/Targets/CameraBody" unique_id=984464190]
 layout_mode = 2
-button_pressed = false
-text = "Rotation (camera)"
+text = "Camera motion schedule"
 
-[node name="CameraRotationBody" type="VBoxContainer" parent="Margin/Scroll/Column/Targets/CameraBody"]
+[node name="CameraScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/Targets/CameraBody" unique_id=801503239]
 visible = false
 layout_mode = 2
-theme_override_constants/separation = 4
 
-[node name="CameraRotationHint" type="Label" parent="Margin/Scroll/Column/Targets/CameraBody/CameraRotationBody"]
-layout_mode = 2
-text = "Uses Rotation source / amount / axes"
-autowrap_mode = 2
-
-[node name="FxSection" type="VBoxContainer" parent="Margin/Scroll/Column"]
+[node name="FxSection" type="VBoxContainer" parent="Margin/Scroll/Column" unique_id=1567649194]
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="FxLabel" type="Label" parent="Margin/Scroll/Column/FxSection"]
+[node name="FxLabel" type="Label" parent="Margin/Scroll/Column/FxSection" unique_id=1490466776]
 layout_mode = 2
 text = "Visual Effects"
 
-[node name="PlayAllToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection"]
+[node name="PlayAllToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection" unique_id=758668749]
 layout_mode = 2
 text = "Play All"
 
-[node name="PlayAllBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection"]
+[node name="PlayAllBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection" unique_id=451276210]
 visible = false
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="PlayModeLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+[node name="PlayModeLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PlayAllBody" unique_id=1419288973]
 layout_mode = 2
 text = "Mode"
 
-[node name="PlayMode" type="OptionButton" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+[node name="PlayMode" type="OptionButton" parent="Margin/Scroll/Column/FxSection/PlayAllBody" unique_id=391545741]
 layout_mode = 2
 
-[node name="PlaySpeedLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+[node name="PlaySpeedLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PlayAllBody" unique_id=855498825]
 layout_mode = 2
 text = "Speed"
 
-[node name="PlaySpeedSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+[node name="PlaySpeedSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/PlayAllBody" unique_id=1997449966]
 layout_mode = 2
 min_value = 0.25
 max_value = 3.0
 step = 0.05
 value = 1.0
 
-[node name="PlayAudioReactive" type="CheckButton" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+[node name="PlayAudioReactive" type="CheckButton" parent="Margin/Scroll/Column/FxSection/PlayAllBody" unique_id=367895791]
 layout_mode = 2
-button_pressed = false
 text = "Audio reactive"
 
-[node name="PlayScheduleLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+[node name="PlayScheduleLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PlayAllBody" unique_id=1133353486]
 layout_mode = 2
 text = "Active / Inactive schedule"
 
-[node name="PlayCycleLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+[node name="PlayCycleLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PlayAllBody" unique_id=1648659159]
 visible = false
 layout_mode = 2
 text = "Default Active / Inactive (sec)"
 
-[node name="PlayCycleSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+[node name="PlayCycleSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/PlayAllBody" unique_id=1403942412]
 visible = false
 layout_mode = 2
 min_value = 4.0
 max_value = 60.0
-step = 1.0
 value = 12.0
 
-[node name="PlayActiveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+[node name="PlayActiveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PlayAllBody" unique_id=393770499]
 visible = false
 layout_mode = 2
 text = "Active window (sec)"
 
-[node name="PlayActiveSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+[node name="PlayActiveSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/PlayAllBody" unique_id=1971960948]
 visible = false
 layout_mode = 2
 min_value = 1.0
 max_value = 30.0
-step = 1.0
 value = 6.0
 
-[node name="PlayScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/PlayAllBody"]
+[node name="PlayScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/PlayAllBody" unique_id=147218212]
 layout_mode = 2
 
-[node name="AsciiToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection"]
+[node name="AsciiToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection" unique_id=542455955]
 layout_mode = 2
 text = "ASCII Preset"
 
-[node name="AsciiBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection"]
+[node name="AsciiBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection" unique_id=624432363]
 visible = false
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="AsciiDriveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+[node name="AsciiDriveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/AsciiBody" unique_id=888554662]
 layout_mode = 2
 text = "Mode"
 
-[node name="AsciiDrive" type="OptionButton" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+[node name="AsciiDrive" type="OptionButton" parent="Margin/Scroll/Column/FxSection/AsciiBody" unique_id=389643354]
 layout_mode = 2
 
-[node name="AsciiPresetLabel" type="Label" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+[node name="AsciiPresetLabel" type="Label" parent="Margin/Scroll/Column/FxSection/AsciiBody" unique_id=1097448572]
 layout_mode = 2
 text = "Style"
 
-[node name="AsciiPreset" type="OptionButton" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+[node name="AsciiPreset" type="OptionButton" parent="Margin/Scroll/Column/FxSection/AsciiBody" unique_id=108353959]
 layout_mode = 2
 
-[node name="AsciiDensityMinLabel" type="Label" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+[node name="AsciiDensityMinLabel" type="Label" parent="Margin/Scroll/Column/FxSection/AsciiBody" unique_id=260540796]
 visible = false
 layout_mode = 2
 text = "Density min (smallest)"
 
-[node name="AsciiDensityMin" type="HSlider" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+[node name="AsciiDensityMin" type="HSlider" parent="Margin/Scroll/Column/FxSection/AsciiBody" unique_id=1209436014]
 visible = false
 layout_mode = 2
 min_value = 1.0
 max_value = 200.0
-step = 1.0
 value = 8.0
 
-[node name="AsciiDensityMaxLabel" type="Label" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+[node name="AsciiDensityMaxLabel" type="Label" parent="Margin/Scroll/Column/FxSection/AsciiBody" unique_id=244113349]
 visible = false
 layout_mode = 2
 text = "Density max (biggest)"
 
-[node name="AsciiDensityMax" type="HSlider" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+[node name="AsciiDensityMax" type="HSlider" parent="Margin/Scroll/Column/FxSection/AsciiBody" unique_id=1247188047]
 visible = false
 layout_mode = 2
 min_value = 1.0
 max_value = 200.0
-step = 1.0
 value = 80.0
 
-[node name="AsciiDensityLabel" type="Label" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+[node name="AsciiDensityLabel" type="Label" parent="Margin/Scroll/Column/FxSection/AsciiBody" unique_id=1531948802]
 layout_mode = 2
 text = "Density"
 
-[node name="AsciiDensityRangeHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+[node name="AsciiDensityRangeHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/AsciiBody" unique_id=536047198]
 layout_mode = 2
 
-[node name="AsciiDensityRandom" type="CheckButton" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+[node name="AsciiDensityRandom" type="CheckButton" parent="Margin/Scroll/Column/FxSection/AsciiBody" unique_id=234711411]
 visible = false
 layout_mode = 2
 text = "Random density"
 
-[node name="AsciiInvert" type="CheckButton" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+[node name="AsciiInvert" type="CheckButton" parent="Margin/Scroll/Column/FxSection/AsciiBody" unique_id=1232509558]
 visible = false
 layout_mode = 2
 text = "Invert Density"
 
-[node name="StyleSwitchToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+[node name="StyleSwitchToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection/AsciiBody" unique_id=89843183]
 layout_mode = 2
 text = "Style Switch (cycle presets)"
 
-[node name="StyleSwitchBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+[node name="StyleSwitchBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/AsciiBody" unique_id=1818295733]
 visible = false
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="StyleIntervalLabel" type="Label" parent="Margin/Scroll/Column/FxSection/AsciiBody/StyleSwitchBody"]
+[node name="StyleIntervalLabel" type="Label" parent="Margin/Scroll/Column/FxSection/AsciiBody/StyleSwitchBody" unique_id=1077856082]
 layout_mode = 2
 text = "Interval (sec)"
 
-[node name="StyleIntervalSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/AsciiBody/StyleSwitchBody"]
+[node name="StyleIntervalSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/AsciiBody/StyleSwitchBody" unique_id=1752249283]
 layout_mode = 2
 min_value = 1.0
 max_value = 30.0
-step = 1.0
 value = 5.0
 
-[node name="AsciiSchedule" type="CheckButton" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+[node name="AsciiSchedule" type="CheckButton" parent="Margin/Scroll/Column/FxSection/AsciiBody" unique_id=598957227]
 layout_mode = 2
 text = "ASCII schedule"
 
-[node name="AsciiScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/AsciiBody"]
+[node name="AsciiScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/AsciiBody" unique_id=1145736896]
 visible = false
 layout_mode = 2
 
-[node name="FeedbackToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection"]
+[node name="FeedbackToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection" unique_id=891854005]
 layout_mode = 2
 text = "Feedback Trail"
 
-[node name="FeedbackBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection"]
+[node name="FeedbackBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection" unique_id=1062821335]
 visible = false
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="FeedbackDriveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
+[node name="FeedbackDriveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/FeedbackBody" unique_id=2076942656]
 layout_mode = 2
 text = "Mode"
 
-[node name="FeedbackDrive" type="OptionButton" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
+[node name="FeedbackDrive" type="OptionButton" parent="Margin/Scroll/Column/FxSection/FeedbackBody" unique_id=498884069]
 layout_mode = 2
 
-[node name="FeedbackMixLabel" type="Label" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
+[node name="FeedbackMixLabel" type="Label" parent="Margin/Scroll/Column/FxSection/FeedbackBody" unique_id=1283420525]
 layout_mode = 2
+tooltip_text = "Trail overlay on top of ASCII. 0 = hidden, 100 = full-strength color trail."
 text = "Opacity"
-tooltip_text = "Trail overlay on top of ASCII. 0 = hidden, 100 = full-strength color trail."
 
-[node name="FeedbackMixSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
+[node name="FeedbackMixSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/FeedbackBody" unique_id=450747862]
 layout_mode = 2
-min_value = 0.0
-max_value = 100.0
-step = 1.0
+tooltip_text = "Trail overlay on top of ASCII. 0 = hidden, 100 = full-strength color trail."
 value = 70.0
-tooltip_text = "Trail overlay on top of ASCII. 0 = hidden, 100 = full-strength color trail."
 
-[node name="FeedbackPersistLabel" type="Label" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
+[node name="FeedbackPersistLabel" type="Label" parent="Margin/Scroll/Column/FxSection/FeedbackBody" unique_id=1525853289]
 layout_mode = 2
+tooltip_text = "How long trails last. 0 = fade immediately, 100 = no fade (trails stay fully visible)."
 text = "Persistence"
-tooltip_text = "How long trails last. 0 = fade immediately, 100 = no fade (trails stay fully visible)."
 
-[node name="FeedbackPersistSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
+[node name="FeedbackPersistSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/FeedbackBody" unique_id=1952014818]
 layout_mode = 2
-min_value = 0.0
-max_value = 100.0
-step = 1.0
-value = 85.0
 tooltip_text = "How long trails last. 0 = fade immediately, 100 = no fade (trails stay fully visible)."
+value = 85.0
 
-[node name="FeedbackSensLabel" type="Label" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
+[node name="FeedbackSensLabel" type="Label" parent="Margin/Scroll/Column/FxSection/FeedbackBody" unique_id=150642120]
 layout_mode = 2
 text = "Audio sensitivity"
 
-[node name="FeedbackSensSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
+[node name="FeedbackSensSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/FeedbackBody" unique_id=279714946]
 layout_mode = 2
 min_value = 1.0
-max_value = 100.0
-step = 1.0
 value = 35.0
 
-[node name="FeedbackLfoRateLabel" type="Label" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
+[node name="FeedbackLfoRateLabel" type="Label" parent="Margin/Scroll/Column/FxSection/FeedbackBody" unique_id=1610284985]
 layout_mode = 2
 text = "LFO rate (when Mode=LFO)"
 
-[node name="FeedbackLfoRate" type="HSlider" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
+[node name="FeedbackLfoRate" type="HSlider" parent="Margin/Scroll/Column/FxSection/FeedbackBody" unique_id=300039384]
 layout_mode = 2
 min_value = 1.0
 max_value = 40.0
-step = 1.0
 value = 8.0
 
-[node name="FeedbackSchedule" type="CheckButton" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
+[node name="FeedbackSchedule" type="CheckButton" parent="Margin/Scroll/Column/FxSection/FeedbackBody" unique_id=26372098]
 layout_mode = 2
 text = "Feedback schedule"
 
-[node name="FeedbackScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/FeedbackBody"]
+[node name="FeedbackScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/FeedbackBody" unique_id=1845607131]
 visible = false
 layout_mode = 2
 
-[node name="GlitchToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection"]
+[node name="GlitchToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection" unique_id=1537129943]
 layout_mode = 2
 text = "Glitch"
 
-[node name="GlitchBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection"]
+[node name="GlitchBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection" unique_id=759784572]
 visible = false
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="GlitchDriveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+[node name="GlitchDriveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/GlitchBody" unique_id=1048746697]
 layout_mode = 2
 text = "Mode"
 
-[node name="GlitchDrive" type="OptionButton" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+[node name="GlitchDrive" type="OptionButton" parent="Margin/Scroll/Column/FxSection/GlitchBody" unique_id=1568911210]
 layout_mode = 2
 
-[node name="GlitchAmountLabel" type="Label" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+[node name="GlitchVSizeLabel" type="Label" parent="Margin/Scroll/Column/FxSection/GlitchBody" unique_id=631517776]
 layout_mode = 2
-text = "Amount"
+tooltip_text = "Height of each glitch slice in pixels. 1 = 1 pixel."
+text = "Vertical size"
 
-[node name="GlitchAmountSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+[node name="GlitchVSizeSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/GlitchBody" unique_id=562279210]
 layout_mode = 2
+tooltip_text = "Height of each glitch slice in pixels. 1 = 1 pixel."
 min_value = 1.0
-max_value = 100.0
-step = 1.0
+max_value = 400.0
+value = 24.0
+
+[node name="GlitchHSizeLabel" type="Label" parent="Margin/Scroll/Column/FxSection/GlitchBody" unique_id=727259428]
+layout_mode = 2
+tooltip_text = "Width of each glitch slice in pixels. 1 = 1 pixel."
+text = "Horizontal size"
+
+[node name="GlitchHSizeSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/GlitchBody" unique_id=721061025]
+layout_mode = 2
+tooltip_text = "Width of each glitch slice in pixels. 1 = 1 pixel."
+min_value = 1.0
+max_value = 400.0
+value = 48.0
+
+[node name="GlitchAmountLabel" type="Label" parent="Margin/Scroll/Column/FxSection/GlitchBody" unique_id=1427513734]
+layout_mode = 2
+tooltip_text = "How strong the glitch is (shift mix), not slice size."
+text = "Intensity"
+
+[node name="GlitchAmountSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/GlitchBody" unique_id=1007449742]
+layout_mode = 2
+tooltip_text = "How strong the glitch is (shift mix), not slice size."
+min_value = 1.0
 value = 85.0
 
-[node name="GlitchSpeedLabel" type="Label" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+[node name="GlitchSpeedLabel" type="Label" parent="Margin/Scroll/Column/FxSection/GlitchBody" unique_id=1261613964]
 layout_mode = 2
+tooltip_text = "How fast the glitch pattern animates."
 text = "Speed"
 
-[node name="GlitchSpeedSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+[node name="GlitchSpeedSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/GlitchBody" unique_id=306720960]
 layout_mode = 2
+tooltip_text = "How fast the glitch pattern animates."
 min_value = 1.0
 max_value = 20.0
-step = 1.0
 value = 6.0
 
-[node name="GlitchHSizeLabel" type="Label" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
-layout_mode = 2
-text = "H size"
-
-[node name="GlitchHSizeSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
-layout_mode = 2
-min_value = 1.0
-max_value = 100.0
-step = 1.0
-value = 80.0
-
-[node name="GlitchRgbLabel" type="Label" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+[node name="GlitchRgbLabel" type="Label" parent="Margin/Scroll/Column/FxSection/GlitchBody" unique_id=978351288]
 layout_mode = 2
 text = "RGB split"
 
-[node name="GlitchRgbSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+[node name="GlitchRgbSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/GlitchBody" unique_id=1279807584]
 layout_mode = 2
-min_value = 0.0
-max_value = 100.0
-step = 1.0
 value = 90.0
 
-[node name="GlitchChaosLabel" type="Label" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+[node name="GlitchChaosLabel" type="Label" parent="Margin/Scroll/Column/FxSection/GlitchBody" unique_id=1447347541]
 layout_mode = 2
+tooltip_text = "Randomizes slice layout (irregular bands, jitter). Not animation speed."
 text = "Slice chaos"
 
-[node name="GlitchChaosSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+[node name="GlitchChaosSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/GlitchBody" unique_id=89456985]
 layout_mode = 2
-min_value = 0.0
-max_value = 100.0
-step = 1.0
-value = 80.0
+tooltip_text = "Randomizes slice layout (irregular bands, jitter). Not animation speed."
+value = 40.0
 
-[node name="GlitchSchedule" type="CheckButton" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+[node name="GlitchSchedule" type="CheckButton" parent="Margin/Scroll/Column/FxSection/GlitchBody" unique_id=406258196]
 layout_mode = 2
 text = "Glitch schedule"
 
-[node name="GlitchScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/GlitchBody"]
+[node name="GlitchScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/GlitchBody" unique_id=223983870]
 visible = false
 layout_mode = 2
 
-[node name="ChromaticToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection"]
+[node name="ChromaticToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection" unique_id=69037489]
 layout_mode = 2
 text = "Chromatic Aberration"
 
-[node name="ChromaticBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection"]
+[node name="ChromaticBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection" unique_id=922253330]
 visible = false
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="ChromaticDriveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/ChromaticBody"]
+[node name="ChromaticDriveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/ChromaticBody" unique_id=1961082785]
 layout_mode = 2
 text = "Mode"
 
-[node name="ChromaticDrive" type="OptionButton" parent="Margin/Scroll/Column/FxSection/ChromaticBody"]
+[node name="ChromaticDrive" type="OptionButton" parent="Margin/Scroll/Column/FxSection/ChromaticBody" unique_id=1720682378]
 layout_mode = 2
 
-[node name="ChromaticAmountLabel" type="Label" parent="Margin/Scroll/Column/FxSection/ChromaticBody"]
+[node name="ChromaticAmountLabel" type="Label" parent="Margin/Scroll/Column/FxSection/ChromaticBody" unique_id=653302610]
 layout_mode = 2
 text = "Amount"
 
-[node name="ChromaticAmountSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/ChromaticBody"]
+[node name="ChromaticAmountSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/ChromaticBody" unique_id=827677246]
 layout_mode = 2
 min_value = 1.0
-max_value = 100.0
-step = 1.0
 value = 85.0
 
-[node name="ChromaticSchedule" type="CheckButton" parent="Margin/Scroll/Column/FxSection/ChromaticBody"]
+[node name="ChromaticSchedule" type="CheckButton" parent="Margin/Scroll/Column/FxSection/ChromaticBody" unique_id=905697946]
 layout_mode = 2
 text = "Chromatic schedule"
 
-[node name="ChromaticScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/ChromaticBody"]
+[node name="ChromaticScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/ChromaticBody" unique_id=1838747730]
 visible = false
 layout_mode = 2
 
-[node name="WireframeToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection"]
+[node name="WireframeToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection" unique_id=626414260]
 layout_mode = 2
 text = "Wireframe"
 
-[node name="WireframeBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection"]
+[node name="WireframeBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection" unique_id=1940438413]
 visible = false
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="WireframeDriveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/WireframeBody"]
+[node name="WireframeDriveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/WireframeBody" unique_id=883646743]
 layout_mode = 2
 text = "Mode"
 
-[node name="WireframeDrive" type="OptionButton" parent="Margin/Scroll/Column/FxSection/WireframeBody"]
+[node name="WireframeDrive" type="OptionButton" parent="Margin/Scroll/Column/FxSection/WireframeBody" unique_id=1643338234]
 layout_mode = 2
 
-[node name="WireframeSchedule" type="CheckButton" parent="Margin/Scroll/Column/FxSection/WireframeBody"]
+[node name="WireframeSchedule" type="CheckButton" parent="Margin/Scroll/Column/FxSection/WireframeBody" unique_id=1882613576]
 layout_mode = 2
 text = "Wireframe schedule"
 
-[node name="WireframeScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/WireframeBody"]
+[node name="WireframeScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/WireframeBody" unique_id=1429944679]
 visible = false
 layout_mode = 2
 
-[node name="PointCloudToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection"]
+[node name="PointCloudToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection" unique_id=2098078035]
 layout_mode = 2
 text = "Point Cloud"
 
-[node name="PointCloudBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection"]
+[node name="PointCloudBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection" unique_id=872753849]
 visible = false
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="PointCloudDriveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PointCloudBody"]
+[node name="PointCloudDriveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PointCloudBody" unique_id=552975707]
 layout_mode = 2
 text = "Mode"
 
-[node name="PointCloudDrive" type="OptionButton" parent="Margin/Scroll/Column/FxSection/PointCloudBody"]
+[node name="PointCloudDrive" type="OptionButton" parent="Margin/Scroll/Column/FxSection/PointCloudBody" unique_id=702150883]
 layout_mode = 2
 
-[node name="PointCloudSizeLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PointCloudBody"]
+[node name="PointCloudSizeLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PointCloudBody" unique_id=2020099301]
 layout_mode = 2
 text = "Point size"
 
-[node name="PointCloudSizeSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/PointCloudBody"]
+[node name="PointCloudSizeSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/PointCloudBody" unique_id=742523874]
 layout_mode = 2
 min_value = 1.0
 max_value = 32.0
-step = 1.0
 value = 6.0
 
-[node name="PointCloudSchedule" type="CheckButton" parent="Margin/Scroll/Column/FxSection/PointCloudBody"]
+[node name="PointCloudSchedule" type="CheckButton" parent="Margin/Scroll/Column/FxSection/PointCloudBody" unique_id=303344046]
 layout_mode = 2
 text = "Point cloud schedule"
 
-[node name="PointCloudScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/PointCloudBody"]
+[node name="PointCloudScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/PointCloudBody" unique_id=1743648581]
 visible = false
 layout_mode = 2
 
-[node name="CameraFxToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection"]
+[node name="CameraFxToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection" unique_id=1432086150]
 layout_mode = 2
 text = "Camera / Lens"
 
-[node name="CameraFxBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection"]
+[node name="CameraFxBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection" unique_id=1259327051]
 visible = false
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="CameraFxDriveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/CameraFxBody"]
+[node name="CameraFxDriveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/CameraFxBody" unique_id=1693094418]
 layout_mode = 2
 text = "Mode"
 
-[node name="CameraFxDrive" type="OptionButton" parent="Margin/Scroll/Column/FxSection/CameraFxBody"]
+[node name="CameraFxDrive" type="OptionButton" parent="Margin/Scroll/Column/FxSection/CameraFxBody" unique_id=419058611]
 layout_mode = 2
 
-[node name="CameraFxFocalLabel" type="Label" parent="Margin/Scroll/Column/FxSection/CameraFxBody"]
+[node name="CameraFxFocalLabel" type="Label" parent="Margin/Scroll/Column/FxSection/CameraFxBody" unique_id=1211990450]
 layout_mode = 2
 text = "Focal length (mm)"
 
-[node name="CameraFxFocalSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/CameraFxBody"]
+[node name="CameraFxFocalSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/CameraFxBody" unique_id=856560307]
 layout_mode = 2
 min_value = 12.0
 max_value = 200.0
-step = 1.0
 value = 28.0
 
-[node name="CameraFxApertureLabel" type="Label" parent="Margin/Scroll/Column/FxSection/CameraFxBody"]
+[node name="CameraFxApertureLabel" type="Label" parent="Margin/Scroll/Column/FxSection/CameraFxBody" unique_id=858550037]
 layout_mode = 2
 text = "Aperture (f-stop)"
 
-[node name="CameraFxApertureSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/CameraFxBody"]
+[node name="CameraFxApertureSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/CameraFxBody" unique_id=562709101]
 layout_mode = 2
 min_value = 1.0
 max_value = 22.0
 step = 0.1
 value = 2.8
 
-[node name="CameraFxFocusLabel" type="Label" parent="Margin/Scroll/Column/FxSection/CameraFxBody"]
+[node name="CameraFxFocusLabel" type="Label" parent="Margin/Scroll/Column/FxSection/CameraFxBody" unique_id=1056759342]
 layout_mode = 2
-text = "Focus distance"
+text = "Focus near (m)"
 
-[node name="CameraFxFocusSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/CameraFxBody"]
+[node name="CameraFxFocusSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/CameraFxBody" unique_id=4934968]
 layout_mode = 2
-min_value = 0.5
+min_value = 0.4
 max_value = 80.0
-step = 0.5
-value = 8.0
+step = 0.1
+value = 1.5
 
-[node name="CameraFxBokehLabel" type="Label" parent="Margin/Scroll/Column/FxSection/CameraFxBody"]
+[node name="CameraFxFocusFarLabel" type="Label" parent="Margin/Scroll/Column/FxSection/CameraFxBody" unique_id=1536080415]
+layout_mode = 2
+text = "Focus far (m)"
+
+[node name="CameraFxFocusFarSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/CameraFxBody" unique_id=1310252062]
+layout_mode = 2
+min_value = 0.4
+max_value = 80.0
+step = 0.1
+value = 80.0
+
+[node name="CameraFxBokehLabel" type="Label" parent="Margin/Scroll/Column/FxSection/CameraFxBody" unique_id=150606963]
 layout_mode = 2
 text = "Bokeh / DOF"
 
-[node name="CameraFxBokehSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/CameraFxBody"]
+[node name="CameraFxBokehSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/CameraFxBody" unique_id=1404067514]
 layout_mode = 2
-min_value = 0.0
-max_value = 100.0
-step = 1.0
 value = 55.0
 
-[node name="CameraFxSchedule" type="CheckButton" parent="Margin/Scroll/Column/FxSection/CameraFxBody"]
+[node name="CameraFxSchedule" type="CheckButton" parent="Margin/Scroll/Column/FxSection/CameraFxBody" unique_id=893092119]
 layout_mode = 2
 text = "Camera / lens schedule"
 
-[node name="CameraFxScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/CameraFxBody"]
+[node name="CameraFxScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/CameraFxBody" unique_id=1233596004]
 visible = false
 layout_mode = 2
 
-[node name="CueSection" type="VBoxContainer" parent="Margin/Scroll/Column"]
+[node name="CueSection" type="VBoxContainer" parent="Margin/Scroll/Column" unique_id=1767598581]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="CueLabel" type="Label" parent="Margin/Scroll/Column/CueSection"]
+[node name="CueLabel" type="Label" parent="Margin/Scroll/Column/CueSection" unique_id=1272648430]
 layout_mode = 2
 text = "Cues"
 
-[node name="CueContainer" type="HFlowContainer" parent="Margin/Scroll/Column/CueSection"]
+[node name="CueContainer" type="HFlowContainer" parent="Margin/Scroll/Column/CueSection" unique_id=1252674345]
 layout_mode = 2
 
-[node name="BottomPad" type="Control" parent="Margin/Scroll/Column"]
+[node name="BottomPad" type="Control" parent="Margin/Scroll/Column" unique_id=581924334]
 custom_minimum_size = Vector2(0, 72)
 layout_mode = 2
 mouse_filter = 2

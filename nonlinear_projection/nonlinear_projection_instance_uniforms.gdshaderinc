@@ -16,3 +16,4 @@ instance uniform float np_u_near_z_epsilon = 0.08;
 instance uniform float np_u_debug = 0.0;
 instance uniform vec3 np_u_camera_world_pos = vec3(0.0);
 instance uniform float np_u_gameplay_only = 0.0;
+instance uniform float np_u_skip = 0.0;

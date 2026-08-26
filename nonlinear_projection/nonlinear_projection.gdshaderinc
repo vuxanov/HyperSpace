@@ -33,7 +33,7 @@ float np_source_distance(vec3 cam_pos) {
 }
 
 bool np_is_enabled() {
-	return np_u_enabled >= 0.5;
+	return np_u_enabled >= 0.5 && np_u_skip < 0.5;
 }
 
 float np_warp_amount(vec3 cam_pos) {
@@ -87,10 +87,24 @@ vec3 nonlinear_projection(vec3 cam_pos) {
 	return rel;
 }
 
-float np_warp_vertex_and_normal(inout vec3 vertex, inout vec3 normal, mat4 modelview, float proj33, vec3 view_origin) {
+void np_pitch_yz(inout vec3 v, float ca, float sa) {
+	float y0 = v.y;
+	float z0 = v.z;
+	v.y = y0 * ca - z0 * sa;
+	v.z = y0 * sa + z0 * ca;
+}
+
+float np_warp_vertex_frame(
+	inout vec3 vertex,
+	inout vec3 normal,
+	inout vec3 tangent,
+	inout vec3 binormal,
+	mat4 modelview,
+	float proj33,
+	vec3 view_origin
+) {
 	// Ortho / directional-shadow: clip.w is independent of z, so [3][3] == 1.
 	// proj33 must be passed from vertex() — helpers cannot read PROJECTION_MATRIX.
-	// Return t instead of `out` — Godot 4.7 forbids passing a varying as out.
 	if (!np_is_enabled() || abs(proj33) > 0.0001) {
 		return 0.0;
 	}
@@ -111,13 +125,42 @@ float np_warp_vertex_and_normal(inout vec3 vertex, inout vec3 normal, mat4 model
 	float angle = clamp(t_out * np_u_max_bend_angle, 0.0, 2.09439510239);
 	float ca = cos(angle);
 	float sa = sin(angle);
-	vec3 n_view = mat3(modelview) * normal;
-	float ny = n_view.y;
-	float nz = n_view.z;
-	n_view.y = ny * ca - nz * sa;
-	n_view.z = ny * sa + nz * ca;
-	normal = normalize(mat3(inv_mv) * n_view);
+	float hscale = mix(np_u_horizontal_scale, np_u_far_horizontal_scale, t_out);
+	float vscale = mix(1.0, np_u_vertical_scale, t_out);
+	mat3 mv = mat3(modelview);
+	mat3 inv_m = mat3(inv_mv);
+
+	// Same pitch as position. Non-uniform scale uses inverse-transpose on normals
+	// and the forward scale on tangents so lighting/normal maps stay on the
+	// correct hemisphere. Do not flip winding / NORMAL *= -1.
+	vec3 n_view = mv * normal;
+	np_pitch_yz(n_view, ca, sa);
+	n_view.x /= max(hscale, 1e-5);
+	n_view.y /= max(vscale, 1e-5);
+	normal = normalize(inv_m * n_view);
+
+	vec3 t_view = mv * tangent;
+	np_pitch_yz(t_view, ca, sa);
+	t_view.x *= hscale;
+	t_view.y *= vscale;
+	if (length(t_view) > 1e-8) {
+		tangent = normalize(inv_m * t_view);
+	}
+
+	vec3 b_view = mv * binormal;
+	np_pitch_yz(b_view, ca, sa);
+	b_view.x *= hscale;
+	b_view.y *= vscale;
+	if (length(b_view) > 1e-8) {
+		binormal = normalize(inv_m * b_view);
+	}
 	return t_out;
+}
+
+float np_warp_vertex_and_normal(inout vec3 vertex, inout vec3 normal, mat4 modelview, float proj33, vec3 view_origin) {
+	vec3 tangent = vec3(1.0, 0.0, 0.0);
+	vec3 binormal = vec3(0.0, 0.0, 1.0);
+	return np_warp_vertex_frame(vertex, normal, tangent, binormal, modelview, proj33, view_origin);
 }
 
 void np_apply_debug_albedo(inout vec3 albedo, inout vec3 emission, float t_amt) {

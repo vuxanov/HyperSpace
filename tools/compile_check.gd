@@ -15,6 +15,7 @@ func _init() -> void:
 		"res://effects/hole_effect.gd",
 		"res://effects/point_cloud_effect.gd",
 		"res://effects/camera_fx_effect.gd",
+		"res://effects/material_override_effect.gd",
 		"res://effects/ascii_effect.gd",
 		"res://effects/ascii_charset.gd",
 		"res://core/scene_mesh_fx.gd",
@@ -36,6 +37,7 @@ func _init() -> void:
 		"res://effects/point_cloud.gdshader",
 		"res://effects/lens_distort.gdshader",
 		"res://effects/tone_effect.gdshader",
+		"res://effects/material_override_viz.gdshader",
 		"res://effects/feedback_effect.gdshader",
 	])
 	var failed := 0
@@ -143,6 +145,40 @@ func _test_ascii_presets() -> int:
 			failed += 1
 		else:
 			print("ASCII FILTER OK ", kept)
+		var letters := str(cs.call("filter_charset", "eAs2"))
+		print("ASCII LETTERS FILTER ", letters)
+		if letters.find("e") < 0 or letters.find("A") < 0 or letters.find("s") < 0 or letters.find("2") < 0:
+			print("ASCII PRESET FAIL filter dropped ASCII letters kept=", letters)
+			failed += 1
+	if cs.has_method("build_atlas"):
+		var atlas: ImageTexture = cs.call("build_atlas", " .:-=+*#%@")
+		if atlas == null:
+			print("ASCII ATLAS FAIL null")
+			failed += 1
+		else:
+			var im := atlas.get_image()
+			var opaque := 0
+			if im:
+				for y in im.get_height():
+					for x in im.get_width():
+						if im.get_pixel(x, y).a > 0.1:
+							opaque += 1
+			print("ASCII ATLAS ", atlas.get_width(), "x", atlas.get_height(), " opaque=", opaque)
+			if opaque < 20:
+				print("ASCII ATLAS FAIL too empty")
+				failed += 1
+		var letter_atlas: ImageTexture = cs.call("build_atlas", "eAs2")
+		if letter_atlas:
+			var lim := letter_atlas.get_image()
+			var letter_opaque := 0
+			if lim:
+				for y in lim.get_height():
+					for x in lim.get_width():
+						if lim.get_pixel(x, y).a > 0.1:
+							letter_opaque += 1
+			print("ASCII LETTER ATLAS opaque=", letter_opaque)
+			if letter_opaque < 20:
+				print("ASCII LETTER ATLAS skip (headless viewport bake)")
 	if failed == 0:
 		print("ASCII PRESETS OK count=", presets.size())
 	return failed

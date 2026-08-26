@@ -5,11 +5,14 @@ extends Node
 
 const WRAP_SHADER: Shader = preload("res://nonlinear_projection/nonlinear_projection_spatial.gdshader")
 const NPSettings := preload("res://nonlinear_projection/nonlinear_projection_settings.gd")
+const RH = preload("res://core/reactivity_hub.gd")
 const META_BACKUP := "np_mat_backup"
 const META_CULL := "np_cull_backup"
 const META_WRAP := "np_wrapped_mat"
 const META_WRAP_VER := "np_wrap_ver"
-const WRAP_VERSION := 8
+const META_SKIP := "np_skip_warp"
+const META_MAIN := "hs_np_main"
+const WRAP_VERSION := 10
 
 var settings = NPSettings.new()
 
@@ -76,6 +79,16 @@ var settings = NPSettings.new()
 		debug_visualize = v
 		settings.debug_visualize = v
 		_push_uniforms()
+
+@export var auto_center_main: bool = true:
+	set(v):
+		auto_center_main = v
+		settings.auto_center_main = v
+
+@export_range(0.0, 40.0, 0.1) var extra_lift: float = 0.0:
+	set(v):
+		extra_lift = maxf(v, 0.0)
+		settings.extra_lift = extra_lift
 
 var _mat_cache: Dictionary = {}
 var _scan_accum: float = 0.0
@@ -144,12 +157,66 @@ func set_enabled(on: bool) -> void:
 	enabled = on
 
 
+func effect_active() -> bool:
+	## Master on and schedule open (schedule off ⇒ always open).
+	return enabled and RH.schedule_open("bend")
+
+
 func toggle_enabled() -> void:
 	enabled = not enabled
 
 
 func toggle_debug() -> void:
 	debug_visualize = not debug_visualize
+
+
+func warp_view_point(cam_pos: Vector3) -> Vector3:
+	## CPU replica of nonlinear_projection() in the spatial include (camera space).
+	if not effect_active() or cam_pos.z >= 0.0:
+		return cam_pos
+	var dist := maxf(-cam_pos.z, 0.0)
+	var span := maxf(transition_end - transition_start, 1e-5)
+	var t := clampf((dist - transition_start) / span, 0.0, 1.0)
+	match int(easing):
+		0:
+			pass
+		2:
+			t = t * t
+		3:
+			var u := 1.0 - t
+			t = 1.0 - u * u
+		4:
+			t = t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+		_:
+			t = t * t * (3.0 - 2.0 * t)
+	t = clampf(t * distortion_strength, 0.0, 1.0)
+	if t < 0.0001:
+		return cam_pos
+	var angle := clampf(t * deg_to_rad(max_bend_angle_deg), 0.0, 2.09439510239)
+	var ca := cos(angle)
+	var sa := sin(angle)
+	var pivot_z := -maxf(transition_start, 0.0)
+	var rel := cam_pos
+	rel.z -= pivot_z
+	var y0 := rel.y
+	var z0 := rel.z
+	rel.y = y0 * ca - z0 * sa
+	rel.z = y0 * sa + z0 * ca
+	rel.z += pivot_z
+	var hscale := lerpf(horizontal_scale, far_horizontal_scale, t)
+	rel.x *= hscale
+	rel.y *= lerpf(1.0, vertical_scale, t)
+	rel.z = minf(rel.z, -maxf(settings.near_z_epsilon, 0.001))
+	return rel
+
+
+func refresh_scene() -> void:
+	## Re-scan after centerpiece / item swap so skip tags land on the new meshes.
+	_cached_cam = null
+	if enabled:
+		_scan_worlds()
+	else:
+		restore_all()
 
 
 func apply_settings(s: Resource) -> void:
@@ -166,6 +233,8 @@ func apply_settings(s: Resource) -> void:
 	horizontal_scale = float(s.get("horizontal_scale"))
 	far_horizontal_scale = float(s.get("far_horizontal_scale"))
 	debug_visualize = bool(s.get("debug_visualize"))
+	auto_center_main = bool(s.get("auto_center_main"))
+	extra_lift = float(s.get("extra_lift"))
 	_push_uniforms()
 
 
@@ -252,6 +321,12 @@ func _apply_to_geometry(gi: GeometryInstance3D) -> void:
 	var parent := gi.get_parent()
 	if parent is GPUParticles3D:
 		return
+	if _geometry_skips_warp(gi):
+		# Unwrap NP StandardMaterial wraps only. Leave noise/PC shaders;
+		# np_u_skip still disables warp on those.
+		_unwrap_main_object(gi)
+		_stamp_instance(gi)
+		return
 	_ensure_cull(gi)
 	if gi is MeshInstance3D:
 		_apply_mesh(gi as MeshInstance3D)
@@ -320,10 +395,16 @@ func _resync_mesh_surfaces(mi: MeshInstance3D) -> void:
 		if not (src is BaseMaterial3D) or not is_instance_valid(src):
 			continue
 		var ov := mi.get_surface_override_material(s)
-		if ov is ShaderMaterial and _material_has_warp(ov) and int(ov.get_meta(META_WRAP_VER, 0)) == WRAP_VERSION:
-			_copy_base_to_shader(ov as ShaderMaterial, src as Material)
-		else:
-			mi.set_surface_override_material(s, apply_to_material(src as Material))
+		if ov is ShaderMaterial and _material_has_warp(ov):
+			# NP wrap: refresh albedo from the StandardMaterial backup.
+			# Noise/PC already include the warp — stamp uniforms only. Replacing
+			# them with WRAP_SHADER drops vertex displace on env/scatter.
+			if _is_np_wrap_material(ov) and int(ov.get_meta(META_WRAP_VER, 0)) == WRAP_VERSION:
+				_copy_base_to_shader(ov as ShaderMaterial, src as Material)
+			else:
+				_stamp_wrap_locals(ov as ShaderMaterial)
+			continue
+		mi.set_surface_override_material(s, apply_to_material(src as Material))
 
 
 func _apply_gi_override(gi: GeometryInstance3D) -> void:
@@ -358,10 +439,34 @@ func _resync_override(gi: GeometryInstance3D) -> void:
 	var src: Variant = backup.get("source_override")
 	if src is BaseMaterial3D and is_instance_valid(src) and gi.material_override is ShaderMaterial:
 		var ov := gi.material_override as ShaderMaterial
-		if int(ov.get_meta(META_WRAP_VER, 0)) == WRAP_VERSION:
+		if _is_np_wrap_material(ov) and int(ov.get_meta(META_WRAP_VER, 0)) == WRAP_VERSION:
 			_copy_base_to_shader(ov, src as Material)
+		elif _material_has_warp(ov):
+			_stamp_wrap_locals(ov)
 		else:
 			gi.material_override = apply_to_material(src as Material)
+
+
+func _is_np_wrap_material(mat: Material) -> bool:
+	return mat is ShaderMaterial and bool(mat.get_meta(META_WRAP, false))
+
+
+func _unwrap_main_object(gi: GeometryInstance3D) -> void:
+	## Restore StandardMaterial3D wraps only. Noise/PC shaders stay; skip uniform
+	## disables warp on those. Restoring blindly would wipe live mesh FX.
+	if not gi.has_meta(META_BACKUP):
+		return
+	if gi.material_override != null:
+		if not _is_np_wrap_material(gi.material_override):
+			return
+	elif gi is MeshInstance3D:
+		var mi := gi as MeshInstance3D
+		if mi.mesh != null:
+			for s in mi.mesh.get_surface_count():
+				var ov := mi.get_surface_override_material(s)
+				if ov != null and not _is_np_wrap_material(ov) and _material_has_warp(ov):
+					return
+	_restore_geometry(gi)
 
 
 func _restore_geometry(gi: GeometryInstance3D) -> void:
@@ -446,10 +551,31 @@ func _copy_base_to_shader(sm: ShaderMaterial, base: Material) -> void:
 	_stamp_wrap_locals(sm)
 
 
+func _geometry_skips_warp(gi: GeometryInstance3D) -> bool:
+	## Featured flythrough subject: playlist Main / Centerpiece layer. Not terrain,
+	## environment, or scatter. Cached on the instance; new meshes walk parents.
+	if gi == null or not is_instance_valid(gi):
+		return false
+	if gi.has_meta(META_SKIP):
+		return bool(gi.get_meta(META_SKIP))
+	var n: Node = gi
+	var skip := false
+	while n != null:
+		if bool(n.get_meta(META_MAIN, false)) or n.name == "Centerpiece":
+			skip = true
+			break
+		n = n.get_parent()
+	gi.set_meta(META_SKIP, skip)
+	return skip
+
+
 func _stamp_instance(gi: GeometryInstance3D) -> void:
 	if gi == null or not is_instance_valid(gi):
 		return
-	gi.set_instance_shader_parameter("np_u_enabled", 1.0 if enabled else 0.0)
+	var skip := _geometry_skips_warp(gi)
+	var on := 1.0 if effect_active() and not skip else 0.0
+	gi.set_instance_shader_parameter("np_u_skip", 1.0 if skip else 0.0)
+	gi.set_instance_shader_parameter("np_u_enabled", on)
 	gi.set_instance_shader_parameter("np_u_distortion_strength", distortion_strength)
 	gi.set_instance_shader_parameter("np_u_transition_start", transition_start)
 	gi.set_instance_shader_parameter("np_u_transition_end", maxf(transition_end, transition_start + 0.5))
@@ -468,7 +594,7 @@ func _stamp_instance(gi: GeometryInstance3D) -> void:
 func _stamp_wrap_locals(sm: ShaderMaterial) -> void:
 	if sm == null:
 		return
-	sm.set_shader_parameter("np_u_enabled", 1.0 if enabled else 0.0)
+	sm.set_shader_parameter("np_u_enabled", 1.0 if effect_active() else 0.0)
 	sm.set_shader_parameter("np_u_distortion_strength", distortion_strength)
 	sm.set_shader_parameter("np_u_transition_start", transition_start)
 	sm.set_shader_parameter("np_u_transition_end", maxf(transition_end, transition_start + 0.5))

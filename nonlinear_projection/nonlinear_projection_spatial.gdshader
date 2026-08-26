@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode blend_mix, depth_draw_opaque, cull_disabled, diffuse_burley, specular_schlick_ggx;
+render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_burley, specular_schlick_ggx;
 
 // Unique sampler names first so they occupy texture slots 0..n.
 // Warp params are regular uniforms AFTER samplers (also stamped as instance
@@ -48,6 +48,7 @@ uniform float np_u_near_z_epsilon = 0.08;
 uniform float np_u_debug = 0.0;
 uniform vec3 np_u_camera_world_pos = vec3(0.0);
 uniform float np_u_gameplay_only = 0.0;
+instance uniform float np_u_skip = 0.0;
 
 #include "res://nonlinear_projection/nonlinear_projection.gdshaderinc"
 
@@ -72,7 +73,7 @@ float np_ch(vec4 t, float idx) {
 
 void vertex() {
 	v_world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
-	np_t = np_warp_vertex_and_normal(VERTEX, NORMAL, MODELVIEW_MATRIX, PROJECTION_MATRIX[3][3], CAMERA_POSITION_WORLD);
+	np_t = np_warp_vertex_frame(VERTEX, NORMAL, TANGENT, BINORMAL, MODELVIEW_MATRIX, PROJECTION_MATRIX[3][3], CAMERA_POSITION_WORLD);
 }
 
 void fragment() {

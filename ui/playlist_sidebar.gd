@@ -81,7 +81,7 @@ var _warm_ready: bool = false
 const WARM_GIF_PER_FRAME := 1
 const WARM_TIMEOUT_SEC := 90.0
 var _warm_elapsed: float = 0.0
-## Edit-item modal (rename / replace / scale).
+## Edit-item modal (rename / replace / scale / offset).
 var _edit_dialog: AcceptDialog
 var _edit_name: LineEdit
 var _edit_asset_label: Label
@@ -89,21 +89,46 @@ var _edit_replace_btn: Button
 var _edit_scale_row: HBoxContainer
 var _edit_scale_slider: HSlider
 var _edit_scale_spin: SpinBox
+var _edit_offset_box: VBoxContainer
+var _edit_offset_x: HSlider
+var _edit_offset_y: HSlider
+var _edit_offset_z: HSlider
 var _edit_tab: int = -1
 var _edit_index: int = -1
 var _edit_scale_busy: bool = false
+var _edit_offset_busy: bool = false
 var _edit_from_modal_replace: bool = false
+var _edit_tile_box: HBoxContainer
+var _edit_tile_x: SpinBox
+var _edit_tile_y: SpinBox
+var _edit_tile_z: SpinBox
+var _edit_tile_hint: Label
+var _edit_tile_busy: bool = false
+var _edit_mat_row: HBoxContainer
+var _edit_mat_opt: OptionButton
+var _edit_mat_busy: bool = false
+var _edit_blend_row: HBoxContainer
+var _edit_blend_opt: OptionButton
+var _edit_blend_busy: bool = false
 ## Avoid scatter rebuild when restoring/syncing layout+density UI.
 var _scatter_settings_busy: bool = false
+var _env_tile_x: SpinBox
+var _env_tile_y: SpinBox
+var _env_tile_z: SpinBox
+var _env_tile_hint: Label
+var _env_tile_busy: bool = false
 
 
 func _ready() -> void:
 	clear_button.pressed.connect(_on_clear)
 	if reset_defaults_btn:
 		reset_defaults_btn.pressed.connect(_on_reset_to_defaults)
+		reset_defaults_btn.tooltip_text = "Reset every left-panel customization (scale, offset, grid, material, blend, scatter, path) plus effects. Playlist assets stay."
 	ShowDirector.stage_defaults_restored.connect(_sync_fly_speed_from_stage)
 	ShowDirector.stage_defaults_restored.connect(_sync_path_style_from_stage)
 	ShowDirector.stage_defaults_restored.connect(_sync_scatter_settings_from_stage)
+	ShowDirector.stage_defaults_restored.connect(_sync_env_scale_from_stage)
+	ShowDirector.stage_defaults_restored.connect(_sync_env_tiles_from_stage)
 	env_file_btn.pressed.connect(func() -> void: _pick_layer_file("environment"))
 	main_file_btn.pressed.connect(func() -> void: _pick_layer_file("centerpiece"))
 	scatter_file_btn.pressed.connect(func() -> void: _pick_layer_file("scatter"))
@@ -151,6 +176,7 @@ func _ready() -> void:
 	ShowDirector.playlist_changed.connect(_on_playlist_changed)
 	_setup_autosave_timer()
 	_setup_edit_dialog()
+	_hide_env_panel_extras()
 	_setup_tab_icons()
 	_load_catalog_entries()
 	_restore_sidebar_from_session()
@@ -159,6 +185,7 @@ func _ready() -> void:
 	_sync_fly_speed_from_stage()
 	_sync_path_style_from_stage()
 	_sync_env_scale_from_stage()
+	_sync_env_tiles_from_stage()
 	_sync_scatter_settings_from_stage()
 	_update_all_play_buttons()
 	_start_warm_all(-1)
@@ -183,7 +210,7 @@ func _setup_autosave_timer() -> void:
 func _setup_edit_dialog() -> void:
 	_edit_dialog = AcceptDialog.new()
 	_edit_dialog.title = "Edit item"
-	_edit_dialog.min_size = Vector2i(420, 260)
+	_edit_dialog.min_size = Vector2i(440, 560)
 	_edit_dialog.ok_button_text = "Done"
 	_edit_dialog.dialog_hide_on_ok = true
 	add_child(_edit_dialog)
@@ -242,11 +269,93 @@ func _setup_edit_dialog() -> void:
 		_commit_edit_scale()
 	, 1.0)
 
+	_edit_offset_box = VBoxContainer.new()
+	_edit_offset_box.add_theme_constant_override("separation", 6)
+	col.add_child(_edit_offset_box)
+	_edit_offset_x = _make_edit_offset_slider(_edit_offset_box, "Offset X")
+	_edit_offset_y = _make_edit_offset_slider(_edit_offset_box, "Offset Y")
+	_edit_offset_z = _make_edit_offset_slider(_edit_offset_box, "Offset Z")
+	_edit_offset_y.tooltip_text = "Move this item up/down so it does not clip through the environment."
+	_edit_offset_x.tooltip_text = "Move this item left/right in world space."
+	_edit_offset_z.tooltip_text = "Move this item forward/back in world space. For the main item this is camera depth."
+
+	_edit_tile_box = HBoxContainer.new()
+	_edit_tile_box.add_theme_constant_override("separation", 8)
+	col.add_child(_edit_tile_box)
+	var tile_lbl := Label.new()
+	tile_lbl.text = "Grid"
+	tile_lbl.custom_minimum_size = Vector2(72, 0)
+	tile_lbl.tooltip_text = "Full environment grid including corners. Integers 1–100 per axis. 2×2 = 4 meshes. Spawn caps at %d." % FlythroughAssetCatalog.ENV_TILE_INSTANCE_MAX
+	_edit_tile_box.add_child(tile_lbl)
+	_edit_tile_x = _make_edit_tile_spin("X")
+	_edit_tile_y = _make_edit_tile_spin("Y")
+	_edit_tile_z = _make_edit_tile_spin("Z")
+	_edit_tile_box.add_child(_edit_tile_x)
+	_edit_tile_box.add_child(_edit_tile_y)
+	_edit_tile_box.add_child(_edit_tile_z)
+	_edit_tile_hint = Label.new()
+	_edit_tile_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_edit_tile_hint.add_theme_font_size_override("font_size", 12)
+	col.add_child(_edit_tile_hint)
+
+	_edit_mat_row = HBoxContainer.new()
+	_edit_mat_row.name = "EditMatOverrideRow"
+	_edit_mat_row.add_theme_constant_override("separation", 8)
+	_edit_mat_row.visible = false
+	col.add_child(_edit_mat_row)
+	var mat_lbl := Label.new()
+	mat_lbl.text = "Material"
+	mat_lbl.custom_minimum_size = Vector2(72, 0)
+	mat_lbl.tooltip_text = "Replace this 3D object's materials with the same looks as Effects → Material Override. Off keeps the original."
+	_edit_mat_row.add_child(mat_lbl)
+	_edit_mat_opt = OptionButton.new()
+	_edit_mat_opt.name = "EditMatOverride"
+	_edit_mat_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_edit_mat_opt.add_item("Off")
+	for look_n in MaterialOverrideEffect.LOOK_NAMES:
+		_edit_mat_opt.add_item(str(look_n))
+	_edit_mat_opt.select(0)
+	_edit_mat_opt.tooltip_text = "White cladding, Chrome, Gold, Normal (normal map), Shiny black. Off restores this item's originals."
+	_edit_mat_opt.item_selected.connect(func(_i: int) -> void:
+		if _edit_mat_busy:
+			return
+		_commit_edit_mat_override()
+	)
+	_edit_mat_row.add_child(_edit_mat_opt)
+
+	_edit_blend_row = HBoxContainer.new()
+	_edit_blend_row.name = "EditBlendRow"
+	_edit_blend_row.add_theme_constant_override("separation", 8)
+	_edit_blend_row.visible = false
+	col.add_child(_edit_blend_row)
+	var blend_lbl := Label.new()
+	blend_lbl.text = "Blend"
+	blend_lbl.custom_minimum_size = Vector2(72, 0)
+	blend_lbl.tooltip_text = "How this image / GIF / video composites with the scene (Photoshop-style)."
+	_edit_blend_row.add_child(blend_lbl)
+	_edit_blend_opt = OptionButton.new()
+	_edit_blend_opt.name = "EditBlendMode"
+	_edit_blend_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for blend_n in FlythroughMediaProp.BLEND_NAMES:
+		_edit_blend_opt.add_item(str(blend_n))
+	_edit_blend_opt.select(0)
+	_edit_blend_opt.tooltip_text = "Normal, Multiply, Overlay, Screen, Add, Subtract, Premultiplied."
+	_edit_blend_opt.item_selected.connect(func(_i: int) -> void:
+		if _edit_blend_busy:
+			return
+		_commit_edit_blend()
+	)
+	_edit_blend_row.add_child(_edit_blend_opt)
+
 	_edit_dialog.confirmed.connect(_on_edit_dialog_confirmed)
 	_edit_dialog.canceled.connect(_on_edit_dialog_closed)
 	_edit_dialog.visibility_changed.connect(func() -> void:
 		if _edit_dialog != null and not _edit_dialog.visible:
 			_commit_edit_scale()
+			_commit_edit_offset()
+			_commit_edit_tiles()
+			_commit_edit_mat_override()
+			_commit_edit_blend()
 	)
 
 
@@ -350,6 +459,304 @@ func _stamp_scale_on_cfg(cfg: Dictionary, entry: Dictionary, scale_val: float) -
 		cfg["user_scale_expr"] = expr
 
 
+func _make_edit_offset_slider(parent: VBoxContainer, title: String) -> HSlider:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	parent.add_child(row)
+	var lbl := Label.new()
+	lbl.text = title
+	lbl.custom_minimum_size = Vector2(72, 0)
+	row.add_child(lbl)
+	var sl := HSlider.new()
+	sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	sl.min_value = -80.0
+	sl.max_value = 80.0
+	sl.step = 0.1
+	sl.value = 0.0
+	row.add_child(sl)
+	SliderSpinLinkScr.attach_driven(sl, func(_v: float = 0.0) -> void:
+		if _edit_offset_busy:
+			return
+		_commit_edit_offset()
+	, 1.0)
+	return sl
+
+
+func _entry_user_offset(entry: Dictionary) -> Vector3:
+	var raw: Variant = entry.get("user_offset", null)
+	if raw == null:
+		var cfg: Dictionary = entry.get("config", {}) as Dictionary
+		raw = cfg.get("user_offset", {})
+	if raw is Vector3:
+		return raw as Vector3
+	if raw is Dictionary:
+		var d: Dictionary = raw
+		return Vector3(float(d.get("x", 0.0)), float(d.get("y", 0.0)), float(d.get("z", 0.0)))
+	return Vector3.ZERO
+
+
+func _offset_to_dict(offset: Vector3) -> Dictionary:
+	return {"x": offset.x, "y": offset.y, "z": offset.z}
+
+
+func _set_entry_user_offset(entry: Dictionary, offset: Vector3) -> void:
+	var d := _offset_to_dict(offset)
+	entry["user_offset"] = d
+	var cfg: Dictionary = entry.get("config", {}) as Dictionary
+	if cfg.is_empty():
+		entry["config"] = {"user_offset": d}
+		return
+	cfg["user_offset"] = d
+
+
+func _stamp_offset_on_cfg(cfg: Dictionary, entry: Dictionary) -> void:
+	cfg["user_offset"] = _offset_to_dict(_entry_user_offset(entry))
+
+
+func _entry_source_path(entry: Dictionary) -> String:
+	var cfg: Dictionary = entry.get("config", {}) as Dictionary
+	return FlythroughLayerSlot.resolve_source_string(cfg)
+
+
+func _entry_is_media(entry: Dictionary) -> bool:
+	return FlythroughLayerSlot.is_media_path(_entry_source_path(entry))
+
+
+func _entry_shows_mat_override(tab: int, entry: Dictionary) -> bool:
+	if tab == TAB_LIGHT:
+		return false
+	return not _entry_is_media(entry)
+
+
+func _entry_shows_blend(tab: int, entry: Dictionary) -> bool:
+	if tab == TAB_LIGHT:
+		return false
+	return _entry_is_media(entry)
+
+
+func _entry_mat_override(entry: Dictionary) -> String:
+	var raw: Variant = entry.get("mat_override", null)
+	if raw == null:
+		var cfg: Dictionary = entry.get("config", {}) as Dictionary
+		raw = cfg.get("mat_override", cfg.get("material_override", ""))
+	return SceneMeshFx.layer_mat_override_look({"mat_override": raw})
+
+
+func _set_entry_mat_override(entry: Dictionary, look: String) -> void:
+	var n := str(look).strip_edges()
+	if n.is_empty() or n.to_lower() == "off" or n.to_lower() == "none":
+		entry.erase("mat_override")
+		var cfg_off: Dictionary = (entry.get("config", {}) as Dictionary).duplicate(true)
+		cfg_off.erase("mat_override")
+		cfg_off.erase("material_override")
+		entry["config"] = cfg_off
+		return
+	var look_n := MaterialOverrideEffect.normalize_look(n)
+	entry["mat_override"] = look_n
+	var cfg: Dictionary = (entry.get("config", {}) as Dictionary).duplicate(true)
+	cfg["mat_override"] = look_n
+	entry["config"] = cfg
+
+
+func _stamp_mat_override_on_cfg(cfg: Dictionary, entry: Dictionary) -> void:
+	var look := _entry_mat_override(entry)
+	if look.is_empty():
+		cfg.erase("mat_override")
+		cfg.erase("material_override")
+	else:
+		cfg["mat_override"] = look
+
+
+func _entry_blend_mode(entry: Dictionary) -> String:
+	var raw: Variant = entry.get("blend_mode", null)
+	if raw == null:
+		var cfg: Dictionary = entry.get("config", {}) as Dictionary
+		raw = cfg.get("blend_mode", "Normal")
+	return FlythroughMediaProp.normalize_blend(raw)
+
+
+func _set_entry_blend_mode(entry: Dictionary, blend: String) -> void:
+	var n := FlythroughMediaProp.normalize_blend(blend)
+	entry["blend_mode"] = n
+	var cfg: Dictionary = (entry.get("config", {}) as Dictionary).duplicate(true)
+	cfg["blend_mode"] = n
+	entry["config"] = cfg
+
+
+func _stamp_blend_on_cfg(cfg: Dictionary, entry: Dictionary) -> void:
+	if not _entry_is_media(entry):
+		return
+	cfg["blend_mode"] = _entry_blend_mode(entry)
+
+
+func _layer_id_for_tab(tab: int) -> String:
+	match tab:
+		TAB_MAIN:
+			return "centerpiece"
+		TAB_SCATTER:
+			return "scatter"
+		_:
+			return "environment"
+
+
+func _sync_edit_mat_blend_rows(tab: int, entry: Dictionary) -> void:
+	var show_mat := _entry_shows_mat_override(tab, entry)
+	var show_blend := _entry_shows_blend(tab, entry)
+	if _edit_mat_row:
+		_edit_mat_row.visible = show_mat
+	if _edit_blend_row:
+		_edit_blend_row.visible = show_blend
+	if show_mat and _edit_mat_opt:
+		_edit_mat_busy = true
+		var look := _entry_mat_override(entry)
+		var idx := 0
+		if not look.is_empty():
+			var found := MaterialOverrideEffect.LOOK_NAMES.find(look)
+			if found >= 0:
+				idx = found + 1
+		_edit_mat_opt.select(idx)
+		_edit_mat_busy = false
+	if show_blend and _edit_blend_opt:
+		_edit_blend_busy = true
+		var blend := _entry_blend_mode(entry)
+		var bidx := FlythroughMediaProp.BLEND_NAMES.find(blend)
+		_edit_blend_opt.select(bidx if bidx >= 0 else 0)
+		_edit_blend_busy = false
+
+
+func _make_edit_tile_spin(axis: String) -> SpinBox:
+	var sp := SpinBox.new()
+	sp.min_value = 1
+	sp.max_value = FlythroughAssetCatalog.ENV_TILE_GRID_MAX
+	sp.step = 1
+	sp.value = 3 if axis != "Y" else 1
+	sp.prefix = axis
+	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sp.tooltip_text = "Cells along %s (1–%d). X=3 and Z=3 is a 3×3 ground grid — 9 meshes including corners. Spawn caps at %d meshes total." % [axis, FlythroughAssetCatalog.ENV_TILE_GRID_MAX, FlythroughAssetCatalog.ENV_TILE_INSTANCE_MAX]
+	sp.value_changed.connect(func(_v: float) -> void:
+		if _edit_tile_busy:
+			return
+		_commit_edit_tiles()
+	)
+	return sp
+
+
+func _hide_env_panel_extras() -> void:
+	## Env tab: no helper prose, no global Env scale. Grid stays in per-item Edit.
+	var scale_row: Control = get_node_or_null("Margin/Column/AssetTabs/Environments/EnvScaleRow") as Control
+	if scale_row:
+		scale_row.visible = false
+	var hint: Label = get_node_or_null("Margin/Column/AssetTabs/Environments/EnvHint") as Label
+	if hint:
+		hint.visible = false
+		hint.text = ""
+
+
+func _setup_env_tile_controls() -> void:
+	## Grid lives in per-item Edit only — do not add a duplicate row on the env tab.
+	return
+
+
+func _make_sidebar_tile_spin(axis: String) -> SpinBox:
+	var sp := SpinBox.new()
+	sp.min_value = 1
+	sp.max_value = FlythroughAssetCatalog.ENV_TILE_GRID_MAX
+	sp.step = 1
+	sp.value = 3 if axis != "Y" else 1
+	sp.prefix = axis
+	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sp.tooltip_text = "Cells along %s (1–%d). X=3 and Z=3 is a 3×3 ground grid — 9 meshes including corners. Spawn caps at %d meshes total." % [axis, FlythroughAssetCatalog.ENV_TILE_GRID_MAX, FlythroughAssetCatalog.ENV_TILE_INSTANCE_MAX]
+	sp.value_changed.connect(func(_v: float) -> void: _on_env_tile_changed())
+	return sp
+
+
+func _sidebar_tile_counts() -> Vector3i:
+	return Vector3i(
+		_spin_tile_count(_env_tile_x),
+		_spin_tile_count(_env_tile_y),
+		_spin_tile_count(_env_tile_z)
+	)
+
+
+func _spin_tile_count(sp: SpinBox) -> int:
+	if sp == null:
+		return 1
+	return FlythroughAssetCatalog.clamp_env_tile_count(sp.value)
+
+
+func _env_tile_grid_label(counts: Vector3i) -> String:
+	var gx: int = FlythroughAssetCatalog.clamp_env_tile_count(counts.x)
+	var gy: int = FlythroughAssetCatalog.clamp_env_tile_count(counts.y)
+	var gz: int = FlythroughAssetCatalog.clamp_env_tile_count(counts.z)
+	var n: int = gx * gy * gz
+	if gy <= 1:
+		return "%d×%d = %d" % [gx, gz, n]
+	return "%d×%d×%d = %d" % [gx, gy, gz, n]
+
+
+func _env_tile_hint_text(counts: Vector3i) -> String:
+	var requested := _env_tile_grid_label(counts)
+	var spawn := FlythroughAssetCatalog.env_tile_counts_for_spawn(counts)
+	var clamped := Vector3i(
+		FlythroughAssetCatalog.clamp_env_tile_count(counts.x),
+		FlythroughAssetCatalog.clamp_env_tile_count(counts.y),
+		FlythroughAssetCatalog.clamp_env_tile_count(counts.z)
+	)
+	if spawn == clamped:
+		return requested
+	return "%s → %s (max %d meshes)" % [requested, _env_tile_grid_label(spawn), FlythroughAssetCatalog.ENV_TILE_INSTANCE_MAX]
+
+
+func _refresh_edit_tile_hint(counts: Vector3i) -> void:
+	if _edit_tile_hint == null or not is_instance_valid(_edit_tile_hint):
+		return
+	_edit_tile_hint.text = _env_tile_hint_text(counts)
+
+
+func _entry_has_tiles(entry: Dictionary) -> bool:
+	if entry.has("tile_x") or entry.has("tile_y") or entry.has("tile_z"):
+		return true
+	var cfg: Dictionary = entry.get("config", {}) as Dictionary
+	return cfg.has("tile_x") or cfg.has("tile_y") or cfg.has("tile_z")
+
+
+func _entry_tile_counts(entry: Dictionary) -> Vector3i:
+	var cfg: Dictionary = entry.get("config", {}) as Dictionary
+	var merged: Dictionary = cfg.duplicate()
+	if entry.has("tile_x"):
+		merged["tile_x"] = entry["tile_x"]
+	if entry.has("tile_y"):
+		merged["tile_y"] = entry["tile_y"]
+	if entry.has("tile_z"):
+		merged["tile_z"] = entry["tile_z"]
+	if entry.has("tile_cells"):
+		merged["tile_cells"] = entry["tile_cells"]
+	return FlythroughAssetCatalog.env_tile_counts_from(merged)
+
+
+func _set_entry_tile_counts(entry: Dictionary, counts: Vector3i) -> void:
+	counts = FlythroughAssetCatalog.stamp_env_tile_counts(entry, counts)
+	var cfg: Dictionary
+	if entry.get("config", null) is Dictionary:
+		cfg = (entry["config"] as Dictionary).duplicate(true)
+	else:
+		cfg = {}
+	FlythroughAssetCatalog.stamp_env_tile_counts(cfg, counts)
+	entry["config"] = cfg
+
+
+func _stamp_tiles_on_cfg(cfg: Dictionary, entry: Dictionary) -> void:
+	var counts := _entry_tile_counts(entry)
+	if not _entry_has_tiles(entry):
+		if _env_tile_x != null:
+			counts = _sidebar_tile_counts()
+			_set_entry_tile_counts(entry, counts)
+		else:
+			counts = FlythroughAssetCatalog.default_env_tile_counts()
+	FlythroughAssetCatalog.stamp_env_tile_counts(cfg, counts)
+
+
 func _entry_asset_caption(entry: Dictionary) -> String:
 	var cfg: Dictionary = entry.get("config", {}) as Dictionary
 	if cfg.has("path") and str(cfg["path"]).strip_edges() != "":
@@ -375,6 +782,12 @@ func _open_edit_item(tab: int, index: int) -> void:
 	_edit_asset_label.tooltip_text = _edit_asset_label.text
 	var show_scale := tab != TAB_LIGHT
 	_edit_scale_row.visible = show_scale
+	if _edit_offset_box:
+		_edit_offset_box.visible = show_scale
+	if _edit_tile_box:
+		_edit_tile_box.visible = (tab == TAB_ENV)
+	if _edit_tile_hint:
+		_edit_tile_hint.visible = (tab == TAB_ENV)
 	if show_scale:
 		if tab == TAB_ENV:
 			_edit_scale_slider.min_value = 0.1
@@ -391,6 +804,29 @@ func _open_edit_item(tab: int, index: int) -> void:
 		else:
 			SliderSpinLinkScr.set_expr(_edit_scale_slider, str(snappedf(float(raw), 0.001)), false)
 		_edit_scale_busy = false
+		_edit_offset_busy = true
+		var off := _entry_user_offset(entry)
+		if _edit_offset_x:
+			SliderSpinLinkScr.set_expr(_edit_offset_x, str(snappedf(off.x, 0.001)), false)
+		if _edit_offset_y:
+			SliderSpinLinkScr.set_expr(_edit_offset_y, str(snappedf(off.y, 0.001)), false)
+		if _edit_offset_z:
+			SliderSpinLinkScr.set_expr(_edit_offset_z, str(snappedf(off.z, 0.001)), false)
+		_edit_offset_busy = false
+		if tab == TAB_ENV:
+			_edit_tile_busy = true
+			var tiles := _entry_tile_counts(entry)
+			if not _entry_has_tiles(entry):
+				tiles = _sidebar_tile_counts()
+			if _edit_tile_x:
+				_edit_tile_x.value = FlythroughAssetCatalog.env_tile_grid_size(tiles.x)
+			if _edit_tile_y:
+				_edit_tile_y.value = FlythroughAssetCatalog.env_tile_grid_size(tiles.y)
+			if _edit_tile_z:
+				_edit_tile_z.value = FlythroughAssetCatalog.env_tile_grid_size(tiles.z)
+			_edit_tile_busy = false
+			_refresh_edit_tile_hint(tiles)
+	_sync_edit_mat_blend_rows(tab, entry)
 	_edit_dialog.popup_centered()
 
 
@@ -417,6 +853,157 @@ func _commit_edit_scale() -> void:
 	if _selection_for_tab(_edit_tab) == _edit_index:
 		_push_live_scale(_edit_tab, scale_val)
 	_schedule_autosave()
+
+
+func _commit_edit_offset() -> void:
+	if _edit_tab < 0 or _edit_index < 0 or _edit_tab == TAB_LIGHT:
+		return
+	if _edit_offset_y == null or not is_instance_valid(_edit_offset_y):
+		return
+	var entries := _entries_for_tab(_edit_tab)
+	if _edit_index >= entries.size():
+		return
+	var entry: Dictionary = entries[_edit_index]
+	var offset := Vector3(
+		SliderSpinLinkScr.eval_of(_edit_offset_x, 0.0) if _edit_offset_x else 0.0,
+		SliderSpinLinkScr.eval_of(_edit_offset_y, 0.0),
+		SliderSpinLinkScr.eval_of(_edit_offset_z, 0.0) if _edit_offset_z else 0.0
+	)
+	_set_entry_user_offset(entry, offset)
+	if _selection_for_tab(_edit_tab) == _edit_index:
+		_push_live_offset(_edit_tab, offset)
+	_schedule_autosave()
+
+
+func _commit_edit_mat_override() -> void:
+	if _edit_tab < 0 or _edit_index < 0 or _edit_tab == TAB_LIGHT:
+		return
+	if _edit_mat_opt == null or not is_instance_valid(_edit_mat_opt):
+		return
+	var entries := _entries_for_tab(_edit_tab)
+	if _edit_index >= entries.size():
+		return
+	var entry: Dictionary = entries[_edit_index]
+	if not _entry_shows_mat_override(_edit_tab, entry):
+		return
+	var idx := _edit_mat_opt.selected
+	var look := "Off"
+	if idx > 0 and idx <= MaterialOverrideEffect.LOOK_NAMES.size():
+		look = str(MaterialOverrideEffect.LOOK_NAMES[idx - 1])
+	_set_entry_mat_override(entry, look)
+	if _selection_for_tab(_edit_tab) == _edit_index:
+		_push_live_mat_override(_edit_tab, look)
+	_schedule_autosave()
+
+
+func _commit_edit_blend() -> void:
+	if _edit_tab < 0 or _edit_index < 0 or _edit_tab == TAB_LIGHT:
+		return
+	if _edit_blend_opt == null or not is_instance_valid(_edit_blend_opt):
+		return
+	var entries := _entries_for_tab(_edit_tab)
+	if _edit_index >= entries.size():
+		return
+	var entry: Dictionary = entries[_edit_index]
+	if not _entry_shows_blend(_edit_tab, entry):
+		return
+	var bidx := _edit_blend_opt.selected
+	var blend := "Normal"
+	if bidx >= 0 and bidx < FlythroughMediaProp.BLEND_NAMES.size():
+		blend = str(FlythroughMediaProp.BLEND_NAMES[bidx])
+	_set_entry_blend_mode(entry, blend)
+	if _selection_for_tab(_edit_tab) == _edit_index:
+		_push_live_blend(_edit_tab, blend)
+	_schedule_autosave()
+
+
+func _commit_edit_tiles() -> void:
+	if _edit_tab != TAB_ENV or _edit_index < 0:
+		return
+	if _edit_tile_x == null or not is_instance_valid(_edit_tile_x):
+		return
+	var entries := _entries_for_tab(_edit_tab)
+	if _edit_index >= entries.size():
+		return
+	var counts := Vector3i(
+		_spin_tile_count(_edit_tile_x),
+		_spin_tile_count(_edit_tile_y),
+		_spin_tile_count(_edit_tile_z)
+	)
+	_set_entry_tile_counts(entries[_edit_index], counts)
+	_refresh_edit_tile_hint(counts)
+	if _selection_for_tab(TAB_ENV) == _edit_index:
+		_push_live_tiles(counts)
+		_sync_env_tile_spins(counts)
+	_schedule_autosave()
+
+
+func _push_live_offset(tab: int, offset: Vector3) -> void:
+	var idx := _ensure_stage()
+	if idx < 0 or idx >= ShowDirector.items.size():
+		return
+	var params: Dictionary = ShowDirector.items[idx].params
+	var packed := _offset_to_dict(offset)
+	match tab:
+		TAB_ENV:
+			var env_cfg: Dictionary = (params.get("environment", {}) as Dictionary).duplicate(true)
+			env_cfg["user_offset"] = packed
+			params["environment"] = env_cfg
+			ShowDirector.set_active_cue_param("env_offset", packed)
+		TAB_MAIN:
+			var main_cfg: Dictionary = (params.get("centerpiece", {}) as Dictionary).duplicate(true)
+			main_cfg["user_offset"] = packed
+			params["centerpiece"] = main_cfg
+			ShowDirector.set_active_cue_param("centerpiece_offset", packed)
+		TAB_SCATTER:
+			var sc_cfg: Dictionary = (params.get("scatter", {}) as Dictionary).duplicate(true)
+			sc_cfg["user_offset"] = packed
+			params["scatter"] = sc_cfg
+			ShowDirector.set_active_cue_param("scatter_offset", packed)
+
+
+func _push_live_mat_override(tab: int, look: String) -> void:
+	var idx := _ensure_stage()
+	if idx < 0 or idx >= ShowDirector.items.size():
+		return
+	var params: Dictionary = ShowDirector.items[idx].params
+	var layer := _layer_id_for_tab(tab)
+	var cfg: Dictionary = (params.get(layer, {}) as Dictionary).duplicate(true)
+	var n := str(look).strip_edges()
+	if n.is_empty() or n.to_lower() == "off" or n.to_lower() == "none":
+		cfg.erase("mat_override")
+		cfg.erase("material_override")
+		n = "Off"
+	else:
+		n = MaterialOverrideEffect.normalize_look(n)
+		cfg["mat_override"] = n
+	params[layer] = cfg
+	match tab:
+		TAB_ENV:
+			ShowDirector.set_active_cue_param("env_mat_override", n)
+		TAB_MAIN:
+			ShowDirector.set_active_cue_param("centerpiece_mat_override", n)
+		TAB_SCATTER:
+			ShowDirector.set_active_cue_param("scatter_mat_override", n)
+
+
+func _push_live_blend(tab: int, blend: String) -> void:
+	var idx := _ensure_stage()
+	if idx < 0 or idx >= ShowDirector.items.size():
+		return
+	var params: Dictionary = ShowDirector.items[idx].params
+	var layer := _layer_id_for_tab(tab)
+	var cfg: Dictionary = (params.get(layer, {}) as Dictionary).duplicate(true)
+	var n := FlythroughMediaProp.normalize_blend(blend)
+	cfg["blend_mode"] = n
+	params[layer] = cfg
+	match tab:
+		TAB_ENV:
+			ShowDirector.set_active_cue_param("env_blend", n)
+		TAB_MAIN:
+			ShowDirector.set_active_cue_param("centerpiece_blend", n)
+		TAB_SCATTER:
+			ShowDirector.set_active_cue_param("scatter_blend", n)
 
 
 func _push_live_scale(tab: int, scale_val: float) -> void:
@@ -479,6 +1066,9 @@ func _push_live_scale(tab: int, scale_val: float) -> void:
 
 func _on_edit_dialog_confirmed() -> void:
 	_commit_edit_scale()
+	_commit_edit_offset()
+	_commit_edit_mat_override()
+	_commit_edit_blend()
 	if _edit_tab < 0 or _edit_index < 0:
 		_clear_edit_dialog_target()
 		return
@@ -500,6 +1090,9 @@ func _on_edit_dialog_confirmed() -> void:
 
 func _on_edit_dialog_closed() -> void:
 	_commit_edit_scale()
+	_commit_edit_offset()
+	_commit_edit_mat_override()
+	_commit_edit_blend()
 	_clear_edit_dialog_target()
 
 
@@ -571,7 +1164,7 @@ func build_session_payload() -> Dictionary:
 			"main_duration": SliderSpinLinkScr.param_of_spin(main_duration) if main_duration else main_dur,
 			"scatter_duration": SliderSpinLinkScr.param_of_spin(scatter_duration) if scatter_duration else scatter_dur,
 			"light_duration": SliderSpinLinkScr.param_of_spin(light_duration) if light_duration else light_dur,
-			"env_scale": SliderSpinLinkScr.param_of_spin(env_scale) if env_scale else scale_val,
+			"env_scale": scale_val,
 			"fly_speed": SliderSpinLinkScr.param_of_spin(fly_speed) if fly_speed else speed_val,
 			"path_style": path_style_val,
 			"scatter_layout": scatter_layout_val,
@@ -626,6 +1219,7 @@ func _restore_sidebar_from_session() -> void:
 	# Honor explicit empty lists (user removed catalog rows).
 	if sb.has("env_entries"):
 		_env_entries = SessionStore.entries_from_variant(sb.get("env_entries", []))
+		_clear_stamped_env_scale_drivers()
 	if sb.has("main_entries"):
 		_main_entries = SessionStore.entries_from_variant(sb.get("main_entries", []))
 	if sb.has("scatter_entries"):
@@ -646,7 +1240,14 @@ func _restore_sidebar_from_session() -> void:
 	if light_duration:
 		SliderSpinLinkScr.set_spin_driven(light_duration, sb.get("light_duration", 8.0))
 	if env_scale and sb.has("env_scale"):
-		SliderSpinLinkScr.set_spin_driven(env_scale, sb["env_scale"])
+		# Header Env scale starts undriven (plain number). Per-item Edit drivers stay
+		# on catalog entries; do not stamp a session expression onto the header.
+		var sl := SliderSpinLinkScr.slider_of_spin(env_scale)
+		var num := _eval_driven_value(sb["env_scale"], 1.0)
+		if sl:
+			SliderSpinLinkScr.reset_to_number(sl, maxf(num, 0.01), false)
+		else:
+			SliderSpinLinkScr.set_spin_driven(env_scale, maxf(num, 0.01))
 	if fly_speed and sb.has("fly_speed"):
 		SliderSpinLinkScr.set_spin_driven(fly_speed, sb["fly_speed"])
 	if path_style and (sb.has("path_style") or sb.has("camera_path")):
@@ -664,6 +1265,22 @@ func _restore_sidebar_from_session() -> void:
 	# Do not resume autoplay on boot — restore timers/lists only.
 	_session_restored = true
 	_restoring_session = false
+
+
+func _clear_stamped_env_scale_drivers() -> void:
+	## Older sessions copied the header Driver onto every env row. Strip those so
+	## Env scale boots as a plain slider; user can still pick a Driver afterward.
+	for i in _env_entries.size():
+		var entry: Dictionary = _env_entries[i]
+		entry.erase("user_scale_expr")
+		var cfg: Dictionary = entry.get("config", {}) as Dictionary
+		if not cfg.is_empty():
+			cfg.erase("user_scale_expr")
+			if cfg.has("user_scale") and _is_scale_expr(cfg["user_scale"]):
+				cfg.erase("user_scale")
+		if entry.has("user_scale") and _is_scale_expr(entry["user_scale"]):
+			entry.erase("user_scale")
+		_env_entries[i] = entry
 
 
 func _clamp_all_selections() -> void:
@@ -877,6 +1494,7 @@ func _on_show_loaded(show_name: String) -> void:
 	_sync_fly_speed_from_stage()
 	_sync_path_style_from_stage()
 	_sync_env_scale_from_stage()
+	_sync_env_tiles_from_stage()
 	_sync_scatter_settings_from_stage()
 	_schedule_autosave()
 	_start_warm_all(-1)
@@ -894,6 +1512,7 @@ func _on_item_changed(_item_id: String, _index: int) -> void:
 	_sync_fly_speed_from_stage()
 	_sync_path_style_from_stage()
 	_sync_env_scale_from_stage()
+	_sync_env_tiles_from_stage()
 	_sync_scatter_settings_from_stage()
 	_schedule_autosave()
 
@@ -908,6 +1527,7 @@ func _on_playlist_changed() -> void:
 	_sync_fly_speed_from_stage()
 	_sync_path_style_from_stage()
 	_sync_env_scale_from_stage()
+	_sync_env_tiles_from_stage()
 	_sync_scatter_settings_from_stage()
 	_schedule_autosave()
 
@@ -1022,6 +1642,7 @@ func _sync_path_style_from_stage() -> void:
 func _sync_env_scale_from_stage() -> void:
 	if env_scale == null:
 		return
+	# Header stays a normal slider unless this row's Edit dialog assigned a driver.
 	if _sel_env >= 0 and _sel_env < _env_entries.size():
 		var expr := _entry_scale_expr(_env_entries[_sel_env])
 		if not expr.is_empty():
@@ -1032,16 +1653,71 @@ func _sync_env_scale_from_stage() -> void:
 	if idx >= 0 and idx < ShowDirector.items.size():
 		var params: Dictionary = ShowDirector.items[idx].params
 		var env_cfg: Dictionary = params.get("environment", {}) as Dictionary
-		if env_cfg.has("user_scale_expr") and _is_scale_expr(env_cfg["user_scale_expr"]):
-			SliderSpinLinkScr.set_spin_driven(env_scale, str(env_cfg["user_scale_expr"]))
-			return
 		if env_cfg.has("user_scale"):
 			scale_val = float(env_cfg["user_scale"])
 		elif env_cfg.has("scale"):
 			scale_val = float(env_cfg["scale"])
 		elif params.has("env_scale"):
 			scale_val = float(params["env_scale"])
-	SliderSpinLinkScr.set_spin_driven(env_scale, scale_val)
+	var sl := SliderSpinLinkScr.slider_of_spin(env_scale)
+	if sl:
+		SliderSpinLinkScr.reset_to_number(sl, maxf(scale_val, 0.01), false)
+	else:
+		SliderSpinLinkScr.set_spin_driven(env_scale, scale_val)
+
+
+func _sync_env_tile_spins(counts: Vector3i) -> void:
+	_env_tile_busy = true
+	if _env_tile_x:
+		_env_tile_x.value = FlythroughAssetCatalog.env_tile_grid_size(counts.x)
+	if _env_tile_y:
+		_env_tile_y.value = FlythroughAssetCatalog.env_tile_grid_size(counts.y)
+	if _env_tile_z:
+		_env_tile_z.value = FlythroughAssetCatalog.env_tile_grid_size(counts.z)
+	_env_tile_busy = false
+	if _env_tile_hint:
+		_env_tile_hint.text = _env_tile_hint_text(counts)
+
+
+func _sync_env_tiles_from_stage() -> void:
+	if _env_tile_x == null:
+		return
+	var counts := Vector3i.ZERO
+	if _sel_env >= 0 and _sel_env < _env_entries.size() and _entry_has_tiles(_env_entries[_sel_env]):
+		counts = _entry_tile_counts(_env_entries[_sel_env])
+	else:
+		var idx := _stage_index()
+		if idx >= 0 and idx < ShowDirector.items.size():
+			var params: Dictionary = ShowDirector.items[idx].params
+			var env_cfg: Dictionary = params.get("environment", {}) as Dictionary
+			counts = FlythroughAssetCatalog.env_tile_counts_from(env_cfg)
+			if params.has("env_tiles") and not (env_cfg.has("tile_x") or env_cfg.has("tile_cells")):
+				counts = FlythroughAssetCatalog.env_tile_counts_from_value(params["env_tiles"])
+	_sync_env_tile_spins(counts)
+
+
+func _on_env_tile_changed() -> void:
+	if _env_tile_busy or _restoring_session:
+		return
+	var counts := _sidebar_tile_counts()
+	if _env_tile_hint:
+		_env_tile_hint.text = _env_tile_hint_text(counts)
+	if _sel_env >= 0 and _sel_env < _env_entries.size():
+		_set_entry_tile_counts(_env_entries[_sel_env], counts)
+	_push_live_tiles(counts)
+
+
+func _push_live_tiles(counts: Vector3i) -> void:
+	var idx := _ensure_stage()
+	if idx < 0:
+		return
+	if idx < ShowDirector.items.size():
+		var params: Dictionary = ShowDirector.items[idx].params
+		var env_cfg: Dictionary = (params.get("environment", {}) as Dictionary).duplicate(true)
+		FlythroughAssetCatalog.stamp_env_tile_counts(env_cfg, counts)
+		params["environment"] = env_cfg
+	ShowDirector.set_active_cue_param("env_tiles", FlythroughAssetCatalog.env_tiles_cue_value(counts))
+	_schedule_autosave()
 
 
 func _fill_scatter_layout_options() -> void:
@@ -1191,17 +1867,17 @@ func _apply_environment(entry: Dictionary, force_sel: int = -1) -> void:
 		return
 	var cfg: Dictionary = FlythroughAssetCatalog.layer_config_from_entry(entry, "environment")
 	var scale_val := _entry_user_scale(entry)
-	var copied_header := false
-	if env_scale and not entry.has("user_scale") and not (cfg.has("user_scale") or cfg.has("scale")) \
+	if env_scale and env_scale.is_visible_in_tree() and not entry.has("user_scale") and not (cfg.has("user_scale") or cfg.has("scale")) \
 			and _entry_scale_expr(entry).is_empty():
 		scale_val = SliderSpinLinkScr.eval_spin(env_scale, 1.0)
-		copied_header = true
 	scale_val = maxf(scale_val, 0.01)
-	if copied_header:
-		_set_entry_user_scale(entry, scale_val, SliderSpinLinkScr.param_of_spin(env_scale))
-	else:
-		_set_entry_user_scale(entry, scale_val)
+	# Numeric size only — never stamp the header Driver expression onto the row.
+	_set_entry_user_scale(entry, scale_val)
 	_stamp_scale_on_cfg(cfg, entry, scale_val)
+	_stamp_offset_on_cfg(cfg, entry)
+	_stamp_tiles_on_cfg(cfg, entry)
+	_stamp_mat_override_on_cfg(cfg, entry)
+	_stamp_blend_on_cfg(cfg, entry)
 	if env_scale:
 		var expr := _entry_scale_expr(entry)
 		if expr.is_empty():
@@ -1211,6 +1887,7 @@ func _apply_environment(entry: Dictionary, force_sel: int = -1) -> void:
 	_suppress_playlist_ui = true
 	ShowDirector.set_flythrough_layer("environment", cfg, idx)
 	_suppress_playlist_ui = false
+	_sync_env_tile_spins(FlythroughAssetCatalog.env_tile_counts_from(cfg))
 	_sel_env = _resolve_selection_after_apply(_env_entries, force_sel, cfg, "environment")
 	_refresh_lists_after_apply()
 	_refresh_status()
@@ -1226,6 +1903,9 @@ func _apply_main(entry: Dictionary, force_sel: int = -1) -> void:
 	var cfg: Dictionary = FlythroughAssetCatalog.layer_config_from_entry(entry, "centerpiece")
 	var scale_val := _entry_user_scale(entry)
 	_stamp_scale_on_cfg(cfg, entry, scale_val)
+	_stamp_offset_on_cfg(cfg, entry)
+	_stamp_mat_override_on_cfg(cfg, entry)
+	_stamp_blend_on_cfg(cfg, entry)
 	_suppress_playlist_ui = true
 	ShowDirector.set_flythrough_layer("centerpiece", cfg, idx)
 	_suppress_playlist_ui = false
@@ -1247,6 +1927,9 @@ func _apply_scatter(entry: Dictionary, force_sel: int = -1) -> void:
 	cfg["layout"] = _scatter_layout_id()
 	cfg["global_scale"] = _scatter_global_scale_value()
 	_stamp_scale_on_cfg(cfg, entry, _entry_user_scale(entry))
+	_stamp_offset_on_cfg(cfg, entry)
+	_stamp_mat_override_on_cfg(cfg, entry)
+	_stamp_blend_on_cfg(cfg, entry)
 	_suppress_playlist_ui = true
 	ShowDirector.set_flythrough_layer("scatter", cfg, idx)
 	_suppress_playlist_ui = false
@@ -1765,11 +2448,11 @@ func _rebuild_list(container: VBoxContainer, entries: Array[Dictionary], tab: in
 		)
 		row.add_child(title)
 		var edit_btn := Button.new()
-		edit_btn.text = "✎"
+		edit_btn.text = "⚙"
 		edit_btn.custom_minimum_size = Vector2(36, 28)
 		edit_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
 		edit_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		edit_btn.tooltip_text = "Edit name, asset, and scale"
+		edit_btn.tooltip_text = "Edit name, asset, scale, position, and environment tiling"
 		edit_btn.pressed.connect(func() -> void: _open_edit_item(tab, idx))
 		row.add_child(edit_btn)
 		var del := Button.new()
@@ -2065,6 +2748,10 @@ func _replace_entry_with_file(tab: int, index: int, resolved: String, label: Str
 	var entry: Dictionary = entries[index]
 	var keep_scale := _entry_scale_snapshot(entry)
 	var keep_expr := _entry_scale_expr(entry)
+	var keep_offset := _entry_user_offset(entry)
+	var keep_tiles := _entry_tile_counts(entry)
+	var keep_mat := _entry_mat_override(entry)
+	var keep_blend := _entry_blend_mode(entry)
 	if tab == TAB_LIGHT:
 		entry["label"] = label
 		entry["user_added"] = true
@@ -2075,7 +2762,15 @@ func _replace_entry_with_file(tab: int, index: int, resolved: String, label: Str
 			push_warning("PlaylistSidebar: unsupported replace file %s" % resolved)
 			return
 		entry["label"] = label
-		var cfg: Dictionary = {"path": resolved, "user_scale": keep_scale}
+		var cfg: Dictionary = {"path": resolved, "user_scale": keep_scale, "user_offset": _offset_to_dict(keep_offset)}
+		if not keep_mat.is_empty():
+			cfg["mat_override"] = keep_mat
+			entry["mat_override"] = keep_mat
+		cfg["blend_mode"] = keep_blend
+		entry["blend_mode"] = keep_blend
+		if tab == TAB_ENV:
+			FlythroughAssetCatalog.stamp_env_tile_counts(cfg, keep_tiles)
+			FlythroughAssetCatalog.stamp_env_tile_counts(entry, keep_tiles)
 		if keep_expr.is_empty():
 			entry.erase("user_scale_expr")
 		else:
@@ -2085,6 +2780,7 @@ func _replace_entry_with_file(tab: int, index: int, resolved: String, label: Str
 		entry["user_added"] = true
 		entry["id"] = "user_%s" % label
 		entry["user_scale"] = keep_scale
+		entry["user_offset"] = _offset_to_dict(keep_offset)
 	_set_selection_for_tab(tab, index)
 	_rebuild_all_lists()
 	_play_entry_at(tab, index)
@@ -2113,6 +2809,17 @@ func _refresh_edit_dialog_after_replace(tab: int, index: int) -> void:
 		else:
 			SliderSpinLinkScr.set_expr(_edit_scale_slider, str(snappedf(float(raw), 0.001)), false)
 		_edit_scale_busy = false
+	if _edit_offset_box != null and tab != TAB_LIGHT:
+		_edit_offset_busy = true
+		var off := _entry_user_offset(entry)
+		if _edit_offset_x:
+			SliderSpinLinkScr.set_expr(_edit_offset_x, str(snappedf(off.x, 0.001)), false)
+		if _edit_offset_y:
+			SliderSpinLinkScr.set_expr(_edit_offset_y, str(snappedf(off.y, 0.001)), false)
+		if _edit_offset_z:
+			SliderSpinLinkScr.set_expr(_edit_offset_z, str(snappedf(off.z, 0.001)), false)
+		_edit_offset_busy = false
+	_sync_edit_mat_blend_rows(tab, entry)
 	if not _edit_dialog.visible:
 		_edit_dialog.popup_centered()
 
@@ -2172,9 +2879,46 @@ func _on_clear() -> void:
 
 
 func _on_reset_to_defaults() -> void:
+	_reset_sidebar_entry_customizations()
+	if _edit_dialog != null and is_instance_valid(_edit_dialog) and _edit_dialog.visible:
+		_edit_dialog.hide()
+		_clear_edit_dialog_target()
 	ShowDirector.reset_stage_to_defaults()
 	_sync_fly_speed_from_stage()
 	_sync_path_style_from_stage()
+	_sync_env_scale_from_stage()
 	_sync_scatter_settings_from_stage()
+	_scatter_settings_busy = true
+	_select_scatter_layout_no_signal("random")
+	if scatter_density:
+		SliderSpinLinkScr.set_spin_driven(scatter_density, 18.0)
+	if scatter_global_scale:
+		SliderSpinLinkScr.set_spin_driven(scatter_global_scale, 1.0)
+	_scatter_settings_busy = false
+	if env_scale:
+		var sl := SliderSpinLinkScr.slider_of_spin(env_scale)
+		if sl:
+			SliderSpinLinkScr.reset_to_number(sl, 1.0, false)
+		else:
+			SliderSpinLinkScr.set_spin_driven(env_scale, 1.0)
+	_save_session_now()
 	if status_label:
 		status_label.text = "Stage + effects reset to defaults"
+
+
+func _reset_sidebar_entry_customizations() -> void:
+	_reset_entries_customizations(_env_entries, "environment")
+	_reset_entries_customizations(_main_entries, "centerpiece")
+	_reset_entries_customizations(_scatter_entries, "scatter")
+
+
+func _reset_entries_customizations(entries: Array[Dictionary], layer_id: String) -> void:
+	for i in entries.size():
+		var entry: Dictionary = entries[i]
+		for k in ["user_scale", "user_scale_expr", "user_offset", "mat_override", "blend_mode", "tile_x", "tile_y", "tile_z", "tile_cells"]:
+			entry.erase(k)
+		var cfg: Dictionary = {}
+		if entry.get("config", null) is Dictionary:
+			cfg = (entry["config"] as Dictionary).duplicate(true)
+		entry["config"] = FlythroughAssetCatalog.strip_layer_customizations(cfg, layer_id)
+		entries[i] = entry

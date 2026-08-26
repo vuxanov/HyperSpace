@@ -185,9 +185,9 @@ func is_play_all_active() -> bool:
 func set_play_all_effects(on: bool, cycle_sec: float = 20.0, active_sec: float = 5.0) -> void:
 	_play_all_active = on
 	if on:
-		# Play All always drives every known visual effect id.
+		# Play All drives visual FX. Fog stays opt-in so it cannot wash the scene gray.
 		var ids: Array = []
-		for eid in ["ascii", "feedback", "glitch", "chromatic", "tone", "hole", "wireframe", "point_cloud", "camera_fx"]:
+		for eid in ["ascii", "feedback", "glitch", "chromatic", "tone", "hole", "wireframe", "point_cloud", "camera_fx", "material_override"]:
 			ids.append(eid)
 			_effect_user_enabled[eid] = true
 		fx_automation.enable_play_all(ids, cycle_sec, active_sec)
@@ -347,7 +347,8 @@ func _make_random_effect_params(effect_id: String) -> Dictionary:
 			return {
 				"intensity": randf_range(0.4, 3.2),
 				"rate": randf_range(2.0, 28.0),
-				"h_size": randf_range(0.15, 0.95),
+				"v_size": randf_range(2.0, 64.0),
+				"h_size": randf_range(4.0, 96.0),
 				"rgb_split": randf_range(0.05, 0.9),
 				"slice_chaos": randf_range(0.1, 1.0),
 			}
@@ -386,12 +387,34 @@ func _make_random_effect_params(effect_id: String) -> Dictionary:
 				"target_scatter": bool(prev.get("target_scatter", true)),
 			}
 		"camera_fx":
+			var near_m := randf_range(0.8, 3.2)
+			var far_m := SceneMeshFx.CAM_FOCUS_FAR_MAX if randf() < 0.45 else randf_range(maxf(near_m + 2.0, 6.0), SceneMeshFx.CAM_FOCUS_FAR_MAX)
 			return {
 				"focal_length": randf_range(8.0, 160.0),
 				"aperture": randf_range(1.4, 8.0),
-				"focus_distance": randf_range(2.0, 18.0),
+				"focus_near": near_m,
+				"focus_far": far_m,
+				"focus_distance": near_m,
 				"bokeh": randf_range(0.25, 1.0),
 				"lens_distortion": randf_range(0.0, 0.8),
+			}
+		"material_override":
+			var looks := MaterialOverrideEffect.LOOK_NAMES
+			var look_name := "White cladding"
+			if looks.size() > 0:
+				look_name = str(looks[randi() % looks.size()])
+			return {
+				"look": look_name,
+				"target_environment": bool(prev.get("target_environment", true)),
+				"target_main": bool(prev.get("target_main", true)),
+				"target_scatter": bool(prev.get("target_scatter", true)),
+			}
+		"fog":
+			return {
+				"density": randf_range(0.22, 0.42),
+				"begin": randf_range(3.5, 8.0),
+				"end": randf_range(22.0, 45.0),
+				"tint": FogEffect.tint_from_params(prev),
 			}
 		_:
 			return prev
@@ -564,8 +587,8 @@ func restore_reactive_poses() -> void:
 
 
 func reset_stage_to_defaults() -> void:
-	## Full reset: poses + reactivity leftovers + all visual FX off (keeps playlist assets).
-	const FX_IDS := ["ascii", "feedback", "glitch", "chromatic", "tone", "hole", "wireframe", "point_cloud", "camera_fx"]
+	## Full reset: poses + every playlist customization + all visual FX off (keeps playlist assets).
+	const FX_IDS := ["ascii", "feedback", "glitch", "chromatic", "tone", "hole", "wireframe", "point_cloud", "camera_fx", "material_override", "fog"]
 	# Clear user-enabled FX first so gate/play-all teardown cannot re-open layers.
 	set_play_all_effects(false)
 	for eid in FX_IDS:
@@ -582,7 +605,6 @@ func reset_stage_to_defaults() -> void:
 			else:
 				rs.set("enabled", false)
 			rs.set("affect_rotation", false)
-			rs.set("affect_camera_rotation", false)
 			rs.set("affect_noise", false)
 			rs.set("affect_scale", false)
 			rs.set("affect_emission", false)
@@ -590,15 +612,23 @@ func reset_stage_to_defaults() -> void:
 			rs.set("camera_preset", "Off")
 			if rs.has_method("notify_changed"):
 				rs.call("notify_changed")
+	for item in items:
+		if item is PlaylistItem:
+			(item as PlaylistItem).params = FlythroughAssetCatalog.strip_playlist_item_params((item as PlaylistItem).params)
 	if current_item_node != null and current_item_node.has_method("reset_stage_to_defaults"):
 		current_item_node.call("reset_stage_to_defaults")
 	elif current_item_node != null and current_item_node.has_method("restore_reactive_poses"):
 		current_item_node.call("restore_reactive_poses")
 	if current_index >= 0 and current_index < items.size():
-		var item: PlaylistItem = items[current_index]
-		item.params["speed"] = 2.0
-		item.params["fly_speed"] = 2.0
+		var live: PlaylistItem = items[current_index]
+		if current_item_node != null and current_item_node.has_method("get_pending_flythrough_params"):
+			var pending: Variant = current_item_node.call("get_pending_flythrough_params")
+			if pending is Dictionary:
+				live.params = FlythroughAssetCatalog.strip_playlist_item_params(pending as Dictionary)
+		else:
+			live.params = FlythroughAssetCatalog.strip_playlist_item_params(live.params)
 	set_active_cue_param("fly_speed", 2.0)
+	set_active_cue_param("path_style", "auto")
 	stage_defaults_restored.emit()
 
 
@@ -744,6 +774,13 @@ func _play_item_at_index(index: int, transition_mode: Transition.Mode, duration:
 	else:
 		element_step_changed.emit(-1, 0)
 	item_changed.emit(item.id, index)
+	# Re-bind Camera FX / panoramic wrap onto the new item's gameplay Camera3D.
+	if bool(_effect_user_enabled.get("camera_fx", false)):
+		_apply_effect_effective("camera_fx")
+	if bool(_effect_user_enabled.get("material_override", false)):
+		_apply_effect_effective("material_override")
+	if bool(_effect_user_enabled.get("fog", false)):
+		_apply_effect_effective("fog")
 
 
 func _hide_all_items_except(keep_id: String) -> void:

@@ -23,11 +23,12 @@ const FX_DRIVE_TOOLTIPS := [
 const ASCII_LFO_WAVE_IDS := ["sine", "triangle", "saw", "square"]
 const ASCII_LFO_WAVE_LABELS := ["Sine", "Triangle", "Saw", "Square"]
 const CAMERA_PRESETS := ["Off", "Pitch rock", "Roll bank", "Orbit tumble", "Spiral twist", "Kick snap"]
-const FX_IDS := ["ascii", "feedback", "glitch", "chromatic", "tone", "hole", "wireframe", "point_cloud", "camera_fx"]
+const FX_IDS := ["ascii", "feedback", "glitch", "chromatic", "tone", "hole", "wireframe", "point_cloud", "camera_fx", "material_override", "fog"]
 const HOLE_SHAPE_NAMES := ["Circular", "Rectangle"]
+const MAT_OVERRIDE_LOOK_NAMES := ["White cladding", "Chrome", "Gold", "Normal", "Shiny black"]
 ## How the previous frame is composited onto the live one. Order must match the shader's
 ## BLEND_* constants and FeedbackEffect.BLEND_NAMES. Normal is the pre-selector look.
-const FEEDBACK_BLEND_NAMES := ["Normal", "Glow", "Brightest", "Darkest", "Shadow", "Edges", "Contrast"]
+const FEEDBACK_BLEND_NAMES := ["Normal", "Brightest", "Darkest", "Edges", "Contrast"]
 
 ## One flat effect list: an effect row is prominent, its settings body is indented and quieter.
 const FX_HEADER_FONT_SIZE := 15
@@ -118,8 +119,8 @@ const SPECTRUM_BAR_BG := Color(0.12, 0.14, 0.16, 0.9)
 @onready var camera_preset: OptionButton = $Margin/Scroll/Column/Targets/CameraBody/CameraPreset
 @onready var camera_rate: HSlider = $Margin/Scroll/Column/Targets/CameraBody/CameraRate
 @onready var camera_depth: HSlider = $Margin/Scroll/Column/Targets/CameraBody/CameraDepth
-@onready var camera_rotation_toggle: CheckButton = $Margin/Scroll/Column/Targets/CameraBody/CameraRotationToggle
-@onready var camera_rotation_body: VBoxContainer = $Margin/Scroll/Column/Targets/CameraBody/CameraRotationBody
+@onready var camera_schedule: CheckButton = $Margin/Scroll/Column/Targets/CameraBody/CameraSchedule
+@onready var camera_schedule_host: VBoxContainer = $Margin/Scroll/Column/Targets/CameraBody/CameraScheduleHost
 
 @onready var play_all_toggle: CheckButton = $Margin/Scroll/Column/FxSection/PlayAllToggle
 @onready var play_all_body: VBoxContainer = $Margin/Scroll/Column/FxSection/PlayAllBody
@@ -173,6 +174,7 @@ var feedback_blend: OptionButton
 @onready var glitch_toggle: CheckButton = $Margin/Scroll/Column/FxSection/GlitchToggle
 @onready var glitch_body: VBoxContainer = $Margin/Scroll/Column/FxSection/GlitchBody
 @onready var glitch_drive: OptionButton = $Margin/Scroll/Column/FxSection/GlitchBody/GlitchDrive
+@onready var glitch_vsize_slider: HSlider = $Margin/Scroll/Column/FxSection/GlitchBody/GlitchVSizeSlider
 @onready var glitch_amount_slider: HSlider = $Margin/Scroll/Column/FxSection/GlitchBody/GlitchAmountSlider
 @onready var glitch_speed_slider: HSlider = $Margin/Scroll/Column/FxSection/GlitchBody/GlitchSpeedSlider
 @onready var glitch_hsize_slider: HSlider = $Margin/Scroll/Column/FxSection/GlitchBody/GlitchHSizeSlider
@@ -252,7 +254,10 @@ var _play_all_audio_wireframe_expr: String = ""
 @onready var camera_fx_drive: OptionButton = $Margin/Scroll/Column/FxSection/CameraFxBody/CameraFxDrive
 @onready var camera_fx_focal_slider: HSlider = $Margin/Scroll/Column/FxSection/CameraFxBody/CameraFxFocalSlider
 @onready var camera_fx_aperture_slider: HSlider = $Margin/Scroll/Column/FxSection/CameraFxBody/CameraFxApertureSlider
+@onready var camera_fx_focus_label: Label = $Margin/Scroll/Column/FxSection/CameraFxBody/CameraFxFocusLabel
 @onready var camera_fx_focus_slider: HSlider = $Margin/Scroll/Column/FxSection/CameraFxBody/CameraFxFocusSlider
+@onready var camera_fx_focus_far_label: Label = $Margin/Scroll/Column/FxSection/CameraFxBody/CameraFxFocusFarLabel
+@onready var camera_fx_focus_far_slider: HSlider = $Margin/Scroll/Column/FxSection/CameraFxBody/CameraFxFocusFarSlider
 @onready var camera_fx_bokeh_slider: HSlider = $Margin/Scroll/Column/FxSection/CameraFxBody/CameraFxBokehSlider
 @onready var camera_fx_schedule: CheckButton = $Margin/Scroll/Column/FxSection/CameraFxBody/CameraFxSchedule
 @onready var camera_fx_schedule_host: VBoxContainer = $Margin/Scroll/Column/FxSection/CameraFxBody/CameraFxScheduleHost
@@ -263,6 +268,23 @@ var np_strength_slider: HSlider
 var np_start_slider: HSlider
 var np_end_slider: HSlider
 var np_bend_slider: HSlider
+var np_auto_center: CheckButton
+var np_lift_slider: HSlider
+var nonlinear_camera_schedule: CheckButton
+var nonlinear_camera_schedule_host: VBoxContainer
+var material_override_toggle: CheckButton
+var material_override_body: VBoxContainer
+var material_override_look: OptionButton
+var material_override_schedule: CheckButton
+var material_override_schedule_host: VBoxContainer
+var fog_toggle: CheckButton
+var fog_body: VBoxContainer
+var fog_density_slider: HSlider
+var fog_begin_slider: HSlider
+var fog_end_slider: HSlider
+var fog_tint_slider: HSlider
+var fog_schedule: CheckButton
+var fog_schedule_host: VBoxContainer
 
 @onready var cue_container: HFlowContainer = $Margin/Scroll/Column/CueSection/CueContainer
 @onready var search_edit: LineEdit = $Margin/Scroll/Column/SearchEdit
@@ -403,14 +425,13 @@ func _ready() -> void:
 	noise_y.button_pressed = bool(RH.get_field("noise_y", true))
 	noise_z.button_pressed = bool(RH.get_field("noise_z", true))
 	_sync_target_checkboxes_from_rh()
-	_select_driver(scale_source, str(RH.get_field("scale_source", "bass")))
+	_select_driver(scale_source, str(RH.get_field("scale_source", "off")))
 	_select_driver(emission_source, str(RH.get_field("emission_source", "mids")))
 	_select_driver(rotation_source, str(RH.get_field("rotation_source", "highs")))
 	_select_driver(light_source, str(RH.get_field("light_source", "energy")))
 	_select_driver(noise_source, str(RH.get_field("noise_source", "bass")))
 	_select_camera_preset(str(RH.get_field("camera_preset", "Off")))
 	camera_motion_toggle.button_pressed = str(RH.get_field("camera_preset", "Off")) != "Off"
-	camera_rotation_toggle.button_pressed = bool(RH.get_field("affect_camera_rotation", false))
 	# Camera rate/depth UI are 1–100 ints; settings store float rate and 0–1 depth.
 	camera_rate.value = clampf(float(RH.get_field("camera_rate", 1.0)) * 20.0, 1.0, 100.0)
 	camera_depth.value = clampf(float(RH.get_field("camera_depth", 0.55)) * 100.0, 0.0, 100.0)
@@ -448,8 +469,8 @@ func _ready() -> void:
 	emission_schedule.toggled.connect(func(v: bool) -> void: _on_react_schedule("emission", v))
 	rotation_schedule.toggled.connect(func(v: bool) -> void: _on_react_schedule("rotation", v))
 	noise_schedule.toggled.connect(func(v: bool) -> void: _on_react_schedule("noise", v))
+	camera_schedule.toggled.connect(func(v: bool) -> void: _on_react_schedule("camera", v))
 	camera_motion_toggle.toggled.connect(_on_camera_motion_toggled)
-	camera_rotation_toggle.toggled.connect(_on_camera_rotation_toggled)
 	camera_preset.item_selected.connect(_on_camera_preset)
 	# Camera rate/depth: attach_driven callbacks (bare slider ÷ UI scale; expressions as-is).
 
@@ -470,6 +491,7 @@ func _ready() -> void:
 	feedback_schedule.toggled.connect(func(v: bool) -> void: _on_effect_schedule("feedback", v))
 
 	glitch_toggle.toggled.connect(_on_glitch_toggled)
+	glitch_vsize_slider.value_changed.connect(_on_glitch_params)
 	glitch_amount_slider.value_changed.connect(_on_glitch_params)
 	glitch_speed_slider.value_changed.connect(_on_glitch_params)
 	glitch_hsize_slider.value_changed.connect(_on_glitch_params)
@@ -492,12 +514,15 @@ func _ready() -> void:
 	camera_fx_focal_slider.value_changed.connect(_on_camera_fx_params)
 	camera_fx_aperture_slider.value_changed.connect(_on_camera_fx_params)
 	camera_fx_focus_slider.value_changed.connect(_on_camera_fx_params)
+	camera_fx_focus_far_slider.value_changed.connect(_on_camera_fx_params)
 	camera_fx_bokeh_slider.value_changed.connect(_on_camera_fx_params)
 	camera_fx_schedule.toggled.connect(func(v: bool) -> void: _on_effect_schedule("camera_fx", v))
 
 	_setup_hole()
 	_setup_tone()
 	_setup_nonlinear_camera()
+	_setup_material_override()
+	_setup_fog()
 	_setup_feedback_blur()
 	_setup_dual_ranges()
 	_setup_ascii_density_driver()
@@ -557,19 +582,31 @@ func _attach_slider_value_fields() -> void:
 	SliderSpinLinkScr.attach_driven(feedback_mix_slider, _on_feedback_params, 100.0)
 	SliderSpinLinkScr.attach_driven(feedback_persist_slider, _on_feedback_params, 100.0)
 	if feedback_mix_slider:
-		feedback_mix_slider.tooltip_text = "Trail overlay on top of ASCII. 0 = hidden, 100 = full-strength color trail."
+		feedback_mix_slider.tooltip_text = "How strongly the new frame is drawn on top of the trail. 100 = fully visible."
 	if feedback_persist_slider:
-		feedback_persist_slider.tooltip_text = "How long trails last. 0 = fade immediately, 100 = no fade (trails stay fully visible)."
+		feedback_persist_slider.tooltip_text = "How long leftover pixels stay. 100 = they never fade (Windows-style trail). 0 = no trail."
+	SliderSpinLinkScr.attach_driven(glitch_vsize_slider, _on_glitch_params, 1.0)
 	SliderSpinLinkScr.attach_driven(glitch_amount_slider, _on_glitch_params, 28.0)
 	SliderSpinLinkScr.attach_driven(glitch_speed_slider, _on_glitch_params, 3.0)
-	SliderSpinLinkScr.attach_driven(glitch_hsize_slider, _on_glitch_params, 100.0)
+	SliderSpinLinkScr.attach_driven(glitch_hsize_slider, _on_glitch_params, 1.0)
 	SliderSpinLinkScr.attach_driven(glitch_rgb_slider, _on_glitch_params, 100.0)
 	SliderSpinLinkScr.attach_driven(glitch_chaos_slider, _on_glitch_params, 100.0)
+	if glitch_vsize_slider:
+		glitch_vsize_slider.tooltip_text = "Height of each glitch slice in pixels. 1 = 1 pixel."
+	if glitch_hsize_slider:
+		glitch_hsize_slider.tooltip_text = "Width of each glitch slice in pixels. 1 = 1 pixel."
+	if glitch_amount_slider:
+		glitch_amount_slider.tooltip_text = "How strong the glitch is (shift mix), not slice size."
+	if glitch_speed_slider:
+		glitch_speed_slider.tooltip_text = "How fast the glitch pattern animates."
+	if glitch_chaos_slider:
+		glitch_chaos_slider.tooltip_text = "Randomizes slice layout (irregular bands, jitter). Not animation speed."
 	SliderSpinLinkScr.attach_driven(chromatic_amount_slider, _on_chromatic_params, 28.0)
 	SliderSpinLinkScr.attach_driven(point_cloud_size_slider, _on_point_cloud_params, 1.0)
 	SliderSpinLinkScr.attach_driven(camera_fx_focal_slider, _on_camera_fx_params, 1.0)
 	SliderSpinLinkScr.attach_driven(camera_fx_aperture_slider, _on_camera_fx_params, 1.0)
 	SliderSpinLinkScr.attach_driven(camera_fx_focus_slider, _on_camera_fx_params, 1.0)
+	SliderSpinLinkScr.attach_driven(camera_fx_focus_far_slider, _on_camera_fx_params, 1.0)
 	SliderSpinLinkScr.attach_driven(camera_fx_bokeh_slider, _on_camera_fx_params, 100.0)
 	if _ascii_density_slider:
 		SliderSpinLinkScr.attach_driven(_ascii_density_slider, _on_ascii_density_driven, 1.0)
@@ -640,7 +677,7 @@ func _setup_search_filter() -> void:
 			"section": "fx",
 			"header": camera_motion_toggle,
 			"body": camera_body,
-			"text": "camera motion deform lfo speed amount rotation",
+			"text": "camera motion deform lfo speed amount schedule",
 		},
 		{
 			"section": "fx",
@@ -658,13 +695,13 @@ func _setup_search_filter() -> void:
 			"section": "fx",
 			"header": feedback_toggle,
 			"body": feedback_body,
-			"text": "feedback trail mix opacity persistence blur sharp duplicate ghost echo schedule blend mode normal glow brightest darkest shadow edges contrast",
+			"text": "feedback trail mix opacity persistence blur sharp ghost echo schedule blend mode normal brightest darkest edges contrast",
 		},
 		{
 			"section": "fx",
 			"header": glitch_toggle,
 			"body": glitch_body,
-			"text": "glitch amount speed rgb slice chaos schedule",
+			"text": "glitch vertical size horizontal size intensity amount speed rgb slice chaos schedule",
 		},
 		{
 			"section": "fx",
@@ -700,13 +737,25 @@ func _setup_search_filter() -> void:
 			"section": "fx",
 			"header": camera_fx_toggle,
 			"body": camera_fx_body,
-			"text": "camera lens dof bokeh focal length aperture focus distortion fisheye equirectangular schedule lfo",
+			"text": "camera lens dof bokeh focal length aperture focus near far range distortion fisheye equirectangular schedule lfo",
+		},
+		{
+			"section": "fx",
+			"header": material_override_toggle,
+			"body": material_override_body,
+			"text": "material override cladding chrome gold normal map shiny black schedule shuffle",
+		},
+		{
+			"section": "fx",
+			"header": fog_toggle,
+			"body": fog_body,
+			"text": "fog mist haze atmosphere distance density noise volumetric aerial perspective tint hue rainbow spectrum",
 		},
 		{
 			"section": "fx",
 			"header": nonlinear_camera_toggle,
 			"body": nonlinear_camera_body,
-			"text": "nonlinear camera projection warp bend lift top-down far near hyperspace driver input strength",
+			"text": "bend space band space nonlinear camera projection warp bend lift top-down far near hyperspace driver input strength auto center offset schedule",
 		},
 		{
 			"section": "cues",
@@ -853,6 +902,8 @@ func _effect_rows() -> Array:
 		[wireframe_toggle, wireframe_body],
 		[point_cloud_toggle, point_cloud_body],
 		[camera_fx_toggle, camera_fx_body],
+		[material_override_toggle, material_override_body],
+		[fog_toggle, fog_body],
 		[nonlinear_camera_toggle, nonlinear_camera_body],
 	]
 
@@ -1044,6 +1095,7 @@ func _setup_cloth_gravity() -> void:
 func _setup_camera_lens_control() -> void:
 	camera_fx_focal_slider.min_value = 1.0
 	camera_fx_focal_slider.max_value = 800.0
+	_setup_camera_focus_sliders()
 	var after: Node = camera_fx_focal_slider.get_parent()
 	if after == null or after == camera_fx_body:
 		after = camera_fx_focal_slider
@@ -1061,10 +1113,41 @@ func _setup_camera_lens_control() -> void:
 	camera_fx_body.add_child(_camera_fx_lens_slider)
 	camera_fx_body.move_child(_camera_fx_lens_slider, _camera_fx_lens_label.get_index() + 1)
 	SliderSpinLinkScr.attach_driven(_camera_fx_lens_slider, _on_camera_fx_params, 100.0)
+	if camera_fx_bokeh_slider:
+		camera_fx_bokeh_slider.tooltip_text = "Scales disc blur. Aperture (f-stop) is the main smear: lower f = more blur."
+	if camera_fx_aperture_slider:
+		camera_fx_aperture_slider.tooltip_text = "Lower f-number = shallower DoF / more blur. Higher f-stop = more in focus."
+
+
+func _setup_camera_focus_sliders() -> void:
+	if camera_fx_focus_label:
+		camera_fx_focus_label.text = "Focus near (m)"
+		camera_fx_focus_label.tooltip_text = "Closer than this is blurred. Hero is often around 3 m."
+	if camera_fx_focus_slider:
+		camera_fx_focus_slider.visible = true
+		camera_fx_focus_slider.min_value = SceneMeshFx.CAM_FOCUS_NEAR_MIN
+		camera_fx_focus_slider.max_value = SceneMeshFx.CAM_FOCUS_FAR_MAX
+		camera_fx_focus_slider.step = 0.1
+		camera_fx_focus_slider.tooltip_text = "Closer than this (very near the camera) is blurred."
+	if camera_fx_focus_far_label:
+		camera_fx_focus_far_label.text = "Focus far (m)"
+		camera_fx_focus_far_label.tooltip_text = "Leave at max (80) for infinity — background stays sharp. Pull in to soften the rest."
+	if camera_fx_focus_far_slider:
+		camera_fx_focus_far_slider.min_value = SceneMeshFx.CAM_FOCUS_NEAR_MIN
+		camera_fx_focus_far_slider.max_value = SceneMeshFx.CAM_FOCUS_FAR_MAX
+		camera_fx_focus_far_slider.step = 0.1
+		camera_fx_focus_far_slider.tooltip_text = "Leave at max for infinity — background stays sharp. Pull in to soften the rest."
 
 
 func _setup_point_cloud_targets() -> void:
-	## Main / Scatter / Outer only — no lights or media.
+	## Main / Scatter / Outer only — same 3D layers wireframe covers in the flythrough.
+	if point_cloud_size_slider:
+		point_cloud_size_slider.min_value = 1.0
+		point_cloud_size_slider.max_value = 64.0
+		point_cloud_size_slider.tooltip_text = "Vertex size in pixels (Godot point_size). Visible dots; drag to grow."
+	var size_lbl := point_cloud_body.get_node_or_null("PointCloudSizeLabel") as Label
+	if size_lbl:
+		size_lbl.text = "Vertex size"
 	_pc_target_label = Label.new()
 	_pc_target_label.text = "Affects"
 	_pc_target_label.tooltip_text = "Which 3D layers become points: Main, Scatter, Outer."
@@ -1136,11 +1219,18 @@ func _setup_dual_ranges() -> void:
 		"react_emission": emission_schedule_host,
 		"react_rotation": rotation_schedule_host,
 		"react_noise": noise_schedule_host,
+		"react_camera": camera_schedule_host,
 	}
+	if nonlinear_camera_schedule_host:
+		hosts["react_bend"] = nonlinear_camera_schedule_host
 	if hole_schedule_host:
 		hosts["hole"] = hole_schedule_host
 	if tone_schedule_host:
 		hosts["tone"] = tone_schedule_host
+	if material_override_schedule_host:
+		hosts["material_override"] = material_override_schedule_host
+	if fog_schedule_host:
+		hosts["fog"] = fog_schedule_host
 	for eid in hosts.keys():
 		var host: VBoxContainer = hosts[eid]
 		if host == null:
@@ -1234,6 +1324,12 @@ func _refresh_effect_if_on(effect_id: String) -> void:
 		"camera_fx":
 			if camera_fx_toggle.button_pressed:
 				ShowDirector.set_effect("camera_fx", true, _camera_fx_params())
+		"material_override":
+			if material_override_toggle and material_override_toggle.button_pressed:
+				ShowDirector.set_effect("material_override", true, _material_override_params())
+		"fog":
+			if fog_toggle and fog_toggle.button_pressed:
+				ShowDirector.set_effect("fog", true, _fog_params())
 
 
 func _select_driver(opt: OptionButton, src: String) -> void:
@@ -1438,7 +1534,6 @@ func _sync_all_widgets_after_defaults_reset() -> void:
 	_set_check_no_signal(affect_emission, false)
 	_set_check_no_signal(affect_rotation, false)
 	_set_check_no_signal(affect_noise, false)
-	_set_check_no_signal(camera_rotation_toggle, false)
 	_set_check_no_signal(camera_motion_toggle, false)
 	_set_check_no_signal(scale_x, true)
 	_set_check_no_signal(scale_y, true)
@@ -1461,7 +1556,7 @@ func _sync_all_widgets_after_defaults_reset() -> void:
 	_reset_driven_num(noise_scale, 4.0)
 	_reset_driven_num(camera_rate, 20.0)
 	_reset_driven_num(camera_depth, 55.0)
-	for sched in [scale_schedule, light_schedule, emission_schedule, rotation_schedule, noise_schedule]:
+	for sched in [scale_schedule, light_schedule, emission_schedule, rotation_schedule, noise_schedule, camera_schedule, nonlinear_camera_schedule]:
 		_set_check_no_signal(sched, false)
 	_set_check_no_signal(play_all_toggle, false)
 	_set_check_no_signal(ascii_toggle, false)
@@ -1474,10 +1569,12 @@ func _sync_all_widgets_after_defaults_reset() -> void:
 	_set_check_no_signal(cloth_toggle, false)
 	_set_check_no_signal(point_cloud_toggle, false)
 	_set_check_no_signal(camera_fx_toggle, false)
+	_set_check_no_signal(material_override_toggle, false)
+	_set_check_no_signal(fog_toggle, false)
 	_set_check_no_signal(nonlinear_camera_toggle, false)
 	_reset_np_sliders_to_defaults()
 	_apply_nonlinear_camera(false)
-	for sched2 in [ascii_schedule, particles_schedule, feedback_schedule, glitch_schedule, chromatic_schedule, pixel_sort_schedule, wireframe_schedule, cloth_schedule, point_cloud_schedule, camera_fx_schedule]:
+	for sched2 in [ascii_schedule, particles_schedule, feedback_schedule, glitch_schedule, chromatic_schedule, pixel_sort_schedule, wireframe_schedule, cloth_schedule, point_cloud_schedule, camera_fx_schedule, material_override_schedule, fog_schedule]:
 		_set_check_no_signal(sched2, false)
 	_set_check_no_signal(tone_toggle, false)
 	_set_check_no_signal(tone_schedule, false)
@@ -1487,6 +1584,19 @@ func _sync_all_widgets_after_defaults_reset() -> void:
 	_reset_driven_num(tone_saturation_slider, 100.0)
 	_set_check_no_signal(hole_toggle, false)
 	_set_check_no_signal(hole_schedule, false)
+	_set_check_no_signal(material_override_toggle, false)
+	_set_check_no_signal(material_override_schedule, false)
+	_set_check_no_signal(fog_toggle, false)
+	_set_check_no_signal(fog_schedule, false)
+	_reset_driven_num(fog_density_slider, 32.0)
+	_reset_driven_num(fog_begin_slider, 5.0)
+	_reset_driven_num(fog_end_slider, 32.0)
+	_reset_driven_num(fog_tint_slider, 0.0)
+	if np_auto_center:
+		_set_check_no_signal(np_auto_center, true)
+	_reset_driven_num(np_lift_slider, 0.0)
+	if material_override_look and material_override_look.item_count > 0:
+		SliderSpinLinkScr.reset_choice_to_index(material_override_look, 0)
 	if hole_shape and hole_shape.item_count > 0:
 		hole_shape.select(0)
 	_reset_driven_num(hole_strength_slider, 75.0)
@@ -1532,11 +1642,12 @@ func _sync_all_widgets_after_defaults_reset() -> void:
 	_reset_driven_num(feedback_blur_slider, 35.0)
 	if feedback_blend and feedback_blend.item_count > 0:
 		feedback_blend.select(0)
+	_reset_driven_num(glitch_vsize_slider, 24.0)
 	_reset_driven_num(glitch_amount_slider, 85.0)
 	_reset_driven_num(glitch_speed_slider, 6.0)
-	_reset_driven_num(glitch_hsize_slider, 80.0)
+	_reset_driven_num(glitch_hsize_slider, 48.0)
 	_reset_driven_num(glitch_rgb_slider, 90.0)
-	_reset_driven_num(glitch_chaos_slider, 80.0)
+	_reset_driven_num(glitch_chaos_slider, 40.0)
 	_reset_driven_num(chromatic_amount_slider, 85.0)
 	_reset_driven_num(pixel_sort_amount_slider, 80.0)
 	_reset_driven_num(pixel_sort_threshold_slider, 35.0)
@@ -1549,7 +1660,8 @@ func _sync_all_widgets_after_defaults_reset() -> void:
 	_reset_driven_num(point_cloud_size_slider, 6.0)
 	_reset_driven_num(camera_fx_focal_slider, 28.0)
 	_reset_driven_num(camera_fx_aperture_slider, 2.8)
-	_reset_driven_num(camera_fx_focus_slider, 8.0)
+	_reset_driven_num(camera_fx_focus_slider, SceneMeshFx.CAM_FOCUS_NEAR_DEFAULT)
+	_reset_driven_num(camera_fx_focus_far_slider, SceneMeshFx.CAM_FOCUS_FAR_MAX)
 	_reset_driven_num(camera_fx_bokeh_slider, 55.0)
 	_reset_driven_num(_camera_fx_lens_slider, 0.0)
 	_user_density_min = 8.0
@@ -1613,7 +1725,7 @@ func _sync_conditional_ui() -> void:
 
 	var cam_on := camera_motion_toggle.button_pressed if camera_motion_toggle else false
 	camera_body.visible = cam_on
-	camera_rotation_body.visible = cam_on and camera_rotation_toggle.button_pressed
+	camera_schedule_host.visible = cam_on and camera_schedule.button_pressed
 
 	ascii_body.visible = ascii_toggle.button_pressed
 	style_switch_body.visible = ascii_toggle.button_pressed and style_switch_toggle.button_pressed
@@ -1627,8 +1739,14 @@ func _sync_conditional_ui() -> void:
 	wireframe_body.visible = wireframe_toggle.button_pressed
 	point_cloud_body.visible = point_cloud_toggle.button_pressed
 	camera_fx_body.visible = camera_fx_toggle.button_pressed
+	if material_override_toggle and material_override_body:
+		material_override_body.visible = material_override_toggle.button_pressed
+	if fog_toggle and fog_body:
+		fog_body.visible = fog_toggle.button_pressed
 	if nonlinear_camera_toggle and nonlinear_camera_body:
 		nonlinear_camera_body.visible = nonlinear_camera_toggle.button_pressed
+	if nonlinear_camera_schedule_host and nonlinear_camera_toggle and nonlinear_camera_schedule:
+		nonlinear_camera_schedule_host.visible = nonlinear_camera_toggle.button_pressed and nonlinear_camera_schedule.button_pressed
 	play_all_body.visible = play_all_toggle.button_pressed
 	ascii_schedule_host.visible = ascii_toggle.button_pressed and ascii_schedule.button_pressed
 	feedback_schedule_host.visible = feedback_toggle.button_pressed and feedback_schedule.button_pressed
@@ -1641,6 +1759,10 @@ func _sync_conditional_ui() -> void:
 	wireframe_schedule_host.visible = wireframe_toggle.button_pressed and wireframe_schedule.button_pressed
 	point_cloud_schedule_host.visible = point_cloud_toggle.button_pressed and point_cloud_schedule.button_pressed
 	camera_fx_schedule_host.visible = camera_fx_toggle.button_pressed and camera_fx_schedule.button_pressed
+	if material_override_schedule_host and material_override_toggle and material_override_schedule:
+		material_override_schedule_host.visible = material_override_toggle.button_pressed and material_override_schedule.button_pressed
+	if fog_schedule_host and fog_toggle and fog_schedule:
+		fog_schedule_host.visible = fog_toggle.button_pressed and fog_schedule.button_pressed
 	_sync_feedback_mode_ui()
 	cue_container.get_parent().visible = cue_container.get_child_count() > 0
 	_apply_search_filter()
@@ -1675,6 +1797,10 @@ func _sync_fx_lfo_ui() -> void:
 				on = point_cloud_toggle.button_pressed
 			"camera_fx":
 				on = camera_fx_toggle.button_pressed
+			"material_override":
+				on = material_override_toggle.button_pressed if material_override_toggle else false
+			"fog":
+				on = fog_toggle.button_pressed if fog_toggle else false
 		var mode := ""
 		if drive != null:
 			mode = _fx_drive_mode(drive)
@@ -1805,24 +1931,6 @@ func _on_camera_motion_toggled(on: bool) -> void:
 	else:
 		camera_preset.select(0)
 		RH.set_field("camera_preset", "Off")
-		RH.set_field("affect_camera_rotation", false)
-		camera_rotation_toggle.button_pressed = false
-	_sync_conditional_ui()
-
-
-func _on_camera_rotation_toggled(on: bool) -> void:
-	RH.set_field("affect_camera_rotation", on)
-	if not on:
-		ShowDirector.restore_reactive_poses()
-	elif on:
-		# Ensure amount / axes / source are reachable — soft-open Rotation if needed.
-		if not affect_rotation.button_pressed:
-			affect_rotation.button_pressed = true
-			RH.set_field("affect_rotation", true)
-		# Soft-add camera to rotation multi-select (do not clear other layers).
-		if not bool(RH.get_field("rotation_target_camera", false)):
-			_set_check_no_signal(rotation_target_camera, true)
-			RH.set_field("rotation_target_camera", true)
 	_sync_conditional_ui()
 
 
@@ -2035,7 +2143,8 @@ func _glitch_params() -> Dictionary:
 	return {
 		"intensity": SliderSpinLinkScr.mapped_param(glitch_amount_slider, 28.0),
 		"rate": SliderSpinLinkScr.mapped_param(glitch_speed_slider, 3.0),
-		"h_size": SliderSpinLinkScr.mapped_param(glitch_hsize_slider, 100.0),
+		"v_size": SliderSpinLinkScr.mapped_param(glitch_vsize_slider, 1.0),
+		"h_size": SliderSpinLinkScr.mapped_param(glitch_hsize_slider, 1.0),
 		"rgb_split": SliderSpinLinkScr.mapped_param(glitch_rgb_slider, 100.0),
 		"slice_chaos": SliderSpinLinkScr.mapped_param(glitch_chaos_slider, 100.0),
 	}
@@ -2135,12 +2244,18 @@ func _on_point_cloud_params(_v: float = 0.0) -> void:
 
 
 func _camera_fx_params() -> Dictionary:
+	var near_m: Variant = SliderSpinLinkScr.mapped_param(camera_fx_focus_slider, 1.0)
+	var far_m: Variant = SliderSpinLinkScr.mapped_param(camera_fx_focus_far_slider, 1.0)
 	return {
 		"focal_length": SliderSpinLinkScr.mapped_param(camera_fx_focal_slider, 1.0),
 		"aperture": SliderSpinLinkScr.mapped_param(camera_fx_aperture_slider, 1.0),
-		"focus_distance": SliderSpinLinkScr.mapped_param(camera_fx_focus_slider, 1.0),
+		"focus_near": near_m,
+		"focus_far": far_m,
+		"focus_distance": near_m,
 		"bokeh": SliderSpinLinkScr.mapped_param(camera_fx_bokeh_slider, 100.0),
 		"lens_distortion": SliderSpinLinkScr.mapped_param(_camera_fx_lens_slider, 100.0) if _camera_fx_lens_slider else 0.0,
+		"near_enabled": true,
+		"far_enabled": not SceneMeshFx.camera_far_is_infinity(float(far_m)),
 	}
 
 
@@ -2229,6 +2344,8 @@ func _apply_randomized_play_all_schedules(base_active: float, base_inactive: flo
 	)
 	_syncing_ui = true
 	for eid in FX_IDS:
+		if str(eid) == "fog":
+			continue
 		var pair = rolled.get(eid, null)
 		if pair == null:
 			pair = ShowDirector.fx_automation.apply_independent_gate_schedule(
@@ -2258,6 +2375,7 @@ func _on_play_all_toggled(on: bool) -> void:
 			[wireframe_toggle, wireframe_schedule, "wireframe"],
 			[point_cloud_toggle, point_cloud_schedule, "point_cloud"],
 			[camera_fx_toggle, camera_fx_schedule, "camera_fx"],
+			[material_override_toggle, material_override_schedule, "material_override"],
 		]
 		_syncing_ui = true
 		for sid in pairs:
@@ -2280,6 +2398,7 @@ func _on_play_all_toggled(on: bool) -> void:
 		ShowDirector.set_effect("wireframe", true, _wireframe_params())
 		ShowDirector.set_effect("point_cloud", true, _point_cloud_params())
 		ShowDirector.set_effect("camera_fx", true, _camera_fx_params())
+		ShowDirector.set_effect("material_override", true, _material_override_params())
 		ShowDirector.fx_automation.set_style_interval(maxf(0.5, _eval_slider_num(style_interval_slider) / maxf(speed, 0.25)))
 		ShowDirector.fx_automation.set_style_active(true)
 		ShowDirector.fx_automation.configure_play_all(mode, speed, audio_on, active, inactive)
@@ -2321,6 +2440,10 @@ func _on_play_all_toggled(on: bool) -> void:
 		wireframe_schedule.button_pressed = false
 		point_cloud_schedule.button_pressed = false
 		camera_fx_schedule.button_pressed = false
+		if material_override_schedule:
+			material_override_schedule.button_pressed = false
+		if fog_schedule:
+			fog_schedule.button_pressed = false
 		style_switch_toggle.button_pressed = false
 		# Leave effect master toggles as-user — only clear Play All scheduling.
 		_syncing_ui = false
@@ -2341,15 +2464,13 @@ func _enable_deform_for_play_all() -> void:
 	_syncing_ui = true
 	_sync_target_checkboxes_from_rh()
 	_syncing_ui = false
-	for pair in [[affect_scale, scale_schedule], [affect_rotation, rotation_schedule], [affect_noise, noise_schedule]]:
+	for pair in [[affect_scale, scale_schedule], [affect_rotation, rotation_schedule], [affect_noise, noise_schedule], [camera_motion_toggle, camera_schedule], [nonlinear_camera_toggle, nonlinear_camera_schedule]]:
 		var master := _live_check(pair[0])
 		var sched := _live_check(pair[1])
 		if master and not master.button_pressed:
 			master.button_pressed = true
 		if sched and not sched.button_pressed:
 			sched.button_pressed = true
-	if camera_motion_toggle and not camera_motion_toggle.button_pressed:
-		camera_motion_toggle.button_pressed = true
 
 
 func _play_mode_id() -> String:
@@ -2467,6 +2588,8 @@ func _play_all_fx_audio_targets() -> Array:
 		out.append({"kind": "slider", "slider": feedback_mix_slider, "scale": 2.0, "key": "feedback_mix"})
 	if feedback_persist_slider:
 		out.append({"kind": "slider", "slider": feedback_persist_slider, "scale": 2.0, "key": "feedback_persist"})
+	if glitch_vsize_slider:
+		out.append({"kind": "slider", "slider": glitch_vsize_slider, "scale": 2.0, "key": "glitch_vsize"})
 	if glitch_amount_slider:
 		out.append({"kind": "slider", "slider": glitch_amount_slider, "scale": 3.0, "key": "glitch_amount"})
 	if glitch_speed_slider:
@@ -2511,11 +2634,15 @@ func _play_all_fx_audio_targets() -> Array:
 	if camera_fx_aperture_slider:
 		out.append({"kind": "slider", "slider": camera_fx_aperture_slider, "scale": 3.0, "key": "cam_aperture"})
 	if camera_fx_focus_slider:
-		out.append({"kind": "slider", "slider": camera_fx_focus_slider, "scale": 8.0, "key": "cam_focus"})
+		out.append({"kind": "slider", "slider": camera_fx_focus_slider, "scale": 2.0, "key": "cam_focus_near"})
+	if camera_fx_focus_far_slider:
+		out.append({"kind": "slider", "slider": camera_fx_focus_far_slider, "scale": SceneMeshFx.CAM_FOCUS_FAR_MAX, "key": "cam_focus_far"})
 	if camera_fx_bokeh_slider:
 		out.append({"kind": "slider", "slider": camera_fx_bokeh_slider, "scale": 2.0, "key": "cam_bokeh"})
 	if _camera_fx_lens_slider:
 		out.append({"kind": "slider", "slider": _camera_fx_lens_slider, "scale": 3.0, "key": "cam_lens"})
+	if material_override_look:
+		out.append({"kind": "choice", "opt": material_override_look, "scale": 4.0, "key": "mat_ov_look"})
 	if np_strength_slider:
 		out.append({"kind": "slider", "slider": np_strength_slider, "scale": 1.0, "key": "np_strength"})
 	if np_start_slider:
@@ -2524,6 +2651,16 @@ func _play_all_fx_audio_targets() -> Array:
 		out.append({"kind": "slider", "slider": np_end_slider, "scale": 35.0, "key": "np_far"})
 	if np_bend_slider:
 		out.append({"kind": "slider", "slider": np_bend_slider, "scale": 90.0, "key": "np_bend"})
+	if fog_density_slider:
+		out.append({"kind": "slider", "slider": fog_density_slider, "scale": 2.0, "key": "fog_density"})
+	if fog_begin_slider:
+		out.append({"kind": "slider", "slider": fog_begin_slider, "scale": 5.0, "key": "fog_begin"})
+	if fog_end_slider:
+		out.append({"kind": "slider", "slider": fog_end_slider, "scale": 32.0, "key": "fog_end"})
+	if fog_tint_slider:
+		out.append({"kind": "slider", "slider": fog_tint_slider, "scale": 360.0, "key": "fog_tint"})
+	if np_lift_slider:
+		out.append({"kind": "slider", "slider": np_lift_slider, "scale": 3.0, "key": "np_lift"})
 	return out
 
 
@@ -2582,6 +2719,10 @@ func _refresh_play_all_fx_after_audio_assign() -> void:
 		ShowDirector.set_effect("point_cloud", true, _point_cloud_params())
 	if camera_fx_toggle and camera_fx_toggle.button_pressed:
 		ShowDirector.set_effect("camera_fx", true, _camera_fx_params())
+	if material_override_toggle and material_override_toggle.button_pressed:
+		ShowDirector.set_effect("material_override", true, _material_override_params())
+	if fog_toggle and fog_toggle.button_pressed:
+		ShowDirector.set_effect("fog", true, _fog_params())
 	if nonlinear_camera_toggle and nonlinear_camera_toggle.button_pressed:
 		_apply_nonlinear_camera(true)
 
@@ -2773,6 +2914,34 @@ func _fx_labeled_slider(parent: VBoxContainer, title: String, lo: float, hi: flo
 	return sl
 
 
+func _style_rainbow_tint_slider(sl: HSlider) -> void:
+	## Spectrum track: gray at the left (Tint 0 = no extra hue), then red→violet.
+	var grad := Gradient.new()
+	grad.offsets = PackedFloat32Array([0.0, 0.03, 0.18, 0.34, 0.50, 0.66, 0.82, 1.0])
+	grad.colors = PackedColorArray([
+		FogEffect.BASE_COLOR,
+		Color(0.95, 0.35, 0.32),
+		Color(0.95, 0.85, 0.25),
+		Color(0.35, 0.88, 0.38),
+		Color(0.28, 0.85, 0.88),
+		Color(0.32, 0.42, 0.92),
+		Color(0.78, 0.35, 0.90),
+		Color(0.92, 0.32, 0.42),
+	])
+	var tex := GradientTexture2D.new()
+	tex.gradient = grad
+	tex.width = 256
+	tex.height = 12
+	tex.fill_from = Vector2(0.0, 0.5)
+	tex.fill_to = Vector2(1.0, 0.5)
+	var sb := StyleBoxTexture.new()
+	sb.texture = tex
+	sb.content_margin_top = 5
+	sb.content_margin_bottom = 5
+	sl.add_theme_stylebox_override("slider", sb)
+	sl.custom_minimum_size = Vector2(0, 18)
+
+
 func _np() -> Node:
 	return get_node_or_null("/root/NonlinearProjection")
 
@@ -2782,7 +2951,7 @@ func _setup_nonlinear_camera() -> void:
 		return
 	nonlinear_camera_toggle = CheckButton.new()
 	nonlinear_camera_toggle.name = "NonlinearCameraToggle"
-	nonlinear_camera_toggle.text = "Nonlinear camera"
+	nonlinear_camera_toggle.text = "Bend space"
 	nonlinear_camera_toggle.button_pressed = false
 	nonlinear_camera_toggle.tooltip_text = "Near geometry stays perspective; far geometry lifts toward a top-down view. Textures stay on. Optional shortcut: F4."
 	fx_section.add_child(nonlinear_camera_toggle)
@@ -2803,11 +2972,32 @@ func _setup_nonlinear_camera() -> void:
 	np_start_slider.tooltip_text = "Distance where the bend starts. Nearer than this stays perspective."
 	np_end_slider.tooltip_text = "Distance where the bend reaches full angle."
 	np_bend_slider.tooltip_text = "Maximum pitch toward top-down at Far, in degrees."
+	np_auto_center = CheckButton.new()
+	np_auto_center.name = "NpAutoCenter"
+	np_auto_center.text = "Auto-center main"
+	np_auto_center.button_pressed = true
+	np_auto_center.tooltip_text = "Keep the main item on-screen while Bend space is on, without changing its size."
+	nonlinear_camera_body.add_child(np_auto_center)
+	np_lift_slider = _fx_labeled_slider(nonlinear_camera_body, "Main lift (m)", 0.0, 20.0, 0.0)
+	np_lift_slider.step = 0.1
+	np_lift_slider.tooltip_text = "Extra camera-up offset while Bend space is on. Does not change size. Clamped so the item stays in view."
 	nonlinear_camera_toggle.toggled.connect(_on_nonlinear_camera_toggled)
+	np_auto_center.toggled.connect(_on_nonlinear_camera_params)
 	SliderSpinLinkScr.attach_driven(np_strength_slider, _on_nonlinear_camera_params, 1.0)
 	SliderSpinLinkScr.attach_driven(np_start_slider, _on_nonlinear_camera_params, 1.0)
 	SliderSpinLinkScr.attach_driven(np_end_slider, _on_nonlinear_camera_params, 1.0)
 	SliderSpinLinkScr.attach_driven(np_bend_slider, _on_nonlinear_camera_params, 1.0)
+	SliderSpinLinkScr.attach_driven(np_lift_slider, _on_nonlinear_camera_params, 1.0)
+	nonlinear_camera_schedule = CheckButton.new()
+	nonlinear_camera_schedule.name = "NonlinearCameraSchedule"
+	nonlinear_camera_schedule.text = "Bend space schedule"
+	nonlinear_camera_schedule.tooltip_text = "When on, Bend space only applies during Active seconds. Inactive returns to the default look. Type seconds or pick Driver."
+	nonlinear_camera_body.add_child(nonlinear_camera_schedule)
+	nonlinear_camera_schedule_host = VBoxContainer.new()
+	nonlinear_camera_schedule_host.name = "NonlinearCameraScheduleHost"
+	nonlinear_camera_schedule_host.visible = false
+	nonlinear_camera_body.add_child(nonlinear_camera_schedule_host)
+	nonlinear_camera_schedule.toggled.connect(func(v: bool) -> void: _on_react_schedule("bend", v))
 
 
 func _on_nonlinear_camera_toggled(on: bool) -> void:
@@ -2833,6 +3023,10 @@ func _apply_nonlinear_camera(on: bool) -> void:
 		np.set("transition_end", SliderSpinLinkScr.eval_of(np_end_slider, 35.0))
 	if np_bend_slider:
 		np.set("max_bend_angle_deg", SliderSpinLinkScr.eval_of(np_bend_slider, 90.0))
+	if np_auto_center:
+		np.set("auto_center_main", np_auto_center.button_pressed)
+	if np_lift_slider:
+		np.set("extra_lift", SliderSpinLinkScr.eval_of(np_lift_slider, 0.0))
 
 
 func _reset_np_sliders_to_defaults() -> void:
@@ -2840,6 +3034,9 @@ func _reset_np_sliders_to_defaults() -> void:
 	_reset_driven_num(np_start_slider, 4.0)
 	_reset_driven_num(np_end_slider, 35.0)
 	_reset_driven_num(np_bend_slider, 90.0)
+	if np_auto_center:
+		_set_check_no_signal(np_auto_center, true)
+	_reset_driven_num(np_lift_slider, 0.0)
 
 
 func _sync_nonlinear_camera_from_autoload() -> void:
@@ -2851,6 +3048,138 @@ func _sync_nonlinear_camera_from_autoload() -> void:
 		_set_check_no_signal(nonlinear_camera_toggle, on)
 		if nonlinear_camera_body:
 			nonlinear_camera_body.visible = on
+
+
+func _setup_material_override() -> void:
+	var after: Node = camera_fx_body
+	if after == null or fx_section == null or after.get_parent() != fx_section:
+		return
+	material_override_toggle = CheckButton.new()
+	material_override_toggle.name = "MaterialOverrideToggle"
+	material_override_toggle.text = "Material Override"
+	material_override_toggle.tooltip_text = "Replace scene materials with cladding, metal, or normal-map look. Off restores originals."
+	fx_section.add_child(material_override_toggle)
+	fx_section.move_child(material_override_toggle, after.get_index() + 1)
+	material_override_body = VBoxContainer.new()
+	material_override_body.name = "MaterialOverrideBody"
+	material_override_body.visible = false
+	material_override_body.add_theme_constant_override("separation", 4)
+	fx_section.add_child(material_override_body)
+	fx_section.move_child(material_override_body, material_override_toggle.get_index() + 1)
+	var look_lbl := Label.new()
+	look_lbl.text = "Look"
+	material_override_body.add_child(look_lbl)
+	material_override_look = OptionButton.new()
+	material_override_look.name = "MaterialOverrideLook"
+	for n in MAT_OVERRIDE_LOOK_NAMES:
+		material_override_look.add_item(str(n))
+	material_override_look.select(0)
+	material_override_look.tooltip_text = "White cladding, Chrome, Gold, Normal (normal map), Shiny black. Off restores originals. Driver maps a signal to look index (wraps)."
+	material_override_look.item_selected.connect(_on_material_override_look)
+	material_override_body.add_child(material_override_look)
+	SliderSpinLinkScr.attach_driven_choice(material_override_look, _on_material_override_look_driven)
+	material_override_schedule = CheckButton.new()
+	material_override_schedule.text = "Material schedule"
+	material_override_body.add_child(material_override_schedule)
+	material_override_schedule_host = VBoxContainer.new()
+	material_override_schedule_host.visible = false
+	material_override_body.add_child(material_override_schedule_host)
+	material_override_toggle.toggled.connect(_on_material_override_toggled)
+	material_override_schedule.toggled.connect(func(v: bool) -> void: _on_effect_schedule("material_override", v))
+
+
+func _material_override_look_name() -> String:
+	var idx := material_override_look.selected if material_override_look else 0
+	if idx < 0 or idx >= MAT_OVERRIDE_LOOK_NAMES.size():
+		return "White cladding"
+	return str(MAT_OVERRIDE_LOOK_NAMES[idx])
+
+
+func _material_override_params() -> Dictionary:
+	return {
+		"look": _material_override_look_name(),
+		"target_environment": true,
+		"target_main": true,
+		"target_scatter": true,
+	}
+
+
+func _on_material_override_toggled(on: bool) -> void:
+	ShowDirector.set_effect("material_override", on, _material_override_params())
+	_sync_conditional_ui()
+
+
+func _on_material_override_look(_index: int) -> void:
+	if material_override_toggle and material_override_toggle.button_pressed:
+		ShowDirector.set_effect("material_override", true, _material_override_params())
+
+
+func _on_material_override_look_driven() -> void:
+	_on_material_override_look(material_override_look.selected if material_override_look else 0)
+
+
+func _setup_fog() -> void:
+	var after: Node = material_override_body
+	if after == null or fx_section == null or after.get_parent() != fx_section:
+		after = camera_fx_body
+	if after == null or fx_section == null or after.get_parent() != fx_section:
+		return
+	fog_toggle = CheckButton.new()
+	fog_toggle.name = "FogToggle"
+	fog_toggle.text = "Fog"
+	fog_toggle.tooltip_text = "Distance mist using Godot Environment fog. Off by default. Density, tint, start/end."
+	fx_section.add_child(fog_toggle)
+	fx_section.move_child(fog_toggle, after.get_index() + 1)
+	fog_body = VBoxContainer.new()
+	fog_body.name = "FogBody"
+	fog_body.visible = false
+	fog_body.add_theme_constant_override("separation", 4)
+	fx_section.add_child(fog_body)
+	fx_section.move_child(fog_body, fog_toggle.get_index() + 1)
+	fog_density_slider = _fx_labeled_slider(fog_body, "Density", 0.0, 100.0, 32.0)
+	fog_tint_slider = _fx_labeled_slider(fog_body, "Tint", 0.0, 360.0, 0.0)
+	fog_begin_slider = _fx_labeled_slider(fog_body, "Start (m)", 0.0, 200.0, 5.0)
+	fog_end_slider = _fx_labeled_slider(fog_body, "End (m)", 1.0, 400.0, 32.0)
+	fog_density_slider.step = 1.0
+	fog_tint_slider.step = 1.0
+	fog_begin_slider.step = 0.5
+	fog_end_slider.step = 0.5
+	_style_rainbow_tint_slider(fog_tint_slider)
+	fog_density_slider.tooltip_text = "How thick the mist is. 100 = strong visible haze (scene still readable). Type a number or pick Driver."
+	fog_tint_slider.tooltip_text = "Hue of the mist. 0 = gray-white. Moving right picks a saturated color without making fog thicker."
+	fog_begin_slider.tooltip_text = "Distance where fog starts. Keep this near the main item (a few meters) so mist shows in the environment."
+	fog_end_slider.tooltip_text = "Distance where fog reaches full thickness. Typical rooms are tens of meters, not hundreds."
+	fog_schedule = CheckButton.new()
+	fog_schedule.text = "Fog schedule"
+	fog_body.add_child(fog_schedule)
+	fog_schedule_host = VBoxContainer.new()
+	fog_schedule_host.visible = false
+	fog_body.add_child(fog_schedule_host)
+	fog_toggle.toggled.connect(_on_fog_toggled)
+	fog_schedule.toggled.connect(func(v: bool) -> void: _on_effect_schedule("fog", v))
+	SliderSpinLinkScr.attach_driven(fog_density_slider, _on_fog_params, 100.0)
+	SliderSpinLinkScr.attach_driven(fog_tint_slider, _on_fog_params, 1.0)
+	SliderSpinLinkScr.attach_driven(fog_begin_slider, _on_fog_params, 1.0)
+	SliderSpinLinkScr.attach_driven(fog_end_slider, _on_fog_params, 1.0)
+
+
+func _fog_params() -> Dictionary:
+	return {
+		"density": SliderSpinLinkScr.mapped_param(fog_density_slider, 100.0) if fog_density_slider else 0.32,
+		"begin": SliderSpinLinkScr.eval_of(fog_begin_slider, 5.0) if fog_begin_slider else 5.0,
+		"end": SliderSpinLinkScr.eval_of(fog_end_slider, 32.0) if fog_end_slider else 32.0,
+		"tint": SliderSpinLinkScr.eval_of(fog_tint_slider, 0.0) if fog_tint_slider else 0.0,
+	}
+
+
+func _on_fog_toggled(on: bool) -> void:
+	ShowDirector.set_effect("fog", on, _fog_params())
+	_sync_conditional_ui()
+
+
+func _on_fog_params(_v: float = 0.0) -> void:
+	if fog_toggle and fog_toggle.button_pressed:
+		ShowDirector.set_effect("fog", true, _fog_params())
 
 
 func _setup_tone() -> void:
@@ -2917,27 +3246,45 @@ func _on_tone_params(_v: float = 0.0) -> void:
 
 
 func _setup_feedback_blur() -> void:
-	## Blur 0 = crisp duplicated frame. 35 reproduces the pre-slider look.
+	## Blur 0 = sharp Windows-style trail. 35 reproduces the pre-slider smear look.
 	if feedback_body == null or feedback_persist_slider == null:
 		return
 	var after: Node = feedback_persist_slider.get_parent()
 	if after == null or after == feedback_body:
 		after = feedback_persist_slider
-	var lbl := Label.new()
-	lbl.text = "Blur amount"
-	feedback_body.add_child(lbl)
-	feedback_body.move_child(lbl, after.get_index() + 1)
-	feedback_blur_slider = HSlider.new()
-	feedback_blur_slider.name = "FeedbackBlurSlider"
-	feedback_blur_slider.min_value = 0.0
-	feedback_blur_slider.max_value = 100.0
-	feedback_blur_slider.step = 1.0
-	feedback_blur_slider.value = 35.0
-	feedback_blur_slider.tooltip_text = "0 = no blur at all: a sharp copy of the previous frame stacked on the live one (image duplication). Higher softens the trail into a smear."
-	feedback_body.add_child(feedback_blur_slider)
-	feedback_body.move_child(feedback_blur_slider, lbl.get_index() + 1)
+	after = _fb_add_label(after, "FeedbackBlurLabel", "Blur amount")
+	feedback_blur_slider = _fb_make_slider("FeedbackBlurSlider", 0.0, 100.0, 1.0, 35.0, "0 = sharp trail (no blur or downsample): moving things stamp copies on a frozen buffer. Higher smears the trail.")
+	after = _fb_add_node(after, feedback_blur_slider)
 	SliderSpinLinkScr.attach_driven(feedback_blur_slider, _on_feedback_params, 100.0)
-	_setup_feedback_blend(feedback_blur_slider)
+	_setup_feedback_blend(after)
+
+
+func _fb_add_label(after: Node, node_name: String, text: String) -> Node:
+	var lbl := Label.new()
+	lbl.name = node_name
+	lbl.text = text
+	return _fb_add_node(after, lbl)
+
+
+func _fb_make_slider(node_name: String, lo: float, hi: float, step: float, val: float, tip: String) -> HSlider:
+	var sl := HSlider.new()
+	sl.name = node_name
+	sl.min_value = lo
+	sl.max_value = hi
+	sl.step = step
+	sl.value = val
+	sl.tooltip_text = tip
+	return sl
+
+
+func _fb_add_node(after: Node, child: Node) -> Node:
+	var anchor := after
+	if after != null and after.get_parent() != null and after.get_parent() != feedback_body:
+		anchor = after.get_parent()
+	feedback_body.add_child(child)
+	if anchor != null and anchor.get_parent() == feedback_body:
+		feedback_body.move_child(child, anchor.get_index() + 1)
+	return child
 
 
 func _setup_feedback_blend(after: Node) -> void:
@@ -2945,20 +3292,14 @@ func _setup_feedback_blend(after: Node) -> void:
 	## rather than a driven slider. Normal keeps the previous look.
 	if feedback_body == null or after == null:
 		return
-	var anchor: Node = after.get_parent() if after.get_parent() != feedback_body else after
-	var lbl := Label.new()
-	lbl.name = "FeedbackBlendLabel"
-	lbl.text = "Blend mode"
-	feedback_body.add_child(lbl)
-	feedback_body.move_child(lbl, anchor.get_index() + 1)
+	var lbl := _fb_add_label(after, "FeedbackBlendLabel", "Blend mode") as Label
 	feedback_blend = OptionButton.new()
 	feedback_blend.name = "FeedbackBlend"
 	for n in FEEDBACK_BLEND_NAMES:
 		feedback_blend.add_item(str(n))
 	feedback_blend.select(0)
-	feedback_blend.tooltip_text = "How the previous frame is laid over the live one. Normal = fades on top (default). Glow = trails only add light. Brightest / Darkest keep whichever frame is lighter / darker. Shadow = trails darken like a stain. Edges = only what moved stays, so with Blur 0 you get sharp outlines. Contrast = trails push lights and darks apart."
-	feedback_body.add_child(feedback_blend)
-	feedback_body.move_child(feedback_blend, lbl.get_index() + 1)
+	feedback_blend.tooltip_text = "How the previous frame is laid over the live one. Normal + Blur 0 + Opacity 100 + Persistence 100 = sharp Windows-style trail (moving things stamp, leftover pixels stay). Brightest / Darkest keep whichever frame is lighter / darker. Edges = only what moved stays. Contrast = trails push lights and darks apart."
+	_fb_add_node(lbl, feedback_blend)
 	feedback_blend.item_selected.connect(_on_feedback_blend)
 
 
@@ -3020,6 +3361,14 @@ func _setup_shuffle_and_random() -> void:
 		var hole_iv: HSlider = _shuffle_slots["hole"].get("interval")
 		if hole_iv:
 			SliderSpinLinkScr.attach_driven(hole_iv, Callable(), 1.0)
+	if material_override_body and material_override_look:
+		var after_look: Node = material_override_look
+		if material_override_look.get_parent() != material_override_body:
+			after_look = material_override_look.get_parent()
+		_shuffle_slots["material_override"] = CycleRandomScr.attach_shuffle(material_override_body, after_look, "Shuffle look")
+		var mo_iv: HSlider = _shuffle_slots["material_override"].get("interval")
+		if mo_iv:
+			SliderSpinLinkScr.attach_driven(mo_iv, Callable(), 1.0)
 	if feedback_body and feedback_blend:
 		# Blend mode is an enum, so Play All varies it by shuffling the choice instead of
 		# writing a driver expression onto it.
@@ -3038,16 +3387,6 @@ func _setup_shuffle_and_random() -> void:
 		_live_check(_pc_target_checks.get("scatter")),
 		_live_check(_pc_target_checks.get("environment")),
 	], true)
-	var cam_share: HSlider = null
-	if _shuffle_slots.has("camera"):
-		cam_share = _shuffle_slots["camera"].get("interval")
-	if camera_body and camera_rotation_toggle:
-		var cam_rand: Dictionary = CycleRandomScr.attach_random(camera_body, camera_rotation_toggle, cam_share)
-		if cam_share == null:
-			var civ: HSlider = cam_rand.get("interval")
-			if civ:
-				SliderSpinLinkScr.attach_driven(civ, Callable(), 1.0)
-		_random_groups["cam_rot"] = {"slot": cam_rand, "buttons": [camera_rotation_toggle], "keep_one": false}
 
 
 func _add_random_group(id: String, parent: Control, after: Node, buttons: Array, keep_one: bool) -> void:
@@ -3070,6 +3409,9 @@ func _tick_shuffle_and_random(delta: float) -> void:
 	if CycleRandomScr.tick_slot(_shuffle_slots.get("hole", {}), delta):
 		if hole_shape:
 			CycleRandomScr.advance_option(hole_shape)
+	if CycleRandomScr.tick_slot(_shuffle_slots.get("material_override", {}), delta):
+		if material_override_look:
+			CycleRandomScr.advance_option(material_override_look)
 	if CycleRandomScr.tick_slot(_shuffle_slots.get("feedback_blend", {}), delta):
 		if feedback_blend:
 			CycleRandomScr.advance_option(feedback_blend)
@@ -3727,10 +4069,18 @@ func _restore_fx_sliders_from_director() -> void:
 	_set_check_no_signal(wireframe_toggle, bool(enabled.get("wireframe", false)))
 	_set_check_no_signal(point_cloud_toggle, bool(enabled.get("point_cloud", false)))
 	_set_check_no_signal(camera_fx_toggle, bool(enabled.get("camera_fx", false)))
+	_set_check_no_signal(material_override_toggle, bool(enabled.get("material_override", false)))
+	_set_check_no_signal(fog_toggle, bool(enabled.get("fog", false)))
 	var g: Dictionary = params.get("glitch", {}) as Dictionary if params.get("glitch", {}) is Dictionary else {}
+	var g_sizes: Vector2 = GlitchEffect.resolve_slice_pixels(g)
+	if g.has("v_size"):
+		SliderSpinLinkScr.set_mapped_param(glitch_vsize_slider, g.get("v_size", 24.0), 1.0)
+		SliderSpinLinkScr.set_mapped_param(glitch_hsize_slider, g.get("h_size", 48.0), 1.0)
+	else:
+		SliderSpinLinkScr.set_mapped_param(glitch_vsize_slider, g_sizes.x, 1.0)
+		SliderSpinLinkScr.set_mapped_param(glitch_hsize_slider, g_sizes.y, 1.0)
 	SliderSpinLinkScr.set_mapped_param(glitch_amount_slider, g.get("intensity", glitch_amount_slider.value / 28.0), 28.0)
 	SliderSpinLinkScr.set_mapped_param(glitch_speed_slider, g.get("rate", glitch_speed_slider.value / 3.0), 3.0)
-	SliderSpinLinkScr.set_mapped_param(glitch_hsize_slider, g.get("h_size", glitch_hsize_slider.value / 100.0), 100.0)
 	SliderSpinLinkScr.set_mapped_param(glitch_rgb_slider, g.get("rgb_split", glitch_rgb_slider.value / 100.0), 100.0)
 	SliderSpinLinkScr.set_mapped_param(glitch_chaos_slider, g.get("slice_chaos", glitch_chaos_slider.value / 100.0), 100.0)
 	var fb: Dictionary = params.get("feedback", {}) as Dictionary if params.get("feedback", {}) is Dictionary else {}
@@ -3741,8 +4091,7 @@ func _restore_fx_sliders_from_director() -> void:
 		# Sessions saved before Blur existed have no key — fall back to the look they had.
 		SliderSpinLinkScr.set_mapped_param(feedback_blur_slider, fb.get("blur", 0.35), 100.0)
 	if feedback_blend:
-		var bidx := FEEDBACK_BLEND_NAMES.find(str(fb.get("blend", "Normal")))
-		feedback_blend.select(bidx if bidx >= 0 else 0)
+		feedback_blend.select(FeedbackEffect.blend_index_from_param(fb.get("blend", "Normal")))
 	var ch: Dictionary = params.get("chromatic", {}) as Dictionary if params.get("chromatic", {}) is Dictionary else {}
 	SliderSpinLinkScr.set_mapped_param(chromatic_amount_slider, ch.get("amount", chromatic_amount_slider.value / 28.0), 28.0)
 	var tn: Dictionary = params.get("tone", {}) as Dictionary if params.get("tone", {}) is Dictionary else {}
@@ -3778,10 +4127,27 @@ func _restore_fx_sliders_from_director() -> void:
 	var cam: Dictionary = params.get("camera_fx", {}) as Dictionary if params.get("camera_fx", {}) is Dictionary else {}
 	SliderSpinLinkScr.set_mapped_param(camera_fx_focal_slider, cam.get("focal_length", camera_fx_focal_slider.value), 1.0)
 	SliderSpinLinkScr.set_mapped_param(camera_fx_aperture_slider, cam.get("aperture", camera_fx_aperture_slider.value), 1.0)
-	SliderSpinLinkScr.set_mapped_param(camera_fx_focus_slider, cam.get("focus_distance", camera_fx_focus_slider.value), 1.0)
+	var loaded := SceneMeshFx.camera_focus_range(cam)
+	SliderSpinLinkScr.set_mapped_param(camera_fx_focus_slider, loaded.x, 1.0)
+	SliderSpinLinkScr.set_mapped_param(camera_fx_focus_far_slider, loaded.y, 1.0)
 	SliderSpinLinkScr.set_mapped_param(camera_fx_bokeh_slider, cam.get("bokeh", camera_fx_bokeh_slider.value / 100.0), 100.0)
 	if _camera_fx_lens_slider:
 		SliderSpinLinkScr.set_mapped_param(_camera_fx_lens_slider, cam.get("lens_distortion", 0.0), 100.0)
+	var mo: Dictionary = params.get("material_override", {}) as Dictionary if params.get("material_override", {}) is Dictionary else {}
+	if material_override_look and mo.has("look"):
+		var look_name := MaterialOverrideEffect.normalize_look(mo["look"])
+		var midx := MAT_OVERRIDE_LOOK_NAMES.find(look_name)
+		if midx >= 0:
+			SliderSpinLinkScr.reset_choice_to_index(material_override_look, midx, false)
+	var fogp: Dictionary = FogEffect.sanitize_params(params.get("fog", {}) as Dictionary if params.get("fog", {}) is Dictionary else {})
+	if fog_density_slider:
+		SliderSpinLinkScr.set_mapped_param(fog_density_slider, fogp.get("density", 0.32), 100.0)
+	if fog_begin_slider:
+		SliderSpinLinkScr.set_expr(fog_begin_slider, str(float(fogp.get("begin", 5.0))), false)
+	if fog_end_slider:
+		SliderSpinLinkScr.set_expr(fog_end_slider, str(float(fogp.get("end", 32.0))), false)
+	if fog_tint_slider:
+		SliderSpinLinkScr.set_expr(fog_tint_slider, str(FogEffect.tint_from_params(fogp)), false)
 	var asc: Dictionary = params.get("ascii", {}) as Dictionary if params.get("ascii", {}) is Dictionary else {}
 	if _ascii_density_slider and asc.has("density"):
 		SliderSpinLinkScr.set_mapped_param(_ascii_density_slider, asc.get("density"), 1.0)

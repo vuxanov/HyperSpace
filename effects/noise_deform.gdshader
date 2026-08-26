@@ -67,30 +67,35 @@ float fbm(vec3 p) {
 }
 
 void vertex() {
+	// Local copy so inout warp cannot restore rest-pose VERTEX and wipe noise.
+	// np_u_skip disables warp only — noise/cloth still run.
+	vec3 vtx = VERTEX;
+	vec3 nrm = NORMAL;
+	vec3 tgt = TANGENT;
+	vec3 bnm = BINORMAL;
 	if (noise_amount > 0.0005) {
 		float feature = max(noise_scale, 0.35);
 		float freq = 1.0 / feature;
-		vec3 sample_p = (VERTEX + noise_seed) * freq + vec3(time_sec * 0.14, time_sec * 0.09, time_sec * 0.11);
+		vec3 sample_p = (vtx + noise_seed) * freq + vec3(time_sec * 0.14, time_sec * 0.09, time_sec * 0.11);
 		float nx = fbm(sample_p);
 		float ny = fbm(sample_p + vec3(17.2, 3.1, 9.4));
 		float nz = fbm(sample_p + vec3(4.8, 21.7, 2.6));
 		vec3 axis_disp = vec3(nx, ny, nz) * noise_axes;
 		float along_n = fbm(sample_p + vec3(8.0, 1.0, 5.0));
 		float axis_w = max(length(noise_axes), 0.001);
-		vec3 nrm = NORMAL;
 		if (length(nrm) < 0.01) {
 			nrm = vec3(0.0, 1.0, 0.0);
 		}
-		VERTEX += (nrm * along_n * 0.7 * (axis_w / 1.732) + axis_disp * 0.95) * noise_amount;
+		vtx += (nrm * along_n * 0.7 * (axis_w / 1.732) + axis_disp * 0.95) * noise_amount;
 	}
 	if (cloth_amount > 0.0005) {
 		// Cloth is hang + wind + flutter — not fbm noise. Pin high local Y.
-		vec3 world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		vec3 world = (MODEL_MATRIX * vec4(vtx, 1.0)).xyz;
 		float stiff = clamp(cloth_stiffness, 0.05, 1.0);
 		float g = max(cloth_gravity, 0.0);
 		float w = cloth_wind;
 		float t = cloth_time;
-		float pin = smoothstep(-0.6, 1.15, VERTEX.y);
+		float pin = smoothstep(-0.6, 1.15, vtx.y);
 		float hang = 1.0 - pin;
 		float loose = (1.0 - stiff * 0.62) * cloth_amount;
 		float sag = hang * g * (0.55 + hang * 0.45);
@@ -101,9 +106,13 @@ void vertex() {
 			-sag + abs(swing) * w * 0.08 * hang,
 			swing * (0.32 + w * 0.45) * hang
 		);
-		VERTEX += force * loose * (0.35 + hang);
+		vtx += force * loose * (0.35 + hang);
 	}
-	np_t = np_warp_vertex_and_normal(VERTEX, NORMAL, MODELVIEW_MATRIX, PROJECTION_MATRIX[3][3], CAMERA_POSITION_WORLD);
+	np_t = np_warp_vertex_frame(vtx, nrm, tgt, bnm, MODELVIEW_MATRIX, PROJECTION_MATRIX[3][3], CAMERA_POSITION_WORLD);
+	VERTEX = vtx;
+	NORMAL = nrm;
+	TANGENT = tgt;
+	BINORMAL = bnm;
 }
 
 void fragment() {

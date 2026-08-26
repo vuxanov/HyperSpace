@@ -25,3 +25,6 @@ enum Easing {
 @export_range(0.001, 1.0, 0.001) var near_z_epsilon: float = 0.08
 @export_range(0.0, 400.0, 1.0) var extra_cull_margin: float = 80.0
 @export var gameplay_camera_only: bool = false
+## Keep the unwarped main item on-screen without changing its apparent size.
+@export var auto_center_main: bool = true
+@export_range(0.0, 40.0, 0.1) var extra_lift: float = 0.0

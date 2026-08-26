@@ -275,7 +275,7 @@ void vertex() {
 	NORMAL = u_terrain_normal_basis * unpack_normal(texture(u_terrain_normalmap, UV));
 
 	v_distance_to_camera = distance(wpos.xyz, CAMERA_POSITION_WORLD);
-	np_t = np_warp_vertex_and_normal(VERTEX, NORMAL, MODELVIEW_MATRIX, PROJECTION_MATRIX[3][3], CAMERA_POSITION_WORLD);
+	np_t = np_warp_vertex_frame(VERTEX, NORMAL, TANGENT, BINORMAL, MODELVIEW_MATRIX, PROJECTION_MATRIX[3][3], CAMERA_POSITION_WORLD);
 }
 
 void fragment() {

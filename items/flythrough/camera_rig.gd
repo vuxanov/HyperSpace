@@ -5,6 +5,8 @@ class_name FlythroughCameraRig
 ## Orientation uses look-ahead + basis slerp so corners (square) and loop seams stay smooth.
 ## Path speed is dampened in high-curvature sections so square corners don't rush.
 
+const RH = preload("res://core/reactivity_hub.gd")
+
 
 var fly_speed: float = 12.0
 var look_sensitivity: float = 0.0035
@@ -64,7 +66,7 @@ func get_modulator() -> ModulatorBus:
 
 
 func apply_reactive_spin(rate: float, axes: Vector3) -> void:
-	## Continuous look spin from Reactivity Rotation (camera target / Camera motion).
+	## Continuous look spin from Reactivity Rotation (camera target).
 	if axes.length_squared() < 0.01:
 		return
 	var r := maxf(rate, 0.0)
@@ -128,10 +130,13 @@ func advance(delta: float, _kick: float = 0.0) -> void:
 	_apply_gamepad_look(delta)
 	_bind_shared_modulator()
 	# ModulatorBus is advanced by ReactivitySettings; only apply look here.
-	if _curve == null or _camera == null:
+	if _camera == null:
 		return
+	# Claim current even when the curve is briefly missing (env swap / loop).
 	if not _camera.current:
 		_camera.current = true
+	if _curve == null:
+		return
 	var length := _curve.get_baked_length()
 	if length <= 0.01:
 		return
@@ -194,7 +199,7 @@ func _apply_transform(delta: float = 1.0 / 60.0) -> void:
 	var yaw := _yaw + _reactive_yaw
 	var pitch := _pitch + _reactive_pitch
 	var roll := _spin_roll + _reactive_roll
-	if _mod and _mod.preset != ModulatorBus.Preset.OFF:
+	if _mod and RH.property_active("camera"):
 		yaw += _mod.yaw_offset
 		pitch += _mod.pitch_offset
 		roll += _mod.roll_offset

@@ -14,6 +14,10 @@ const TRACK_H := 6.0
 	set(v):
 		min_value = v
 		_clamp_values()
+		if _low_slider:
+			_low_slider.min_value = min_value
+		if _high_slider:
+			_high_slider.min_value = min_value
 		if _track:
 			_track.queue_redraw()
 
@@ -21,12 +25,18 @@ const TRACK_H := 6.0
 	set(v):
 		max_value = maxf(v, min_value + 0.001)
 		_clamp_values()
+		if _low_slider:
+			_low_slider.max_value = max_value
+		if _high_slider:
+			_high_slider.max_value = max_value
 		if _track:
 			_track.queue_redraw()
 
 @export var step: float = 1.0
 @export var low_value: float = 0.0
 @export var high_value: float = 100.0
+@export var low_caption: String = ""
+@export var high_caption: String = ""
 
 ## If true, thumbs are independent and may cross.
 @export var independent: bool = false
@@ -58,6 +68,10 @@ func _process(_delta: float) -> void:
 func _build() -> void:
 	if _track != null:
 		return
+	if not low_caption.is_empty():
+		var low_lbl := Label.new()
+		low_lbl.text = low_caption
+		add_child(low_lbl)
 	_low_slider = _make_end_slider(low_value)
 	add_child(_low_slider)
 	SliderSpinLinkScr.attach_driven(_low_slider, _on_low_driven, 1.0)
@@ -70,9 +84,25 @@ func _build() -> void:
 	_track.gui_input.connect(_on_track_gui_input)
 	add_child(_track)
 
+	if not high_caption.is_empty():
+		var high_lbl := Label.new()
+		high_lbl.text = high_caption
+		add_child(high_lbl)
 	_high_slider = _make_end_slider(high_value)
 	add_child(_high_slider)
 	SliderSpinLinkScr.attach_driven(_high_slider, _on_high_driven, 1.0)
+
+
+func get_low_slider() -> HSlider:
+	if _track == null:
+		_build()
+	return _low_slider
+
+
+func get_high_slider() -> HSlider:
+	if _track == null:
+		_build()
+	return _high_slider
 
 
 func _make_end_slider(initial: float) -> HSlider:

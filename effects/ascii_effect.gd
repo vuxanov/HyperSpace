@@ -90,6 +90,7 @@ const PRESET_ALIASES := {
 
 var _rect: ColorRect
 var _atlas_cache: Dictionary = {}  # charset -> ImageTexture
+var _atlas_bake_seq: int = 0
 var _invert: bool = false
 var _base_charset: String = " .:-=+*#%@"
 var _density_min: float = 40.0
@@ -101,8 +102,10 @@ var _style_index: int = -1
 
 func _ready() -> void:
 	effect_id = "ascii"
-	layer = 10
-	# Same BackBufferCopy → ColorRect path as other screen LFX.
+	# Last screen LFX before Feedback. Keep the layer mounted so BackBufferCopy
+	# stays valid across toggles (same lesson as Camera FX).
+	layer = 100
+	visible = true
 	var bbc := BackBufferCopy.new()
 	bbc.copy_mode = BackBufferCopy.COPY_MODE_VIEWPORT
 	add_child(bbc)
@@ -114,7 +117,7 @@ func _ready() -> void:
 	mat.shader = load("res://effects/ascii_effect.gdshader")
 	_rect.material = mat
 	add_child(_rect)
-	visible = false
+	_rect.visible = false
 	set_process(false)
 	apply_preset("Standard")
 
@@ -280,7 +283,34 @@ func _atlas_for(charset: String) -> ImageTexture:
 		return _atlas_cache[charset]
 	var tex := AsciiCharset.build_atlas(charset)
 	_atlas_cache[charset] = tex
+	if is_inside_tree():
+		_atlas_bake_seq += 1
+		_refresh_font_atlas(charset, _atlas_bake_seq)
 	return tex
+
+
+func _refresh_font_atlas(charset: String, seq: int) -> void:
+	if not is_inside_tree():
+		return
+	await get_tree().process_frame
+	if seq != _atlas_bake_seq or not is_inside_tree():
+		return
+	var bake := AsciiCharset.start_viewport_atlas(charset)
+	if bake.is_empty():
+		return
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if seq != _atlas_bake_seq or not is_inside_tree():
+		AsciiCharset.abort_viewport_atlas(bake)
+		return
+	var tex := AsciiCharset.finish_viewport_atlas(bake)
+	if tex == null:
+		return
+	_atlas_cache[charset] = tex
+	var mat := _shader_mat()
+	if mat:
+		mat.set_shader_parameter("ascii_atlas", tex)
+		mat.set_shader_parameter("charset_len", charset.length())
 
 
 func _shader_mat() -> ShaderMaterial:
@@ -290,6 +320,6 @@ func _shader_mat() -> ShaderMaterial:
 
 
 func _sync_visibility() -> void:
-	visible = enabled
+	visible = true
 	if _rect:
 		_rect.visible = enabled

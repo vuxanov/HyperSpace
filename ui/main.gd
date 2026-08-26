@@ -119,9 +119,7 @@ func _apply_session_sidebar_params(data: Dictionary) -> void:
 		var scale_val := 1.0
 		var raw_s := str(raw).strip_edges()
 		if raw is String and not raw_s.is_empty() and not raw_s.is_valid_float():
-			env_cfg["user_scale_expr"] = raw_s
-			if not env_cfg.has("user_scale") or float(env_cfg.get("user_scale", 0.0)) <= 0.0:
-				env_cfg["user_scale"] = 1.0
+			# Snapshot the eval; do not bind a driver onto Env scale on boot.
 			var hub := get_node_or_null("/root/DriverHub")
 			if hub != null and hub.has_method("eval_value"):
 				scale_val = maxf(float(hub.call("eval_value", raw_s, 1.0)), 0.01)
@@ -129,11 +127,10 @@ func _apply_session_sidebar_params(data: Dictionary) -> void:
 				scale_val = maxf(float(env_cfg.get("user_scale", 1.0)), 0.01)
 		else:
 			scale_val = maxf(float(raw), 0.01)
-			# 0.01 is the old float(expression) floor — a vanished world, not a real size.
-			if scale_val < 0.05 and not env_cfg.has("user_scale_expr"):
+			if scale_val < 0.05:
 				scale_val = 1.0
-			env_cfg["user_scale"] = scale_val
-			env_cfg.erase("user_scale_expr")
+		env_cfg["user_scale"] = scale_val
+		env_cfg.erase("user_scale_expr")
 		item.params["environment"] = env_cfg
 		ShowDirector.set_active_cue_param("env_scale", scale_val)
 	if sb.has("scatter_global_scale") and (sb["scatter_global_scale"] is float or sb["scatter_global_scale"] is int):

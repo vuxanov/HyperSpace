@@ -6,12 +6,15 @@ render_mode fog_disabled, cull_disabled, depth_draw_opaque,
 	ambient_light_disabled, shadows_disabled, specular_disabled;
 
 uniform sampler2D tex_albedo : source_color, filter_linear, hint_default_black;
+uniform sampler2D screen_texture : hint_screen_texture, filter_linear;
 uniform vec4 modulate : source_color = vec4(1.0);
 uniform float exposure_comp = 0.72;
 uniform float has_tex = 0.0;
 uniform float use_billboard = 0.0;
 // Fallback tint when has_tex==0 (charcoal or error red).
 uniform vec3 fallback_rgb = vec3(0.08, 0.08, 0.1);
+// 0 Normal, 1 Multiply, 2 Overlay, 3 Screen, 4 Add, 5 Subtract, 6 Premultiplied.
+uniform int blend_mode = 0;
 
 // Vertex deform (tessellated PlaneMesh). Noise + cloth-like jiggle; top UV pinned.
 uniform float deform_amount = 0.0;
@@ -81,20 +84,49 @@ void vertex() {
 		VERTEX.x += sin(UV.y * 2.8 + t * 0.9) * amp * 0.18 * cloth_wind;
 		VERTEX.y += cos(UV.x * 2.1 + t * 0.7) * amp * 0.08;
 	}
-	np_t = np_warp_vertex_and_normal(VERTEX, NORMAL, MODELVIEW_MATRIX, PROJECTION_MATRIX[3][3], CAMERA_POSITION_WORLD);
+	np_t = np_warp_vertex_frame(VERTEX, NORMAL, TANGENT, BINORMAL, MODELVIEW_MATRIX, PROJECTION_MATRIX[3][3], CAMERA_POSITION_WORLD);
+}
+
+vec3 hs_overlay(vec3 b, vec3 s) {
+	return mix(2.0 * b * s, 1.0 - 2.0 * (1.0 - b) * (1.0 - s), step(vec3(0.5), b));
+}
+
+vec3 hs_screen(vec3 b, vec3 s) {
+	return vec3(1.0) - (vec3(1.0) - b) * (vec3(1.0) - s);
 }
 
 void fragment() {
-	vec3 rgb = fallback_rgb;
+	vec4 texel = vec4(fallback_rgb, 1.0);
 	if (has_tex > 0.5) {
-		rgb = texture(tex_albedo, UV).rgb;
+		texel = texture(tex_albedo, UV);
 	}
-	rgb *= modulate.rgb * exposure_comp;
-	// Pure emission screen — no lit albedo (default white) contribution.
+	vec3 rgb = texel.rgb * modulate.rgb * exposure_comp;
+	float src_a = clamp(texel.a * modulate.a, 0.0, 1.0);
 	ALBEDO = vec3(0.0);
 	ROUGHNESS = 1.0;
 	METALLIC = 0.0;
 	SPECULAR = 0.0;
-	EMISSION = rgb;
+	if (blend_mode <= 0) {
+		EMISSION = rgb;
+	} else {
+		vec3 dst = textureLod(screen_texture, SCREEN_UV, 0.0).rgb;
+		vec3 outc = rgb;
+		if (blend_mode == 1) {
+			outc = dst * rgb;
+		} else if (blend_mode == 2) {
+			outc = hs_overlay(dst, rgb);
+		} else if (blend_mode == 3) {
+			outc = hs_screen(dst, rgb);
+		} else if (blend_mode == 4) {
+			outc = dst + rgb;
+		} else if (blend_mode == 5) {
+			outc = dst - rgb;
+		} else {
+			// Premultiplied / alpha over (straight src * a).
+			outc = rgb * src_a + dst * (1.0 - src_a);
+		}
+		EMISSION = outc;
+		ALPHA = 1.0;
+	}
 	np_apply_debug_albedo(ALBEDO, EMISSION, np_t);
 }

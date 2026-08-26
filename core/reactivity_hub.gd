@@ -40,11 +40,9 @@ static func enabled() -> bool:
 		return true
 	if bool(n.get("affect_light")) or bool(n.get("affect_emission")):
 		return true
-	if bool(n.get("affect_camera_rotation")):
+	if nonlinear_enabled():
 		return true
-	var raw: Variant = n.get("camera_preset")
-	var preset := "Off" if raw == null else str(raw)
-	return not preset.is_empty() and preset != "Off"
+	return camera_motion_enabled()
 
 
 static func affect_scale() -> bool:
@@ -70,6 +68,20 @@ static func affect_rotation() -> bool:
 static func affect_noise() -> bool:
 	var n := node()
 	return bool(n.get("affect_noise")) if n else false
+
+
+static func camera_motion_enabled() -> bool:
+	var raw: Variant = get_field("camera_preset", "Off")
+	var preset := "Off" if raw == null else str(raw)
+	return not preset.is_empty() and preset != "Off"
+
+
+static func nonlinear_enabled() -> bool:
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree == null or tree.root == null:
+		return false
+	var np := tree.root.get_node_or_null("NonlinearProjection")
+	return np != null and bool(np.get("enabled"))
 
 
 static func scale_amount() -> float:
@@ -335,14 +347,6 @@ static func noise_applies_to(layer_id: String) -> bool:
 
 
 static func rotation_applies_to(layer_id: String) -> bool:
-	# Camera can be driven from Camera motion nested toggle and/or Rotation target.
-	if layer_id == "camera":
-		var cam_rot := bool(get_field("affect_camera_rotation", false))
-		if cam_rot:
-			return true
-		if not affect_rotation():
-			return false
-		return rotation_targets_include("camera")
 	if not affect_rotation():
 		return false
 	return rotation_targets_include(layer_id)
@@ -390,7 +394,7 @@ static func schedule_enabled(property: String) -> bool:
 static func source_for(property: String) -> String:
 	match property:
 		"scale":
-			return str(get_field("scale_source", "bass"))
+			return str(get_field("scale_source", "off"))
 		"emission":
 			return str(get_field("emission_source", "mids"))
 		"rotation":
@@ -455,10 +459,14 @@ static func property_active(property: String) -> bool:
 		"emission":
 			return affect_emission()
 		"rotation":
-			return affect_rotation() or bool(get_field("affect_camera_rotation", false))
+			return affect_rotation()
 		"light":
 			return affect_light()
 		"noise":
 			return affect_noise()
+		"camera":
+			return camera_motion_enabled()
+		"bend":
+			return nonlinear_enabled()
 		_:
 			return false

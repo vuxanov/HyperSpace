@@ -16,6 +16,7 @@ const FALLBACK_CHARCOAL := Color(0.08, 0.08, 0.1)
 const FALLBACK_ERROR := Color(0.42, 0.08, 0.1)
 ## Soft cap GIF frame rate when source delays are tiny.
 const GIF_MIN_FRAME_DUR := 0.04
+const BLEND_NAMES := ["Normal", "Multiply", "Overlay", "Screen", "Add", "Subtract", "Premultiplied"]
 
 const _MEDIA_SHADER: Shader = preload("res://effects/media_screen.gdshader")
 const _VideoPool = preload("res://core/media_video_pool.gd")
@@ -60,6 +61,7 @@ func setup(path: String, opts: Dictionary = {}) -> void:
 	_billboard = bool(opts.get("billboard", false))
 	var height := float(opts.get("height", DEFAULT_HEIGHT))
 	_ensure_mesh(height, _billboard)
+	set_blend_mode(opts.get("blend_mode", "Normal"))
 	_show_fallback(false)
 	_release_video()
 	_gif_frames.clear()
@@ -123,6 +125,53 @@ func get_shared_material() -> Material:
 	return _mat
 
 
+static func normalize_blend(raw: Variant) -> String:
+	var n := str(raw).strip_edges()
+	if n.is_empty():
+		return "Normal"
+	for name in BLEND_NAMES:
+		if name.to_lower() == n.to_lower():
+			return name
+	match n.to_lower():
+		"mix", "alpha":
+			return "Normal"
+		"additive", "add":
+			return "Add"
+		"mul", "modulate":
+			return "Multiply"
+		"sub":
+			return "Subtract"
+		"premul", "premultiplied alpha", "premultiply":
+			return "Premultiplied"
+		_:
+			return "Normal"
+
+
+static func blend_index(raw: Variant) -> int:
+	var n := normalize_blend(raw)
+	var i := BLEND_NAMES.find(n)
+	return i if i >= 0 else 0
+
+
+func set_blend_mode(raw: Variant) -> void:
+	if _mat == null:
+		return
+	_mat.set_shader_parameter("blend_mode", blend_index(raw))
+
+
+static func apply_blend_on_root(root: Node, raw: Variant) -> void:
+	if root == null or not is_instance_valid(root):
+		return
+	if root is FlythroughMediaProp:
+		(root as FlythroughMediaProp).set_blend_mode(raw)
+	elif root is GeometryInstance3D:
+		var gi := root as GeometryInstance3D
+		if bool(gi.get_meta("media_screen", false)) and gi.material_override is ShaderMaterial:
+			(gi.material_override as ShaderMaterial).set_shader_parameter("blend_mode", blend_index(raw))
+	for child in root.get_children():
+		apply_blend_on_root(child, raw)
+
+
 func get_quad_mesh() -> Mesh:
 	if _mesh_inst:
 		return _mesh_inst.mesh
@@ -156,6 +205,7 @@ func _ensure_mesh(height: float, billboard: bool) -> void:
 	_mat.set_shader_parameter("tex_albedo", null)
 	_mat.set_shader_parameter("deform_amount", 0.0)
 	_mat.set_shader_parameter("cloth_amount", 0.0)
+	_mat.set_shader_parameter("blend_mode", 0)
 	_mat.render_priority = 16
 	var plane := _make_grid_mesh(Vector2(height * (16.0 / 9.0), height))
 	_mesh_inst = MeshInstance3D.new()
