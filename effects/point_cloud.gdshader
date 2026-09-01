@@ -85,7 +85,8 @@ void vertex() {
 		vec3 axis_disp = vec3(nx, ny, nz) * noise_axes;
 		float along_n = fbm(sample_p + vec3(8.0, 1.0, 5.0));
 		float axis_w = max(length(noise_axes), 0.001);
-		vtx += (nrm * along_n * 0.7 * (axis_w / 1.732) + axis_disp * 0.95) * noise_amount;
+		// Keep point clouds in step with the mesh deformation response.
+		vtx += (nrm * along_n * 0.7 * (axis_w / 1.732) + axis_disp * 0.95) * noise_amount * 0.12;
 	}
 	if (cloth_amount > 0.0005) {
 		vec3 world = inst_world;

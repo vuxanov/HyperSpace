@@ -86,7 +86,8 @@ void vertex() {
 		if (length(nrm) < 0.01) {
 			nrm = vec3(0.0, 1.0, 0.0);
 		}
-		vtx += (nrm * along_n * 0.7 * (axis_w / 1.732) + axis_disp * 0.95) * noise_amount;
+		// The UI value remains open-ended, but its everyday range is intentionally gentle.
+		vtx += (nrm * along_n * 0.7 * (axis_w / 1.732) + axis_disp * 0.95) * noise_amount * 0.12;
 	}
 	if (cloth_amount > 0.0005) {
 		// Cloth is hang + wind + flutter — not fbm noise. Pin high local Y.

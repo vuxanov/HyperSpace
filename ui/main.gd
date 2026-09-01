@@ -1,13 +1,14 @@
 extends Control
 
-## Control surface: assets | preview | effects.
-## Pop Out Stage undocks the live SubViewport into a real OS window (second monitor).
+## Control surface: assets | preview | effects. Runtime refresh marker 2.
+## Present mode undocks the live SubViewport into a real OS window (second monitor).
 
 @onready var playlist_sidebar: PanelContainer = $Root/PlaylistSidebar
 @onready var effects_sidebar: PanelContainer = $Root/EffectsSidebar
 @onready var output_pane: PanelContainer = $Root/OutputPane
 @onready var output_column: VBoxContainer = $Root/OutputPane/OutputColumn
 @onready var present_button: Button = $Root/OutputPane/OutputColumn/OutputHeader/PresentButton
+@onready var fps_label: Label = $Root/OutputPane/OutputColumn/OutputHeader/FpsLabel
 @onready var output_title: Label = $Root/OutputPane/OutputColumn/OutputHeader/OutputTitle
 @onready var output_viewport_container: SubViewportContainer = $Root/OutputPane/OutputColumn/OutputViewportContainer
 @onready var output_viewport: SubViewport = $Root/OutputPane/OutputColumn/OutputViewportContainer/OutputViewport
@@ -17,8 +18,17 @@ extends Control
 var _stage_window: Window
 var _undock_placeholder: Control
 var _stage_undocked: bool = false
+## A screen-sized borderless pop-out avoids Godot's gray exclusive-fullscreen path.
+var _stage_fullscreen_active: bool = false
+var _stage_windowed_position := Vector2i.ZERO
+var _stage_windowed_size := Vector2i(1280, 720)
+var _stage_fullscreen_screen: int = 0
+## Fullscreen stays visually clean. This bar is revealed only through the invisible top-edge hotspot.
+var _stage_fullscreen_bar: PanelContainer
+var _stage_fullscreen_hotspot: Control
 ## Edge-trigger latch for joypad playlist buttons (device_id:button -> held).
 var _joy_held: Dictionary = {}
+var _fps_refresh_elapsed := 0.0
 
 
 func _ready() -> void:
@@ -134,7 +144,7 @@ func _apply_session_sidebar_params(data: Dictionary) -> void:
 		item.params["environment"] = env_cfg
 		ShowDirector.set_active_cue_param("env_scale", scale_val)
 	if sb.has("scatter_global_scale") and (sb["scatter_global_scale"] is float or sb["scatter_global_scale"] is int):
-		var gscale := clampf(float(sb["scatter_global_scale"]), 0.01, 100.0)
+		var gscale := clampf(float(sb["scatter_global_scale"]), 0.01, 10000.0)
 		var sc_cfg: Dictionary = (item.params.get("scatter", {}) as Dictionary).duplicate(true)
 		sc_cfg["global_scale"] = gscale
 		item.params["scatter"] = sc_cfg
@@ -174,7 +184,7 @@ func _undock_stage_window() -> void:
 	get_tree().root.gui_embed_subwindows = false
 
 	_stage_window = Window.new()
-	_stage_window.title = "HyperSpace — Stage"
+	_stage_window.title = "HyperSpace — Present"
 	_stage_window.exclusive = false
 	_stage_window.transient = false
 	_stage_window.always_on_top = false
@@ -215,12 +225,13 @@ func _undock_stage_window() -> void:
 
 	_stage_window.close_requested.connect(_dock_stage_window)
 	_stage_window.window_input.connect(_on_stage_window_input)
+	_setup_stage_fullscreen_hover()
 	_stage_window.visible = true
 	_stage_window.grab_focus()
 	_stage_undocked = true
-	present_button.text = "Dock Stage"
+	present_button.text = "Exit Present"
 	if output_title:
-		output_title.text = "  Stage undocked — drag the Stage window to your projector / 2nd monitor"
+		output_title.text = "  Present mode  —  F11 fullscreen, Esc exits fullscreen / Present"
 
 
 func _dock_stage_window() -> void:
@@ -229,9 +240,10 @@ func _dock_stage_window() -> void:
 	var win := _stage_window
 	_stage_window = null
 	_stage_undocked = false
-	present_button.text = "Pop Out Stage"
+	_stage_fullscreen_active = false
+	present_button.text = "Present"
 	if output_title:
-		output_title.text = "  Preview  —  Pop Out Stage = detach live scene window (Esc/F11 docks)"
+		output_title.text = "  Preview  —  Present opens a live scene window (F11 fullscreen, Esc exits)"
 
 	# Bring the live viewport back before freeing the window.
 	if is_instance_valid(output_viewport_container):
@@ -261,6 +273,8 @@ func _dock_stage_window() -> void:
 			win.close_requested.disconnect(_dock_stage_window)
 		win.hide()
 		win.queue_free()
+	_stage_fullscreen_bar = null
+	_stage_fullscreen_hotspot = null
 
 	var main_win := get_window()
 	if main_win:
@@ -279,15 +293,15 @@ func _show_undock_placeholder() -> void:
 	var col := VBoxContainer.new()
 	col.alignment = BoxContainer.ALIGNMENT_CENTER
 	var title := Label.new()
-	title.text = "Stage window is popped out"
+	title.text = "Present mode is active"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	var hint := Label.new()
-	hint.text = "Drag HyperSpace — Stage onto your second monitor.\nPlaylists (left) and effects (right) stay here."
+	hint.text = "Move HyperSpace — Present onto your second monitor.\nPlaylists (left) and effects (right) stay here."
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint.custom_minimum_size = Vector2(320, 0)
 	var dock_btn := Button.new()
-	dock_btn.text = "Dock Stage"
+	dock_btn.text = "Exit Present"
 	dock_btn.pressed.connect(_dock_stage_window)
 	col.add_child(title)
 	col.add_child(hint)
@@ -307,17 +321,170 @@ func _hide_undock_placeholder() -> void:
 
 
 func _on_stage_window_input(event: InputEvent) -> void:
-	## Stage window has OS focus — Escape / F11 must dock from here.
+	## Stage window has OS focus. Escape first leaves fullscreen, then docks on a second press.
 	if event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_ESCAPE or event.keycode == KEY_F11:
+		if event.keycode == KEY_ESCAPE:
 			if _stage_window != null:
 				_stage_window.set_input_as_handled()
-			_dock_stage_window()
+			if _stage_is_fullscreen():
+				_exit_stage_fullscreen()
+			else:
+				_dock_stage_window()
+		elif event.keycode == KEY_F11:
+			if _stage_window != null:
+				_stage_window.set_input_as_handled()
+				_toggle_stage_fullscreen()
 
 
-func _process(_delta: float) -> void:
+func _toggle_stage_fullscreen() -> void:
+	if _stage_window == null or not is_instance_valid(_stage_window):
+		return
+	if _stage_is_fullscreen():
+		_exit_stage_fullscreen()
+	else:
+		# Exclusive fullscreen removes all Windows chrome. Keep it completely clean:
+		# no title bar; the separate top-edge hotspot reveals controls only on hover.
+		_set_stage_fullscreen_window_mode()
+		_set_stage_fullscreen_bar_visible(false)
+
+
+func _stage_is_fullscreen() -> bool:
+	return _stage_fullscreen_active and _stage_window != null and is_instance_valid(_stage_window)
+
+
+func _exit_stage_fullscreen() -> void:
+	if _stage_window == null or not is_instance_valid(_stage_window):
+		return
+	_stage_fullscreen_active = false
+	_recreate_stage_window(false, _stage_windowed_position, _stage_windowed_size)
+
+
+func _set_stage_fullscreen_window_mode() -> void:
+	if _stage_window == null or not is_instance_valid(_stage_window):
+		return
+	# Changing borderless on an existing Windows child window can leave its caption buttons
+	# attached. Recreate the HWND with borderless already set before the window is visible.
+	# This also avoids the gray exclusive-fullscreen path for the live SubViewport.
+	_stage_windowed_position = _stage_window.position
+	_stage_windowed_size = _stage_window.size
+	var screen_idx := _stage_window.current_screen
+	if screen_idx < 0 or screen_idx >= DisplayServer.get_screen_count():
+		screen_idx = 0
+	_stage_fullscreen_screen = screen_idx
+	var screen_pos := DisplayServer.screen_get_position(screen_idx)
+	var screen_size := DisplayServer.screen_get_size(screen_idx)
+	_stage_fullscreen_active = true
+	_recreate_stage_window(true, screen_pos, screen_size)
+	_set_stage_fullscreen_bar_visible(false)
+
+
+func _recreate_stage_window(borderless: bool, position: Vector2i, size: Vector2i) -> void:
+	if _stage_window == null or not is_instance_valid(_stage_window):
+		return
+	var previous := _stage_window
+	var replacement := Window.new()
+	replacement.title = "HyperSpace — Present"
+	replacement.exclusive = false
+	replacement.transient = false
+	replacement.always_on_top = false
+	replacement.unresizable = borderless
+	replacement.borderless = borderless # Must be set before add_child/visible on Windows.
+	replacement.min_size = Vector2i(640, 360)
+	replacement.mode = Window.MODE_WINDOWED
+	replacement.position = position
+	replacement.size = size
+	get_tree().root.add_child(replacement)
+
+	# Move the one live SubViewport; never mirror it through a TextureRect.
+	output_viewport_container.reparent(replacement)
+	output_viewport_container.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	output_viewport_container.offset_left = 0.0
+	output_viewport_container.offset_top = 0.0
+	output_viewport_container.offset_right = 0.0
+	output_viewport_container.offset_bottom = 0.0
+	output_viewport_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	output_viewport_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	replacement.close_requested.connect(_dock_stage_window)
+	replacement.window_input.connect(_on_stage_window_input)
+	_stage_window = replacement
+	_stage_fullscreen_bar = null
+	_stage_fullscreen_hotspot = null
+	_setup_stage_fullscreen_hover()
+	replacement.visible = true
+	replacement.grab_focus()
+
+	if previous.window_input.is_connected(_on_stage_window_input):
+		previous.window_input.disconnect(_on_stage_window_input)
+	if previous.close_requested.is_connected(_dock_stage_window):
+		previous.close_requested.disconnect(_dock_stage_window)
+	previous.hide()
+	previous.queue_free()
+
+
+func _setup_stage_fullscreen_hover() -> void:
+	if _stage_window == null or not is_instance_valid(_stage_window):
+		return
+	_stage_fullscreen_hotspot = Control.new()
+	_stage_fullscreen_hotspot.name = "FullscreenHoverHotspot"
+	_stage_fullscreen_hotspot.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	_stage_fullscreen_hotspot.offset_bottom = 4.0
+	_stage_fullscreen_hotspot.mouse_filter = Control.MOUSE_FILTER_STOP
+	_stage_fullscreen_hotspot.mouse_entered.connect(func() -> void:
+		_set_stage_fullscreen_bar_visible(true)
+	)
+	_stage_window.add_child(_stage_fullscreen_hotspot)
+
+	_stage_fullscreen_bar = PanelContainer.new()
+	_stage_fullscreen_bar.name = "FullscreenRevealBar"
+	_stage_fullscreen_bar.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	_stage_fullscreen_bar.offset_bottom = 42.0
+	_stage_fullscreen_bar.mouse_filter = Control.MOUSE_FILTER_STOP
+	_stage_fullscreen_bar.visible = false
+	_stage_fullscreen_bar.mouse_exited.connect(func() -> void:
+		_set_stage_fullscreen_bar_visible(false)
+	)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	_stage_fullscreen_bar.add_child(row)
+	var title := Label.new()
+	title.text = "  HyperSpace Present"
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(title)
+	var minimize := Button.new()
+	minimize.text = "—"
+	minimize.tooltip_text = "Minimize Present"
+	minimize.pressed.connect(func() -> void:
+		if _stage_window != null and is_instance_valid(_stage_window):
+			_stage_window.mode = Window.MODE_MINIMIZED
+	)
+	row.add_child(minimize)
+	var restore := Button.new()
+	restore.text = "▢"
+	restore.tooltip_text = "Exit fullscreen (Esc)"
+	restore.pressed.connect(_exit_stage_fullscreen)
+	row.add_child(restore)
+	var close := Button.new()
+	close.text = "×"
+	close.tooltip_text = "Exit Present"
+	close.pressed.connect(_dock_stage_window)
+	row.add_child(close)
+	_stage_window.add_child(_stage_fullscreen_bar)
+
+
+func _set_stage_fullscreen_bar_visible(on: bool) -> void:
+	if _stage_fullscreen_bar == null or not is_instance_valid(_stage_fullscreen_bar):
+		return
+	_stage_fullscreen_bar.visible = on and _stage_is_fullscreen()
+
+
+func _process(delta: float) -> void:
 	## Joypad edge poll so layer switching works even when Stage has OS focus.
 	_poll_joypad_playlist_edges()
+	_fps_refresh_elapsed += delta
+	if _fps_refresh_elapsed >= 0.25:
+		_fps_refresh_elapsed = 0.0
+		if fps_label:
+			fps_label.text = "%d FPS" % int(round(Engine.get_frames_per_second()))
 
 
 func _poll_joypad_playlist_edges() -> void:
@@ -362,11 +529,17 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		match event.keycode:
 			KEY_F11:
-				toggle_stage_undock()
+				if _stage_undocked:
+					_toggle_stage_fullscreen()
+				else:
+					_undock_stage_window()
 				get_viewport().set_input_as_handled()
 			KEY_ESCAPE:
 				if _stage_undocked:
-					_dock_stage_window()
+					if _stage_is_fullscreen():
+						_exit_stage_fullscreen()
+					else:
+						_dock_stage_window()
 					get_viewport().set_input_as_handled()
 			KEY_RIGHT:
 				if playlist_sidebar.has_method("step_next"):

@@ -393,14 +393,9 @@ static func environment_chooser_entries() -> Array[Dictionary]:
 		"config": {"source": "primitive:box_corridor"},
 	})
 	entries.append({
-		"id": "hills",
-		"label": "HTerrain hills",
-		"config": {"source": "primitive:hterrain_hills"},
-	})
-	entries.append({
-		"id": "mountains",
-		"label": "HTerrain mountains",
-		"config": {"source": "primitive:hterrain_mountains"},
+		"id": "flat_plane",
+		"label": "Flat plane (debug)",
+		"config": {"source": "primitive:flat_plane"},
 	})
 	return entries
 

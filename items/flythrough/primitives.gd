@@ -19,12 +19,11 @@ static func spawn_environment(kind: String, parent: Node3D) -> void:
 	match kind:
 		"flat_plane", "primitive:flat_plane":
 			_spawn_flat_plane(parent)
-		"hterrain_hills", "primitive:hterrain_hills", "hills":
-			FlythroughHTerrainBuilder.spawn(parent, "hills")
-		"hterrain_mountains", "primitive:hterrain_mountains", "mountains":
-			FlythroughHTerrainBuilder.spawn(parent, "mountains")
+		# Former HTerrain presets — fall back to flat plane (addon removed).
+		"hterrain_hills", "primitive:hterrain_hills", "hills", \
+		"hterrain_mountains", "primitive:hterrain_mountains", "mountains", \
 		"hterrain_canyon", "primitive:hterrain_canyon", "canyon":
-			FlythroughHTerrainBuilder.spawn(parent, "canyon")
+			_spawn_flat_plane(parent)
 		"box_corridor", "primitive:box_corridor", _:
 			_spawn_box_corridor(parent)
 

@@ -13,8 +13,10 @@ const WAVE_LABELS: PackedStringArray = ["Sine", "Triangle", "Saw", "Square"]
 const TYPE_LFO := "lfo"
 const TYPE_NOISE := "noise"
 const TYPE_RANDOM := "random"
+const DRIVER_MIN := 0.0
+const DRIVER_MAX := 100.0
 
-## Shown in the Drivers tab Built-in section (name, one-line hint). Picker uses the same ids.
+## Shown in the Drivers tab Sources section (name, one-line hint).
 const BUILTIN_HINTS: Array = [
 	["time", "Seconds since session start"],
 	["volume", "Gated overall loudness (0 when silent)"],
@@ -25,11 +27,11 @@ const BUILTIN_HINTS: Array = [
 	["highs", "Hats / cymbals / air (~3–20 kHz)"],
 	["kick", "Kick gate: 1 on a 40–130 Hz hit, 0 otherwise"],
 	["beat", "1 on a hit (kick, clap, snare, plosive), else 0"],
-	["lfo1", "Default LFO — oscillates around 1 (tweak rate/depth/wave below)"],
-	["lfo2", "Second default LFO — oscillates around 1"],
-	["noise", "Smoothed noise around 1 (0–2)"],
-	["rand", "Sample-and-hold random around 1 (default 0–2)"],
-	["band0", "EQ bin 0; type band1 … band15 for the rest"],
+]
+
+const BUILTIN_GROUPS: Array = [
+	["Audio sources", ["volume", "energy", "peak", "bass", "mids", "highs", "kick", "beat"]],
+	["Utility", ["time"]],
 ]
 
 var _time: float = 0.0
@@ -83,10 +85,14 @@ func _ensure_defaults() -> void:
 		_defs["lfo1"] = _make_lfo("lfo1", 0.45, 1.0, "sine", true)
 	if not _defs.has("lfo2"):
 		_defs["lfo2"] = _make_lfo("lfo2", 0.85, 1.0, "triangle", true)
+	if not _defs.has("lfo_slow"):
+		_defs["lfo_slow"] = _make_lfo("lfo_slow", 0.08, 1.0, "sine", true)
+	if not _defs.has("lfo_drift"):
+		_defs["lfo_drift"] = _make_lfo("lfo_drift", 0.02, 0.7, "triangle", true)
 	if not _defs.has("noise"):
 		_defs["noise"] = _make_noise("noise", 1.0, 0.65, true)
 	if not _defs.has("rand"):
-		_defs["rand"] = _make_random("rand", 2.0, 0.0, 2.0, true)
+		_defs["rand"] = _make_random("rand", 2.0, DRIVER_MIN, DRIVER_MAX, true)
 	for name in _defs.keys():
 		if not _phase.has(name):
 			_phase[name] = _rng.randf()
@@ -97,8 +103,8 @@ func _make_lfo(id: String, rate: float, depth: float, wave: String, builtin: boo
 		"id": id,
 		"type": TYPE_LFO,
 		"builtin": builtin,
-		"rate": clampf(rate, 0.05, 16.0),
-		"depth": clampf(depth, 0.0, 1.5),
+		"rate": clampf(rate, 0.005, 16.0),
+		"depth": clampf(depth, 0.0, 1.0),
 		"wave": _norm_wave(wave),
 	}
 
@@ -119,8 +125,8 @@ func _make_random(id: String, rate: float, lo: float, hi: float, builtin: bool) 
 		"type": TYPE_RANDOM,
 		"builtin": builtin,
 		"rate": clampf(rate, 0.05, 16.0),
-		"min": lo,
-		"max": hi,
+		"min": clampf(lo, DRIVER_MIN, DRIVER_MAX),
+		"max": clampf(hi, DRIVER_MIN, DRIVER_MAX),
 	}
 
 
@@ -237,14 +243,14 @@ func _tick_generated(delta: float) -> void:
 		var typ := str(def.get("type", TYPE_LFO))
 		match typ:
 			TYPE_LFO:
-				var rate := maxf(float(def.get("rate", 0.45)), 0.05)
+				var rate := maxf(float(def.get("rate", 0.45)), 0.005)
 				var ph := float(_phase.get(name, 0.0))
 				ph = fposmod(ph + delta * rate, 1.0)
 				_phase[name] = ph
 				var w := _wave01(ph, str(def.get("wave", "sine")))
-				var d := clampf(float(def.get("depth", 1.0)), 0.0, 1.5)
-				## Mean 1 at rest; depth 1 sweeps 0..2. Multiply-friendly (scale * lfo1 stays near scale).
-				_values[name] = 1.0 + (w - 0.5) * 2.0 * d
+				var d := clampf(float(def.get("depth", 1.0)), 0.0, 1.0)
+				## All generated drivers share a 0–100 output scale. Speed changes movement, not range.
+				_values[name] = clampf(50.0 + (w - 0.5) * 100.0 * d, DRIVER_MIN, DRIVER_MAX)
 			TYPE_NOISE:
 				var speed := maxf(float(def.get("speed", 1.0)), 0.05)
 				var smooth := clampf(float(def.get("smoothness", 0.6)), 0.0, 1.0)
@@ -253,13 +259,13 @@ func _tick_generated(delta: float) -> void:
 				var follow := clampf(1.0 - smooth, 0.02, 1.0) * clampf(speed * delta * 4.0, 0.0, 1.0)
 				hold = lerpf(hold, target, follow)
 				_noise_hold[name] = hold
-				_values[name] = clampf(hold, 0.0, 1.0) * 2.0
+				_values[name] = clampf(hold, 0.0, 1.0) * DRIVER_MAX
 			TYPE_RANDOM:
 				var rate_r := maxf(float(def.get("rate", 2.0)), 0.05)
 				var timer := float(_rand_timer.get(name, 0.0)) + delta
 				var interval := 1.0 / rate_r
-				var lo := float(def.get("min", 0.0))
-				var hi := float(def.get("max", 2.0))
+				var lo := clampf(float(def.get("min", DRIVER_MIN)), DRIVER_MIN, DRIVER_MAX)
+				var hi := clampf(float(def.get("max", DRIVER_MAX)), DRIVER_MIN, DRIVER_MAX)
 				if hi < lo:
 					var tmp := lo
 					lo = hi
@@ -329,13 +335,13 @@ func eval_clamped(raw: Variant, lo: float, hi: float, fallback: float = 0.0) -> 
 
 func list_defs() -> Array:
 	var out: Array = []
-	for name in ["lfo1", "lfo2", "noise", "rand"]:
+	for name in ["lfo1", "lfo2", "lfo_slow", "lfo_drift", "noise", "rand"]:
 		if _defs.has(name):
 			out.append((_defs[name] as Dictionary).duplicate(true))
 	var extras: Array = []
 	for name_any in _defs.keys():
 		var name := str(name_any)
-		if name in ["lfo1", "lfo2", "noise", "rand"]:
+		if name in ["lfo1", "lfo2", "lfo_slow", "lfo_drift", "noise", "rand"]:
 			continue
 		extras.append(name)
 	extras.sort()
@@ -349,13 +355,13 @@ func picker_names() -> PackedStringArray:
 	for row in [
 		"time", "volume", "energy", "peak", "bass",
 		"mids", "highs", "kick", "beat",
-		"lfo1", "lfo2", "noise", "rand", "band0",
+		"lfo1", "lfo2", "lfo_slow", "lfo_drift", "noise", "rand",
 	]:
 		names.append(row)
 	var extras: Array = []
 	for name_any in _defs.keys():
 		var name := str(name_any)
-		if name in ["lfo1", "lfo2", "noise", "rand"]:
+		if name in ["lfo1", "lfo2", "lfo_slow", "lfo_drift", "noise", "rand"]:
 			continue
 		extras.append(name)
 	extras.sort()
@@ -413,8 +419,8 @@ func add_driver(def: Dictionary) -> String:
 			made = _make_random(
 				id,
 				float(def.get("rate", 2.0)),
-				float(def.get("min", 0.0)),
-				float(def.get("max", 2.0)),
+				float(def.get("min", DRIVER_MIN)),
+				float(def.get("max", DRIVER_MAX)),
 				false
 			)
 		_:
@@ -444,13 +450,17 @@ func update_driver(name: String, patch: Dictionary) -> void:
 	if def.has("wave"):
 		def["wave"] = _norm_wave(str(def["wave"]))
 	if def.has("rate"):
-		def["rate"] = clampf(float(def["rate"]), 0.05, 16.0)
+		def["rate"] = clampf(float(def["rate"]), 0.005, 16.0)
 	if def.has("depth"):
-		def["depth"] = clampf(float(def["depth"]), 0.0, 1.5)
+		def["depth"] = clampf(float(def["depth"]), 0.0, 1.0)
 	if def.has("speed"):
 		def["speed"] = clampf(float(def["speed"]), 0.05, 16.0)
 	if def.has("smoothness"):
 		def["smoothness"] = clampf(float(def["smoothness"]), 0.0, 1.0)
+	if def.has("min"):
+		def["min"] = clampf(float(def["min"]), DRIVER_MIN, DRIVER_MAX)
+	if def.has("max"):
+		def["max"] = clampf(float(def["max"]), DRIVER_MIN, DRIVER_MAX)
 	_defs[id] = def
 
 
@@ -497,7 +507,7 @@ func deserialize(data: Dictionary) -> void:
 			var name := str(name_any)
 			if not _defs.has(name):
 				continue
-			update_driver(name, tweaks[name] as Dictionary)
+			update_driver(name, _normalize_loaded_driver(tweaks[name] as Dictionary))
 	var custom: Variant = data.get("custom", [])
 	if custom is Array:
 		for item in custom:
@@ -508,6 +518,25 @@ func deserialize(data: Dictionary) -> void:
 				if _reserved.has(id) or _defs.has(id):
 					id = unique_name(id)
 				d["id"] = id
-				_defs[id] = d
+				_defs[id] = _normalize_loaded_driver(d)
 				_phase[id] = _rng.randf()
 	drivers_changed.emit()
+
+
+func _normalize_loaded_driver(raw: Dictionary) -> Dictionary:
+	## Sessions before normalized drivers stored random in a tiny -2..2 / 0..2 range.
+	## Give those legacy definitions the new full 0–100 output range on load.
+	var d := raw.duplicate(true)
+	var typ := str(d.get("type", TYPE_LFO))
+	if typ == TYPE_LFO:
+		d["depth"] = clampf(float(d.get("depth", 1.0)), 0.0, 1.0)
+	elif typ == TYPE_RANDOM:
+		var lo := float(d.get("min", DRIVER_MIN))
+		var hi := float(d.get("max", DRIVER_MAX))
+		if lo >= -2.0 and hi <= 2.0:
+			d["min"] = DRIVER_MIN
+			d["max"] = DRIVER_MAX
+		else:
+			d["min"] = clampf(lo, DRIVER_MIN, DRIVER_MAX)
+			d["max"] = clampf(hi, DRIVER_MIN, DRIVER_MAX)
+	return d

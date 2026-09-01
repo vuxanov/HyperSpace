@@ -6,6 +6,7 @@ class_name ModulatorBus
 
 enum Preset {
 	OFF,
+	WALK,
 	PITCH_ROCK,
 	ROLL_BANK,
 	ORBIT_TUMBLE,
@@ -15,6 +16,7 @@ enum Preset {
 
 const PRESET_NAMES := [
 	"Off",
+	"Walk",
 	"Pitch rock",
 	"Roll bank",
 	"Orbit tumble",
@@ -32,12 +34,14 @@ const LEGACY_PRESET_ALIASES := {
 }
 
 var preset: int = Preset.OFF
-var rate: float = 0.35  # Hz-ish
-var depth: float = 0.55  # 0..1
+var rate: float = 0.4  # Hz-ish
+var depth: float = 0.75  # UI amount ÷ 100; may be higher for an amplified walk
 var mod01: float = 0.0  # normalized 0..1 output for property drivers
 var yaw_offset: float = 0.0
 var pitch_offset: float = 0.0
 var roll_offset: float = 0.0
+## Local camera displacement in meters: right, up, then forward/back.
+var position_offset: Vector3 = Vector3.ZERO
 
 var _t: float = 0.0
 var _noise := FastNoiseLite.new()
@@ -65,6 +69,7 @@ func advance(delta: float, kick: float = 0.0) -> void:
 	yaw_offset = 0.0
 	pitch_offset = 0.0
 	roll_offset = 0.0
+	position_offset = Vector3.ZERO
 	# Always produce a usable LFO for effect Drive=LFO, even when camera preset is Off.
 	var lfo_rate := maxf(rate, 0.15)
 	var w := _t * lfo_rate * TAU
@@ -75,6 +80,20 @@ func advance(delta: float, kick: float = 0.0) -> void:
 
 	var d := depth
 	match preset:
+		Preset.WALK:
+			# A gentle, continuous gait: two soft vertical bobs per stride, with
+			# a slower side-to-side weight shift. Both controls have a soft ceiling:
+			# typed/driver values above 100 add presence, never violent motion.
+			var walk_w := _t * clampf(rate, 0.22, 1.35) * TAU
+			var walk_d := signf(d) * 1.8 * (1.0 - exp(-absf(d) * 0.75))
+			var sway := sin(walk_w)
+			var step := sin(walk_w * 2.0)
+			var bob := -cos(walk_w * 2.0)
+			position_offset = Vector3(sway * walk_d * 0.025, bob * walk_d * 0.035, step * walk_d * 0.008)
+			yaw_offset = sway * walk_d * 0.025
+			pitch_offset = step * walk_d * 0.028
+			roll_offset = -sway * walk_d * 0.018
+			mod01 = sin(walk_w) * 0.5 + 0.5
 		Preset.PITCH_ROCK:
 			# Nod on pitch; tiny opposing roll so it feels like a rotate, not a slide.
 			pitch_offset = sin(w) * d * 0.42

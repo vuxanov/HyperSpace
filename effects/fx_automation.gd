@@ -12,12 +12,10 @@ class_name FxAutomation
 ## Phase model: open iff phase < active (exact UI seconds, no 0.99 caps).
 ##
 ## Play All modes:
-## - cycle / audio: independent per-effect Active/Inactive (staggered), schedule
-##   slider is a base hint for those rolls.
-## - random: master `play_all` Active/Inactive mutes ALL play-all FX during
-##   Inactive; during Active, periodically reshuffles which FX are on + params.
-## - evolution: same master mute as random, but the mix starts at two FX and
-##   slowly gains one more until the Play All cap. Already-on FX stay on.
+## - cycle: keep the selected effect stack active.
+## - random: periodically reshuffle which selected effects are on + their params.
+## - evolution: grow the mix from one effect to a small stack, then shrink
+##   back to one and repeat.
 
 signal style_advanced(preset_name: String)
 signal gate_changed(effect_id: String, open: bool)
@@ -28,9 +26,10 @@ const LFO_RATE_DEFAULT := 0.45
 const LFO_DEPTH_DEFAULT := 1.0
 const LFO_WAVE_DEFAULT := "sine"
 const AUDIO_SENS_DEFAULT := 1.0
-const PLAY_ALL_MODES := ["cycle", "random", "audio", "evolution"]
-const EVOLUTION_START_COUNT := 2
-## Grow interval = Active seconds, clamped so Evolution never dumps the full stack.
+const PLAY_ALL_MODES := ["cycle", "random", "evolution"]
+const EVOLUTION_START_COUNT := 1
+const EVOLUTION_MAX_COUNT := 4
+## Change interval = Active seconds, clamped so Evolution never jumps too fast.
 const EVOLUTION_INTERVAL_MIN := 4.0
 const EVOLUTION_INTERVAL_MAX := 16.0
 const EVOLUTION_INTERVAL_ACTIVE_SCALE := 1.0
@@ -62,9 +61,9 @@ var density_random_interval: float = 4.0
 ## effect_id -> gate dict
 var _gates: Dictionary = {}
 
-## Play All master controls (own schedule + mode/speed/audio).
+## Play All controls (mode, cadence, audio response, and current subset).
 var play_all_running: bool = false
-var play_all_mode: String = "cycle"  # cycle | random | audio | evolution
+var play_all_mode: String = "cycle"  # cycle | random | evolution
 var play_all_speed: float = 1.0
 var play_all_audio_reactive: bool = false
 var play_all_audio_energy: float = 0.0
@@ -72,6 +71,7 @@ var _play_all_ids: Array = []
 var _play_all_random_timer: float = 0.0
 var _play_all_evolve_timer: float = 0.0
 var _play_all_evolve_count: int = 0
+var _play_all_evolve_direction: int = 1
 var _evolution_pending_randomize: Array = []
 ## Random/Evolution subset mask: effect_id -> want open while master window is active.
 var _play_all_subset: Dictionary = {}
@@ -255,7 +255,7 @@ func tick(delta: float) -> void:
 		# Wrap exactly on cycle boundaries; reroll jitter windows on each wrap.
 		while phase >= cycle:
 			phase -= cycle
-			# Play All cycle/audio: jitter-reroll so cadences keep drifting apart.
+			# Play All cycle: jitter-reroll so cadences keep drifting apart.
 			if bool(g2.get("jitter", false)) or (play_all_running and not _uses_play_all_subset()):
 				_reroll_gate(g2)
 				active = maxf(0.05, float(g2.get("effective_active", 4.0)))
@@ -295,7 +295,7 @@ func tick(delta: float) -> void:
 			var evo_interval := clampf(evo_active * EVOLUTION_INTERVAL_ACTIVE_SCALE, EVOLUTION_INTERVAL_MIN, EVOLUTION_INTERVAL_MAX)
 			if _play_all_evolve_timer >= evo_interval:
 				_play_all_evolve_timer = 0.0
-				_grow_evolution_subset()
+				_advance_evolution_subset()
 		else:
 			_play_all_evolve_timer = 0.0
 		_play_all_was_open = evo_open
@@ -305,7 +305,7 @@ func configure_play_all(mode: String, speed: float, audio_reactive: bool, active
 	var prev_mode := play_all_mode
 	play_all_mode = mode if mode in PLAY_ALL_MODES else "cycle"
 	play_all_speed = clampf(speed, 0.01, 1.0e6)
-	play_all_audio_reactive = audio_reactive or play_all_mode == "audio"
+	play_all_audio_reactive = audio_reactive
 	set_gate_active_inactive("play_all", active_sec, inactive_sec)
 	# Enable without resetting phase if already running (schedule tweaks keep phase).
 	var g := ensure_gate("play_all")
@@ -337,6 +337,7 @@ func configure_play_all(mode: String, speed: float, audio_reactive: bool, active
 	else:
 		_play_all_subset.clear()
 		_play_all_evolve_count = 0
+		_play_all_evolve_direction = 1
 		_evolution_pending_randomize.clear()
 		for eid in _play_all_ids:
 			var eg2 := ensure_gate(str(eid))
@@ -358,14 +359,41 @@ func set_play_all_audio_energy(energy: float) -> void:
 
 func pick_independent_schedule(base_active: float, base_inactive: float) -> Vector2:
 	## Independent Active/Inactive around the Play All base (never zero / lockstep).
+	## Inactive must always be longer than Active, keeping individual FX sparse.
 	var ba := maxf(2.0, base_active)
 	var bi := maxf(2.0, base_inactive)
-	var a := clampf(ba * randf_range(0.45, 1.85), 2.0, 28.0)
-	var i := clampf(bi * randf_range(0.55, 2.15), 2.0, 36.0)
+	var a := clampf(ba * randf_range(0.5, 1.25), 2.0, 16.0)
+	var i := clampf(maxf(bi * randf_range(1.1, 1.8), a + 1.0), 3.0, 48.0)
 	# Snap toward whole seconds so UI sliders stay readable.
 	a = snappedf(a, 1.0)
 	i = snappedf(i, 1.0)
-	return Vector2(maxf(2.0, a), maxf(2.0, i))
+	return Vector2(maxf(2.0, a), maxf(a + 1.0, i))
+
+
+func apply_play_all_staggered_schedules(base_active: float, base_inactive: float) -> Dictionary:
+	## Cycle mode: every effect owns a schedule. Pairs and opening phases are deliberately
+	## distinct, while low duty cycles keep simultaneous effects rare rather than lockstep.
+	var out: Dictionary = {}
+	var count := _play_all_ids.size()
+	if count <= 0 or _uses_play_all_subset():
+		return out
+	var base_a := clampf(base_active, 1.0, 16.0)
+	var base_i := maxf(clampf(base_inactive, 2.0, 48.0), base_a + 1.0)
+	for index in count:
+		var eid := str(_play_all_ids[index])
+		# Vary both durations by index so no two effects receive the same schedule.
+		var active := maxf(1.0, snappedf(base_a * (0.62 + 0.08 * float(index % 5)), 1.0))
+		var inactive := maxf(active + 1.0, snappedf(base_i + 2.0 + float(index * 2), 1.0))
+		set_gate_active_inactive(eid, active, inactive)
+		var g := ensure_gate(eid)
+		g["jitter"] = false
+		set_gate_enabled(eid, true)
+		# Keep only the first effect open initially. Every other effect begins somewhere
+		# in its inactive span, so their next openings are spread across the cycle.
+		g["phase"] = 0.0 if index == 0 else active + inactive * (float(index) / float(count))
+		_apply_open_state(eid, g, true)
+		out[eid] = Vector2(active, inactive)
+	return out
 
 
 func apply_independent_gate_schedule(effect_id: String, base_active: float, base_inactive: float, stagger: bool = true) -> Vector2:
@@ -398,10 +426,7 @@ func randomize_play_all_schedules(base_active: float, base_inactive: float) -> D
 	set_gate_active_inactive("play_all", a, i)
 	if _uses_play_all_subset():
 		return out
-	for eid_any in _play_all_ids:
-		var eid := str(eid_any)
-		out[eid] = apply_independent_gate_schedule(eid, a, i, true)
-	return out
+	return apply_play_all_staggered_schedules(a, i)
 
 
 func force_random_reshuffle() -> void:
@@ -463,15 +488,7 @@ func enable_play_all(effect_ids: Array, cycle_sec: float = 20.0, active_sec: flo
 			_start_evolution_subset()
 	else:
 		_play_all_subset.clear()
-		for id3 in effect_ids:
-			var eid3 := str(id3)
-			var pair := pick_independent_schedule(a, inactive)
-			set_gate_active_inactive(eid3, pair.x, pair.y)
-			var g3 := ensure_gate(eid3)
-			g3["jitter"] = true
-			set_gate_enabled(eid3, true)
-			# set_gate_enabled resets phase to 0 — stagger after so FX do not open together.
-			stagger_gate_phase(eid3)
+		apply_play_all_staggered_schedules(a, inactive)
 
 
 func disable_play_all() -> void:
@@ -481,6 +498,7 @@ func disable_play_all() -> void:
 	_play_all_random_timer = 0.0
 	_play_all_evolve_timer = 0.0
 	_play_all_evolve_count = 0
+	_play_all_evolve_direction = 1
 	_evolution_pending_randomize.clear()
 	_play_all_was_open = true
 	set_style_active(false)
@@ -525,10 +543,11 @@ func take_evolution_randomize_ids() -> Array:
 
 
 func _start_evolution_subset() -> void:
-	## Begin at two random FX; grow later via _grow_evolution_subset.
+	## Begin at one random FX, then breathe between one and a small stack.
 	_play_all_subset.clear()
 	_evolution_pending_randomize.clear()
 	_play_all_evolve_count = 0
+	_play_all_evolve_direction = 1
 	_play_all_evolve_timer = 0.0
 	if _play_all_ids.is_empty():
 		return
@@ -548,27 +567,34 @@ func _start_evolution_subset() -> void:
 	play_all_randomize_tick.emit()
 
 
-func _grow_evolution_subset() -> void:
-	## Add one unused effect; stay at cap. Randomize only the newly added FX.
+func _advance_evolution_subset() -> void:
+	## Add one effect per step until the small-stack cap, then remove one per step.
 	if _play_all_ids.is_empty():
 		return
-	var cap := _play_all_ids.size()
-	if _play_all_evolve_count >= cap:
+	var cap := mini(EVOLUTION_MAX_COUNT, _play_all_ids.size())
+	if cap <= EVOLUTION_START_COUNT:
 		return
+	if _play_all_evolve_direction > 0 and _play_all_evolve_count >= cap:
+		_play_all_evolve_direction = -1
+	elif _play_all_evolve_direction < 0 and _play_all_evolve_count <= EVOLUTION_START_COUNT:
+		_play_all_evolve_direction = 1
 	var candidates: Array = []
 	for eid_any in _play_all_ids:
 		var eid := str(eid_any)
-		if not bool(_play_all_subset.get(eid, false)):
+		var is_open := bool(_play_all_subset.get(eid, false))
+		if (_play_all_evolve_direction > 0 and not is_open) \
+				or (_play_all_evolve_direction < 0 and is_open):
 			candidates.append(eid)
 	if candidates.is_empty():
-		_play_all_evolve_count = cap
 		return
 	var pick := str(candidates[randi() % candidates.size()])
-	_play_all_subset[pick] = true
-	_play_all_evolve_count += 1
-	_evolution_pending_randomize = [pick]
+	var adding := _play_all_evolve_direction > 0
+	_play_all_subset[pick] = adding
+	_play_all_evolve_count += 1 if adding else -1
+	if adding:
+		_evolution_pending_randomize = [pick]
+		play_all_randomize_tick.emit()
 	gate_changed.emit(pick, is_gate_open(pick))
-	play_all_randomize_tick.emit()
 
 
 func _apply_open_state(effect_id: String, g: Dictionary, emit_on_change: bool) -> void:
@@ -589,4 +615,3 @@ func _reroll_gate(g: Dictionary) -> void:
 	else:
 		g["effective_active"] = base_a
 		g["effective_inactive"] = base_i
-

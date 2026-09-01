@@ -50,7 +50,6 @@ var _center_particles_on: bool = false
 var _env_particles_on: bool = false
 var _scatter_particles_on: bool = false
 var _accent := Color(0.92, 0.93, 0.95)
-var _terrain_meta: Dictionary = {}
 var _rot_accum_center: Vector3 = Vector3.ZERO
 var _rot_accum_scatter: Vector3 = Vector3.ZERO
 var _rot_accum_env: Vector3 = Vector3.ZERO
@@ -188,7 +187,7 @@ func configure_from_params(params: Dictionary) -> void:
 		_layer_configs["environment"] = env_cfg
 	if params.has("scatter_global_scale"):
 		var sc_cfg: Dictionary = (_layer_configs.get("scatter", {}) as Dictionary).duplicate(true)
-		sc_cfg["global_scale"] = clampf(float(params["scatter_global_scale"]), 0.01, 100.0)
+		sc_cfg["global_scale"] = clampf(float(params["scatter_global_scale"]), 0.01, 10000.0)
 		_layer_configs["scatter"] = sc_cfg
 	var user_center_dist := params.has("center_distance")
 	if user_center_dist:
@@ -902,8 +901,9 @@ func _swap_environment_packed(packed: PackedScene, config: Dictionary, key: Stri
 		if child == _env_particles:
 			continue
 		_env_root.remove_child(child)
-		child.free()
-	_terrain_meta = {}
+		# Imported scenes can still be referenced by the render thread this frame.
+		# Defer destruction rather than invalidating their materials immediately.
+		child.queue_free()
 	_env_fit_scale = 1.0
 	_mat_cache.clear()
 	_env_tiles.clear()
@@ -977,7 +977,8 @@ func _swap_centerpiece_packed(packed: PackedScene, key: String, gen: int) -> voi
 		if child == _center_particles:
 			continue
 		_center_root.remove_child(child)
-		child.free()
+		# See environment cleanup above: renderer-safe deferred destruction.
+		child.queue_free()
 	_centerpiece_mesh = null
 	_mat_cache.clear()
 	var instance: Node = packed.instantiate()
@@ -1212,8 +1213,9 @@ func _rebuild_environment() -> void:
 		if child == _env_particles:
 			continue
 		_env_root.remove_child(child)
-		child.free()
-	_terrain_meta = {}
+		# Imported scenes can still be referenced by the render thread this frame.
+		# Defer destruction rather than invalidating their materials immediately.
+		child.queue_free()
 	_env_fit_scale = 1.0
 	_mat_cache.clear()
 	_env_tiles.clear()
@@ -1231,9 +1233,6 @@ func _rebuild_environment() -> void:
 		var node := FlythroughLayerSlot.load_asset_into(_env_root, source, {"role": "environment", "billboard": false})
 		if node:
 			_fit_environment_node(node)
-	elif FlythroughHTerrainBuilder.is_hterrain_kind(source):
-		_terrain_meta = FlythroughHTerrainBuilder.spawn(_env_root, source)
-		_update_framing_from_environment()
 	elif FlythroughLayerSlot.is_primitive_source(source):
 		var kind := FlythroughLayerSlot.normalize_primitive(source)
 		FlythroughPrimitives.spawn_environment(kind, _env_root)
@@ -1301,8 +1300,9 @@ func set_scatter_user_scale(scale_val: float) -> void:
 
 
 func set_scatter_global_scale(scale_val: float) -> void:
-	## Live formation scale: ScatterCluster around the volume-cube center. No asset reload.
-	var next := clampf(scale_val, 0.01, 100.0)
+	## Live formation scale. Enlarged formations follow the active camera so a large
+	## scatter volume remains where the viewer is, rather than expanding offscreen.
+	var next := clampf(scale_val, 0.01, 10000.0)
 	_scatter_global_scale = next
 	var cfg: Dictionary = (_layer_configs.get("scatter", {}) as Dictionary).duplicate(true)
 	cfg["global_scale"] = _scatter_global_scale
@@ -1315,7 +1315,43 @@ func set_scatter_global_scale(scale_val: float) -> void:
 			if i < _scatter_base_scales.size():
 				_scatter_base_scales[i] = _scatter_cluster.scale
 			break
+	if _scatter_global_scale > 1.01:
+		_sync_large_scatter_anchor(0.0)
+	else:
+		# Restore the authored/path-centered placement at the neutral scale.
+		_scatter_cluster.position = _scatter_volume_aabb().get_center()
+		_update_scatter_cluster_base_position()
 	_scatter_cluster.force_update_transform()
+
+
+func _update_scatter_cluster_base_position() -> void:
+	if _scatter_cluster == null or not is_instance_valid(_scatter_cluster):
+		return
+	for i in _scatter_nodes.size():
+		if _scatter_nodes[i] == _scatter_cluster:
+			if i < _scatter_base_positions.size():
+				_scatter_base_positions[i] = _scatter_cluster.position
+			break
+
+
+func _sync_large_scatter_anchor(delta: float) -> void:
+	## Keep large formations around the active camera with a little forward lead.
+	## The smooth follow preserves parallax instead of making the scatter feel glued
+	## to the lens. User scatter offset remains an intentional nudge of the bubble.
+	if _scatter_global_scale <= 1.01 or _scatter_cluster == null or _scatter_root == null \
+		or _camera == null or not is_instance_valid(_scatter_cluster):
+		return
+	var forward := -_camera.global_transform.basis.z
+	forward.y = 0.0
+	if forward.length_squared() < 0.001:
+		forward = Vector3.FORWARD
+	forward = forward.normalized()
+	var lead := 2.5 + minf(log(maxf(_scatter_global_scale, 1.0)) * 0.55, 3.5)
+	var target_global := _camera.global_position + forward * lead + _scatter_user_offset
+	var target_local := _scatter_root.to_local(target_global)
+	var blend := 1.0 if delta <= 0.0 else 1.0 - exp(-2.8 * delta)
+	_scatter_cluster.position = _scatter_cluster.position.lerp(target_local, blend)
+	_update_scatter_cluster_base_position()
 
 
 func _layer_user_scale_from_config(config: Dictionary, fallback: float = 1.0) -> float:
@@ -1412,14 +1448,14 @@ func _clear_env_tiles() -> void:
 		var p := t.get_parent()
 		if p:
 			p.remove_child(t)
-		t.free()
+		t.queue_free()
 	_env_tiles.clear()
 	if _env_root != null:
 		_noise_mesh_lists.erase(_env_root.get_instance_id())
 		for child in _env_root.get_children():
 			if child.has_meta(ENV_TILE_META):
 				_env_root.remove_child(child)
-				child.free()
+				child.queue_free()
 
 
 func _apply_env_tiles() -> void:
@@ -1620,7 +1656,7 @@ func _read_scatter_user_scale() -> float:
 
 func _read_scatter_global_scale() -> float:
 	var cfg: Dictionary = _layer_configs.get("scatter", {})
-	_scatter_global_scale = clampf(float(cfg.get("global_scale", 1.0)), 0.01, 100.0)
+	_scatter_global_scale = clampf(float(cfg.get("global_scale", 1.0)), 0.01, 10000.0)
 	return _scatter_global_scale
 
 
@@ -1688,7 +1724,7 @@ func _fit_aabb_ignoring_user_scale() -> AABB:
 
 func _update_framing_from_environment() -> void:
 	var aabb := _fit_aabb_ignoring_user_scale()
-	if aabb.size.length() < 0.01 and not _terrain_meta.is_empty():
+	if aabb.size.length() < 0.01:
 		return
 	var horiz := maxf(aabb.size.x, aabb.size.z)
 	# Keep hero readable relative to fit size (not user_scale).
@@ -1714,17 +1750,12 @@ func set_path_style(style: String) -> void:
 
 func _path_framing_aabb() -> AABB:
 	## Shared sizing basis for styled paths (ignores user_scale).
-	if not _terrain_meta.is_empty():
-		var aabb := _fit_aabb_ignoring_user_scale()
-		if aabb.size.length() > 0.5:
-			return aabb
-		return FlythroughPathBuilder.fallback_aabb(40.0, 16.0)
 	var config: Dictionary = _layer_configs.get("environment", {})
 	var source := FlythroughLayerSlot.resolve_source_string(config)
 	if FlythroughLayerSlot.is_file_path(source):
 		return _fit_aabb_ignoring_user_scale()
 	var kind := FlythroughLayerSlot.normalize_primitive(source) if FlythroughLayerSlot.is_primitive_source(source) else ""
-	if kind == "flat_plane":
+	if kind == "flat_plane" or kind in ["hills", "mountains", "canyon", "hterrain_hills", "hterrain_mountains", "hterrain_canyon"]:
 		return FlythroughPathBuilder.fallback_aabb(40.0, 10.0)
 	return FlythroughPathBuilder.fallback_aabb(30.0, 8.0)
 
@@ -1743,9 +1774,7 @@ func _rebuild_path_from_environment(reset_progress: bool = true) -> void:
 		_has_path_aabb = true
 		_curve = FlythroughPathBuilder.build_styled(style, aabb, 0.14, min_half)
 		_update_framing_from_environment()
-	elif not _terrain_meta.is_empty():
-		_curve = FlythroughHTerrainBuilder.build_flight_path(_terrain_meta)
-	elif kind == "flat_plane":
+	elif kind == "flat_plane" or kind in ["hills", "mountains", "canyon", "hterrain_hills", "hterrain_mountains", "hterrain_canyon"]:
 		_curve = FlythroughPathBuilder.overland(80.0, 8.0)
 	elif FlythroughLayerSlot.is_file_path(source):
 		var aabb := _fit_aabb_ignoring_user_scale()
@@ -1772,7 +1801,8 @@ func _rebuild_centerpiece() -> void:
 		if child == _center_particles:
 			continue
 		_center_root.remove_child(child)
-		child.free()
+		# See environment cleanup above: renderer-safe deferred destruction.
+		child.queue_free()
 	_centerpiece_mesh = null
 	_mat_cache.clear()
 	var config: Dictionary = _layer_configs.get("centerpiece", {})
@@ -1896,7 +1926,8 @@ func _clear_scatter_visuals() -> void:
 		if child == _scatter_particles:
 			continue
 		_scatter_root.remove_child(child)
-		child.free()
+		# MultiMesh/material RIDs may still be consumed by the current render frame.
+		child.queue_free()
 	_scatter_nodes.clear()
 	_scatter_base_scales.clear()
 	_scatter_base_positions.clear()
@@ -2094,7 +2125,8 @@ func _rebuild_scatter() -> void:
 		var fit_s := FlythroughLayerSlot.fit_node_to_size(inst, 0.85)
 		var drawables := _extract_scatter_drawables(inst, inst)
 		_scatter_root.remove_child(inst)
-		inst.free()
+		# It was visible this frame; queue the temporary imported scene safely.
+		inst.queue_free()
 		if drawables.is_empty():
 			cluster.free()
 			_scatter_particles_on = false
@@ -2257,6 +2289,7 @@ func _process(delta: float) -> void:
 	if _rig:
 		_rig.fly_speed = fly_speed
 		_rig.advance(delta)
+	_sync_large_scatter_anchor(delta)
 	if _camera and _light:
 		_light.global_position = _camera.global_position + Vector3(0, 1.2, 0)
 	_update_centerpiece_transform(delta)
@@ -2572,9 +2605,7 @@ func _apply_environment_rotation(state: AudioState, lfo: float) -> void:
 		return
 	_rot_driving_env = true
 	var rd := RH.drive_value("rotation", state, lfo)
-	# Terrain: slower orbit. Non-terrain: mild. Amount + axes from settings.
-	var mul := 0.55 if not _terrain_meta.is_empty() else 1.0
-	var rate := RH.rotation_rate(rd) * mul
+	var rate := RH.rotation_rate(rd)
 	_apply_axis_rotation(_env_root, rate, true)
 
 
@@ -3080,7 +3111,7 @@ func _apply_noise_distort(state: AudioState, lfo: float) -> void:
 	var want_env := ((RH.noise_applies_to("environment") and noise_on) or cloth_on) and _env_root != null
 	var want_center := ((RH.noise_applies_to("centerpiece") and noise_on) or cloth_on) and not _center_particles_on
 	var want_scatter := ((RH.noise_applies_to("scatter") and noise_on) or cloth_on) and not _scatter_particles_on
-	if _env_root and _terrain_meta.is_empty():
+	if _env_root:
 		# Don't clobber reactive multi-axis rotation on the env root.
 		if not RH.property_active("rotation") or not RH.rotation_applies_to("environment"):
 			_restore_env_rotation()
@@ -3094,18 +3125,8 @@ func _apply_noise_distort(state: AudioState, lfo: float) -> void:
 			_scatter_nodes[i].position = _scatter_base_positions[i]
 
 	var active_ids: Dictionary = {}
-	# HTerrain chunks use DirectMeshInstance — MeshInstance overrides never reach them.
-	# Drive Classic4 material uniforms (u_hs_noise_*) for real vertex displace on hills.
-	if want_env and not _terrain_meta.is_empty() and noise_on:
-		_apply_terrain_noise_displace(amt, feature, axes)
-		# Hills use Classic4 uniforms; any MeshInstance3D props on the same layer still need noise_deform.
+	if want_env:
 		_apply_noise_to_root(_env_root, amt, feature, Vector3(0.1, 0.2, 0.3), axes, active_ids, cloth_amt, cloth_stiff, cloth_wind, cloth_grav, true)
-	elif want_env:
-		if not _terrain_meta.is_empty() and not noise_on:
-			_clear_terrain_noise_displace()
-		_apply_noise_to_root(_env_root, amt, feature, Vector3(0.1, 0.2, 0.3), axes, active_ids, cloth_amt, cloth_stiff, cloth_wind, cloth_grav, true)
-	else:
-		_clear_terrain_noise_displace()
 	if want_center and cnode:
 		_apply_noise_to_root(cnode, amt * 0.85, feature * 0.7, Vector3(1.1, 0.4, 0.7), axes, active_ids, cloth_amt * 0.9, cloth_stiff, cloth_wind, cloth_grav, true)
 	if want_scatter:
@@ -3123,33 +3144,6 @@ func _apply_noise_distort(state: AudioState, lfo: float) -> void:
 		amt, feature, axes, cloth_on, cloth_amt, cloth_stiff, cloth_damp, cloth_wind,
 		want_env, want_center, want_scatter
 	)
-
-
-func _apply_terrain_noise_displace(amount: float, feature: float, axes: Vector3) -> void:
-	var terrain: Variant = _terrain_meta.get("terrain", null)
-	if terrain == null or not is_instance_valid(terrain):
-		return
-	if terrain.has_method("set_shader_param"):
-		terrain.call("set_shader_param", "u_hs_noise_amount", amount)
-		terrain.call("set_shader_param", "u_hs_noise_scale", feature)
-		terrain.call("set_shader_param", "u_hs_noise_time", _noise_t)
-		terrain.call("set_shader_param", "u_hs_noise_axes", axes)
-	# Keep root stable — displace is in the terrain shader now.
-	if _env_root:
-		_apply_layer_user_offsets()
-
-
-func _clear_terrain_noise_displace() -> void:
-	var terrain: Variant = _terrain_meta.get("terrain", null) if not _terrain_meta.is_empty() else null
-	if terrain == null or not is_instance_valid(terrain):
-		return
-	if terrain.has_method("set_shader_param"):
-		terrain.call("set_shader_param", "u_hs_noise_amount", 0.0)
-
-
-func _apply_terrain_noise_wobble(amount: float, axes: Vector3) -> void:
-	## Legacy fallback — prefer _apply_terrain_noise_displace.
-	_apply_terrain_noise_displace(amount, maxf(RH.noise_scale(), 0.5), axes)
 
 
 func _apply_noise_to_root(root: Node, amount: float, feature: float, nseed: Vector3, axes: Vector3, active_ids: Dictionary, cloth_amt: float = 0.0, cloth_stiff: float = 0.55, cloth_wind: float = 0.0, cloth_grav: float = 1.0, unlimited_meshes: bool = false) -> void:
@@ -3509,7 +3503,6 @@ func _restore_noise_material(key: int) -> void:
 
 
 func _clear_noise_deform(force_restore_rotation: bool = false) -> void:
-	_clear_terrain_noise_displace()
 	if _point_cloud_on:
 		var cloth_keep := float(_cloth_params.get("amount", 0.7)) if _cloth_on else 0.0
 		var cloth_stiff := float(_cloth_params.get("stiffness", 0.55)) if _cloth_on else 0.55
@@ -3536,7 +3529,7 @@ func _clear_noise_deform(force_restore_rotation: bool = false) -> void:
 		_clear_softbodies()
 	if _env_root:
 		_apply_layer_user_offsets()
-		if force_restore_rotation or _terrain_meta.is_empty() and (
+		if force_restore_rotation or (
 			not RH.property_active("rotation") or not RH.rotation_applies_to("environment")
 		):
 			_restore_env_rotation()

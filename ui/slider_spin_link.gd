@@ -11,6 +11,8 @@ const _Expr := preload("res://core/driver_expr.gd")
 const SPIN_WIDTH := 92.0
 const DRIVEN_EDIT_WIDTH := 80.0
 const DRIVER_OPTION_WIDTH := 100.0
+const AUDIO_PICKER_IDS: PackedStringArray = ["volume", "energy", "peak", "bass", "mids", "highs", "kick", "beat"]
+const AUDIO_PICKER_GAIN := 20.0
 const FALLBACK_PICKER := [
 	"time", "volume", "energy", "peak", "bass",
 	"mids", "highs", "kick", "beat",
@@ -226,8 +228,8 @@ static func _on_driven_exiting(id: int) -> void:
 
 
 static func attach_driven(slider: HSlider, on_change: Callable = Callable(), divisor: float = 1.0) -> LineEdit:
-	## Two-row wrap: slider on top, LineEdit + visible Driver dropdown below.
-	## LineEdit accepts type/paste (bass, -bass, bass * 10). Picking Driver writes the name.
+	## Two-row wrap: slider on top, LineEdit + visible Driver menu below.
+	## LineEdit accepts type/paste (bass, -bass, bass * 10). Picking a source inserts its raw value.
 	if slider == null or not is_instance_valid(slider):
 		return null
 	if slider.has_meta("driven_edit"):
@@ -279,7 +281,8 @@ static func attach_driven(slider: HSlider, on_change: Callable = Callable(), div
 	edit.context_menu_enabled = true
 	edit.shortcut_keys_enabled = true
 	edit.select_all_on_focus = true
-	edit.tooltip_text = "Type or paste a number, a driver (bass, volume), or math: -bass, bass * 10, volume + 1. Ctrl+V works."
+	edit.clear_button_enabled = false
+	edit.tooltip_text = "Type or paste a number, a driver (bass, volume), or math: -bass, bass * 10, volume + 1. The × appears only for a driver and keeps its current value."
 	var txt := _fmt_num(slider.value)
 	edit.text = txt
 	edit_row.add_child(edit)
@@ -289,7 +292,7 @@ static func attach_driven(slider: HSlider, on_change: Callable = Callable(), div
 	opt.size_flags_horizontal = Control.SIZE_SHRINK_END
 	opt.clip_text = false
 	opt.fit_to_longest_item = false
-	opt.tooltip_text = "Insert a driver name into this field"
+	opt.tooltip_text = "Choose a driver for this value. Audio sources get a default ×20 gain."
 	edit_row.add_child(opt)
 	slider.set_meta("driven_edit", edit)
 	slider.set_meta("driven_option", opt)
@@ -370,7 +373,7 @@ static func attach_driven_choice(opt: OptionButton, on_change: Callable = Callab
 	picker.size_flags_horizontal = Control.SIZE_SHRINK_END
 	picker.clip_text = false
 	picker.fit_to_longest_item = false
-	picker.tooltip_text = "Insert a driver name into this field"
+	picker.tooltip_text = "Add a driver to this field"
 	edit_row.add_child(picker)
 	opt.set_meta("driven_edit", edit)
 	opt.set_meta("driven_option", picker)
@@ -580,12 +583,13 @@ static func set_expr(slider: HSlider, expr: String, emit_change: bool = true) ->
 		slider.set_meta("linked_value", v)
 		slider.set_value_no_signal(clampf(v, slider.min_value, slider.max_value))
 		_set_busy(slider, false)
+	_sync_driven_clear_button(slider)
 	if emit_change:
 		_emit_driven(slider)
 
 
 static func reset_to_number(slider: HSlider, v: float, emit_change: bool = false) -> void:
-	## Factory reset for a driven row: number in the LineEdit, Driver menu on "Driver".
+	## Factory reset for a driven row: number in the LineEdit, Driver menu at rest.
 	if not _live(slider):
 		return
 	set_expr(slider, _fmt_num(v), emit_change)
@@ -672,6 +676,9 @@ static func _refresh_choice_previews() -> void:
 		opt.select(idx)
 		opt.set_block_signals(false)
 		_set_busy(opt, false)
+		# Keep the driven expression, but apply the evaluated choice to its
+		# consumer (for example, a material override in the viewport).
+		_emit_choice(opt)
 	for d in dead:
 		unregister_driven(int(d))
 
@@ -703,6 +710,9 @@ static func _on_driven_text_changed(slider: HSlider, text: String) -> void:
 		return
 	var e := text.strip_edges()
 	if e.is_empty():
+		# The LineEdit's built-in × cleared a number or driver expression. Restore the
+		# evaluated number so it remains a value field rather than an empty expression.
+		set_expr(slider, _fmt_num(eval_of(slider, value_of(slider))), true)
 		return
 	slider.set_meta("driven_expr", e)
 	var is_num: bool = _Expr.is_plain_number(e)
@@ -713,6 +723,7 @@ static func _on_driven_text_changed(slider: HSlider, text: String) -> void:
 		slider.set_meta("linked_value", v)
 		slider.set_value_no_signal(clampf(v, slider.min_value, slider.max_value))
 		_set_busy(slider, false)
+	_sync_driven_clear_button(slider)
 	_emit_driven(slider)
 
 
@@ -775,7 +786,20 @@ static func _on_driven_option(slider: HSlider, idx: int) -> void:
 		if add_new_handler.is_valid():
 			add_new_handler.call(slider)
 		return
-	set_expr(slider, txt, true)
+	set_expr(slider, _picker_expression(txt), true)
+
+
+static func _picker_expression(driver: String) -> String:
+	var id := driver.strip_edges()
+	if id in AUDIO_PICKER_IDS:
+		return "%s * %s" % [id, _fmt_num(AUDIO_PICKER_GAIN)]
+	return id
+
+
+static func _sync_driven_clear_button(slider: HSlider) -> void:
+	var edit := _as_edit(_meta_live(slider, "driven_edit"))
+	if edit:
+		edit.clear_button_enabled = _Expr.looks_like_expr(expr_of(slider))
 
 
 static func _hub() -> Node:

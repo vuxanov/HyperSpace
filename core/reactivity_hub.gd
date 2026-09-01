@@ -96,20 +96,20 @@ static func rotation_amount() -> float:
 
 static func noise_amount() -> float:
 	var n := node()
-	return float(n.get("noise_amount")) if n else 28.0
+	return float(n.get("noise_amount")) if n else 2.0
 
 
 static func noise_scale() -> float:
 	## Spatial feature size (larger = bigger deform features).
 	var n := node()
 	if n == null:
-		return 4.0
+		return 2.0
 	if n.get("noise_scale") != null:
 		return float(n.get("noise_scale"))
 	# Backward compat if an old session still has noise_speed.
 	if n.get("noise_speed") != null:
 		return float(n.get("noise_speed"))
-	return 4.0
+	return 2.0
 
 
 static func _normalize_layer(layer_id: String) -> String:

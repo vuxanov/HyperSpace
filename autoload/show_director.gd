@@ -13,6 +13,9 @@ signal effect_style_advanced(preset_name: String)
 signal effect_gate_changed(effect_id: String, open: bool)
 signal stage_defaults_restored()
 
+## Post-FX Play All can drive. Fog stays opt-in (washes the scene gray).
+const PLAY_ALL_FX_IDS := ["ascii", "feedback", "glitch", "chromatic", "tone", "hole", "wireframe", "point_cloud", "camera_fx", "material_override"]
+
 var show_data: Dictionary = {}
 var items: Array[PlaylistItem] = []
 var cues: Array = []
@@ -182,17 +185,29 @@ func is_play_all_active() -> bool:
 	return _play_all_active
 
 
-func set_play_all_effects(on: bool, cycle_sec: float = 20.0, active_sec: float = 5.0) -> void:
+func set_play_all_effects(on: bool, cycle_sec: float = 20.0, active_sec: float = 5.0, effect_ids: Variant = null) -> void:
 	_play_all_active = on
 	if on:
 		# Play All drives visual FX. Fog stays opt-in so it cannot wash the scene gray.
+		# effect_ids: omit/null = default full stack; Array = only those ids (empty = none).
 		var ids: Array = []
-		for eid in ["ascii", "feedback", "glitch", "chromatic", "tone", "hole", "wireframe", "point_cloud", "camera_fx", "material_override"]:
-			ids.append(eid)
-			_effect_user_enabled[eid] = true
+		if effect_ids is Array:
+			for eid in (effect_ids as Array):
+				var s := str(eid)
+				if not s.is_empty() and not ids.has(s):
+					ids.append(s)
+		else:
+			ids = PLAY_ALL_FX_IDS.duplicate()
+		for eid in PLAY_ALL_FX_IDS:
+			_effect_user_enabled[eid] = ids.has(eid)
+		for eid2 in ids:
+			_effect_user_enabled[str(eid2)] = true
 		fx_automation.enable_play_all(ids, cycle_sec, active_sec)
-		for eid in ids:
-			_apply_effect_effective(str(eid))
+		for eid3 in PLAY_ALL_FX_IDS:
+			_apply_effect_effective(str(eid3))
+		for eid4 in ids:
+			if not PLAY_ALL_FX_IDS.has(str(eid4)):
+				_apply_effect_effective(str(eid4))
 	else:
 		fx_automation.disable_play_all()
 		for eid in _effect_user_enabled.keys():
@@ -296,8 +311,9 @@ func _on_play_all_randomize_tick() -> void:
 	var ids: Array = fx_automation.get_play_all_ids()
 	if mode == "evolution":
 		var focus: Array = fx_automation.take_evolution_randomize_ids()
-		if not focus.is_empty():
-			ids = focus
+		if focus.is_empty():
+			return
+		ids = focus
 	for eid_any in ids:
 		var eid := str(eid_any)
 		if not fx_automation.is_gate_open(eid):
@@ -513,8 +529,16 @@ func import_fx_state(data: Dictionary) -> void:
 		_effect_user_enabled = (en as Dictionary).duplicate(true)
 	if pr is Dictionary:
 		_effect_user_params = (pr as Dictionary).duplicate(true)
+	var seen: Dictionary = {}
 	for eid in _effect_user_enabled.keys():
-		_apply_effect_effective(str(eid))
+		seen[str(eid)] = true
+	for eid2 in _active_effects.keys():
+		seen[str(eid2)] = true
+	for eid3 in PLAY_ALL_FX_IDS:
+		seen[str(eid3)] = true
+	seen["fog"] = true
+	for eid4 in seen.keys():
+		_apply_effect_effective(str(eid4))
 
 
 func _execute_action(action: CueAction) -> void:

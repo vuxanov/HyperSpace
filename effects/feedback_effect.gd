@@ -8,12 +8,12 @@ var _rect: ColorRect
 var _history: ImageTexture
 var _has_history: bool = false
 var _capture_pending: bool = false
-var _base_mix: float = 0.78
-var _base_opacity: float = 0.7
-var _base_persist: float = 0.9
+var _base_mix: float = 1.0
+var _base_opacity: float = 1.0
+var _base_persist: float = 1.0
 var _base_zoom: float = 1.04
-var _base_blur: float = 0.35
-var _base_blend: int = 0
+var _base_blur: float = 0.2
+var _base_blend: int = 3
 var _frame_skip: int = 0
 ## Plain-language blend names, same order as the shader's BLEND_* constants.
 const BLEND_NAMES := ["Normal", "Brightest", "Darkest", "Edges", "Contrast"]
@@ -185,8 +185,7 @@ func _apply_resolved() -> void:
 
 
 func _resolve_blend() -> int:
-	## Discrete choice, so it is a name rather than a driven number. Presets written before
-	## the selector existed have no "blend" key and stay on Normal.
+	## Discrete choice, so it is a name rather than a driven number.
 	_base_blend = blend_index_from_param(raw_param("blend", null))
 	return _base_blend
 
@@ -197,13 +196,13 @@ static func blend_index_from_param(raw: Variant) -> int:
 		if s == "Glow" or s == "Shadow":
 			return 0
 		var idx := BLEND_NAMES.find(s)
-		return idx if idx >= 0 else 0
+		return idx if idx >= 0 else 3
 	if raw is float or raw is int:
 		var old := int(raw)
 		if old >= 0 and old < LEGACY_BLEND_INDEX.size():
 			return int(LEGACY_BLEND_INDEX[old])
 		return clampi(old, 0, BLEND_NAMES.size() - 1)
-	return 0
+	return 3
 
 
 func _mat() -> ShaderMaterial:

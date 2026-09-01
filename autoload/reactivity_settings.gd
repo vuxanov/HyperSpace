@@ -22,10 +22,10 @@ var rotation_z: bool = true
 var rotation_amount: float = 1.0
 var affect_noise: bool = false
 var scale_amount: float = 25.0
-## World-unit displace strength (UI: Displace Strength).
-var noise_amount: float = 28.0
+## World-unit displace strength (UI: Displace Strength). Small by default; free-entry UI supports extremes.
+var noise_amount: float = 2.0
 ## Spatial feature size of the deform noise (larger = bigger blobs). Not animation speed.
-var noise_scale: float = 4.0
+var noise_scale: float = 2.0
 var noise_x: bool = true
 var noise_y: bool = true
 var noise_z: bool = true
@@ -61,8 +61,8 @@ var noise_source: String = "bass"
 
 ## Camera / shared LFO
 var camera_preset: String = "Off"
-var camera_rate: float = 1.0
-var camera_depth: float = 0.55
+var camera_rate: float = 0.4
+var camera_depth: float = 0.75
 
 ## Live modulator value (0..1) written each frame
 var lfo_mod01: float = 0.0
@@ -128,8 +128,8 @@ func reset_to_defaults() -> void:
 	rotation_amount = 1.0
 	affect_noise = false
 	scale_amount = 25.0
-	noise_amount = 28.0
-	noise_scale = 4.0
+	noise_amount = 2.0
+	noise_scale = 2.0
 	noise_x = true
 	noise_y = true
 	noise_z = true
@@ -157,8 +157,8 @@ func reset_to_defaults() -> void:
 	light_source = "energy"
 	noise_source = "bass"
 	camera_preset = "Off"
-	camera_rate = 1.0
-	camera_depth = 0.55
+	camera_rate = 0.4
+	camera_depth = 0.75
 	settings_changed.emit()
 
 

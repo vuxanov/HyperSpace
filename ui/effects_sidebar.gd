@@ -10,6 +10,7 @@ const SliderSpinLinkScr = preload("res://ui/slider_spin_link.gd")
 const DriverExprScr = preload("res://core/driver_expr.gd")
 const DriverHubScr = preload("res://autoload/driver_hub.gd")
 const CycleRandomScr = preload("res://ui/cycle_random.gd")
+const FxPresetStoreScr = preload("res://core/fx_preset_store.gd")
 
 const DRIVER_IDS := ["off", "bass", "mids", "highs", "kick", "energy", "lfo"]
 const DRIVER_LABELS := ["Off", "Bass", "Mids", "Highs", "Kick", "Energy", "LFO"]
@@ -22,16 +23,21 @@ const FX_DRIVE_TOOLTIPS := [
 ]
 const ASCII_LFO_WAVE_IDS := ["sine", "triangle", "saw", "square"]
 const ASCII_LFO_WAVE_LABELS := ["Sine", "Triangle", "Saw", "Square"]
-const CAMERA_PRESETS := ["Off", "Pitch rock", "Roll bank", "Orbit tumble", "Spiral twist", "Kick snap"]
+const CAMERA_PRESETS := ["Off", "Walk", "Pitch rock", "Roll bank", "Orbit tumble", "Spiral twist", "Kick snap"]
 const FX_IDS := ["ascii", "feedback", "glitch", "chromatic", "tone", "hole", "wireframe", "point_cloud", "camera_fx", "material_override", "fog"]
 const HOLE_SHAPE_NAMES := ["Circular", "Rectangle"]
 const MAT_OVERRIDE_LOOK_NAMES := ["White cladding", "Chrome", "Gold", "Normal", "Shiny black"]
 ## How the previous frame is composited onto the live one. Order must match the shader's
 ## BLEND_* constants and FeedbackEffect.BLEND_NAMES. Normal is the pre-selector look.
 const FEEDBACK_BLEND_NAMES := ["Normal", "Brightest", "Darkest", "Edges", "Contrast"]
+const FEEDBACK_DEFAULT_OPACITY := 100.0
+const FEEDBACK_DEFAULT_PERSISTENCE := 100.0
+const FEEDBACK_DEFAULT_BLUR := 20.0
+const FEEDBACK_DEFAULT_BLEND := "Edges"
 
 ## One flat effect list: an effect row is prominent, its settings body is indented and quieter.
 const FX_HEADER_FONT_SIZE := 15
+const FX_CONTROL_FONT_SIZE := 14
 const FX_HEADER_COLOR := Color(0.94, 0.96, 0.99)
 const FX_SETTING_FONT_SIZE := 11
 const FX_SETTING_LABEL_COLOR := Color(0.70, 0.75, 0.81)
@@ -58,6 +64,24 @@ var _audio_source_ids: PackedStringArray = PackedStringArray()
 @onready var mids_bar: ProgressBar = $Margin/Scroll/Column/AudioSection/ReactivityBody/MidsBar
 @onready var highs_bar: ProgressBar = $Margin/Scroll/Column/AudioSection/ReactivityBody/HighsBar
 @onready var reset_defaults_btn: Button = $Margin/Scroll/Column/ResetDefaultsBtn
+var _preset_actions: HBoxContainer
+var save_preset_btn: Button
+## Auto Mode body hosts Presets | Play All radios; only one branch drives FX.
+var play_all_settings: VBoxContainer
+var auto_mode_presets_radio: CheckBox
+var auto_mode_play_all_radio: CheckBox
+var _auto_mode_group: ButtonGroup
+var play_preset_body: VBoxContainer
+var play_preset_menu: OptionButton
+var _preset_dialog: AcceptDialog
+var _preset_name: LineEdit
+var _preset_manager_dialog: AcceptDialog
+var _preset_manager_list: VBoxContainer
+var _preset_delete_dialog: ConfirmationDialog
+var _preset_delete_key: String = ""
+var _preset_menu_busy: bool = false
+var _auto_mode_branch_busy: bool = false
+const EDIT_PRESETS_MENU_ITEM := "Edit presets…"
 
 var _spectrum_bar_nodes: Array[ColorRect] = []
 var _input_level_fill: ColorRect = null
@@ -124,12 +148,8 @@ const SPECTRUM_BAR_BG := Color(0.12, 0.14, 0.16, 0.9)
 
 @onready var play_all_toggle: CheckButton = $Margin/Scroll/Column/FxSection/PlayAllToggle
 @onready var play_all_body: VBoxContainer = $Margin/Scroll/Column/FxSection/PlayAllBody
-@onready var play_cycle_slider: HSlider = $Margin/Scroll/Column/FxSection/PlayAllBody/PlayCycleSlider
-@onready var play_active_slider: HSlider = $Margin/Scroll/Column/FxSection/PlayAllBody/PlayActiveSlider
 @onready var play_mode: OptionButton = $Margin/Scroll/Column/FxSection/PlayAllBody/PlayMode
-@onready var play_speed_slider: HSlider = $Margin/Scroll/Column/FxSection/PlayAllBody/PlaySpeedSlider
 @onready var play_audio_reactive: CheckButton = $Margin/Scroll/Column/FxSection/PlayAllBody/PlayAudioReactive
-@onready var play_schedule_host: VBoxContainer = $Margin/Scroll/Column/FxSection/PlayAllBody/PlayScheduleHost
 
 @onready var ascii_toggle: CheckButton = $Margin/Scroll/Column/FxSection/AsciiToggle
 @onready var ascii_body: VBoxContainer = $Margin/Scroll/Column/FxSection/AsciiBody
@@ -258,6 +278,7 @@ var _play_all_audio_wireframe_expr: String = ""
 @onready var camera_fx_focus_slider: HSlider = $Margin/Scroll/Column/FxSection/CameraFxBody/CameraFxFocusSlider
 @onready var camera_fx_focus_far_label: Label = $Margin/Scroll/Column/FxSection/CameraFxBody/CameraFxFocusFarLabel
 @onready var camera_fx_focus_far_slider: HSlider = $Margin/Scroll/Column/FxSection/CameraFxBody/CameraFxFocusFarSlider
+@onready var camera_fx_falloff_slider: HSlider = $Margin/Scroll/Column/FxSection/CameraFxBody/CameraFxFalloffSlider
 @onready var camera_fx_bokeh_slider: HSlider = $Margin/Scroll/Column/FxSection/CameraFxBody/CameraFxBokehSlider
 @onready var camera_fx_schedule: CheckButton = $Margin/Scroll/Column/FxSection/CameraFxBody/CameraFxSchedule
 @onready var camera_fx_schedule_host: VBoxContainer = $Margin/Scroll/Column/FxSection/CameraFxBody/CameraFxScheduleHost
@@ -287,7 +308,8 @@ var fog_schedule: CheckButton
 var fog_schedule_host: VBoxContainer
 
 @onready var cue_container: HFlowContainer = $Margin/Scroll/Column/CueSection/CueContainer
-@onready var search_edit: LineEdit = $Margin/Scroll/Column/SearchEdit
+@onready var search_row: Control = $Margin/Scroll/Column/SearchRow
+@onready var search_edit: LineEdit = $Margin/Scroll/Column/SearchRow/SearchMargin/SearchContent/SearchEdit
 @onready var audio_section: VBoxContainer = $Margin/Scroll/Column/AudioSection
 @onready var fx_section: VBoxContainer = $Margin/Scroll/Column/FxSection
 @onready var cue_section: VBoxContainer = $Margin/Scroll/Column/CueSection
@@ -301,7 +323,6 @@ var _ascii_density_slider: HSlider
 var _scale_amount_slider: HSlider
 var _rotation_amount_slider: HSlider
 var _cloth_gravity_slider: HSlider
-var _play_schedule_range  # ScheduleSecondsPair
 var _schedule_ranges: Dictionary = {}  # effect_id -> ScheduleSecondsPair
 var _user_density_min: float = 8.0
 var _user_density_max: float = 80.0
@@ -316,6 +337,8 @@ var _camera_fx_lens_label: Label
 var _content_tab: int = 0
 var _tab_bar: TabBar
 var _drivers_section: VBoxContainer
+var _stage_camera_section: VBoxContainer
+var _stage_camera_toggle: CheckButton
 var _drivers_builtin_list: VBoxContainer
 var _drivers_signal_list: VBoxContainer
 var _driver_live_labels: Dictionary = {}
@@ -342,19 +365,19 @@ var _noise_body: VBoxContainer
 ## Search filter rows: {section, header, body, text} — body may be null.
 var _filter_items: Array = []
 
-const PLAY_MODE_IDS := ["cycle", "random", "audio", "evolution"]
-const PLAY_MODE_LABELS := ["Cycle", "Random", "Audio", "Evolution"]
+const PLAY_MODE_IDS := ["cycle", "random", "evolution"]
+const PLAY_MODE_LABELS := ["Cycle", "Random", "Evolution"]
 const PLAY_MODE_TOOLTIPS := [
-	"Stagger each effect on and off independently.",
-	"Reshuffle which effects are on and their looks, several times per Active window.",
-	"Like Cycle, but loudness speeds the clocks up. Also assigns audio drivers to every effect (same as Audio reactive).",
-	"Start with two effects, then slowly add more until the full set. Inactive still mutes.",
+	"Keep the selected effect stack active continuously.",
+	"Reshuffle which effects are on and their looks over time.",
+	"Start with one effect, add up to a small stack, then remove back to one and repeat.",
 ]
 const PLAY_ALL_AUDIO_DRIVERS: PackedStringArray = [
-	"volume", "energy", "peak", "bass", "mids", "highs", "kick", "beat",
-	"band0", "band3", "band6", "band9", "band12", "band15",
+	"volume", "energy", "bass", "mids", "highs", "kick", "beat",
 ]
 const PLAY_ALL_AUDIO_SHUFFLE_MULS: Array = [2.0, 3.0, 5.0, 10.0]
+const PLAY_ALL_INTERNAL_ACTIVE_SEC := 4.0
+const PLAY_ALL_INTERNAL_INACTIVE_SEC := 4.0
 
 
 func _ready() -> void:
@@ -402,7 +425,7 @@ func _ready() -> void:
 		if i < PLAY_MODE_TOOLTIPS.size():
 			play_mode.set_item_tooltip(i, PLAY_MODE_TOOLTIPS[i])
 	play_mode.select(0)
-	play_mode.tooltip_text = "Play All mode. Cycle, Random, Audio, and Evolution are mutually exclusive. Audio also assigns audio drivers to effect sliders."
+	play_mode.tooltip_text = "Play All mode. Cycle, Random, and Evolution are mutually exclusive. Audio reactive applies to any mode."
 	if play_audio_reactive:
 		play_audio_reactive.tooltip_text = "With Play All: put every effect slider on Driver and assign an audio source (volume, bass, mids, bands, …). Shuffle mode also randomizes which source and multiplies amounts (2×–10×)."
 	reactivity_toggle.button_pressed = bool(RH.get_field("enabled", false))
@@ -419,8 +442,8 @@ func _ready() -> void:
 	rotation_x.button_pressed = bool(RH.get_field("rotation_x", true))
 	rotation_y.button_pressed = bool(RH.get_field("rotation_y", true))
 	rotation_z.button_pressed = bool(RH.get_field("rotation_z", true))
-	noise_amount.value = float(RH.get_field("noise_amount", 28.0))
-	noise_scale.value = float(RH.get_field("noise_scale", RH.get_field("noise_speed", 4.0)))
+	noise_amount.value = float(RH.get_field("noise_amount", 2.0))
+	noise_scale.value = float(RH.get_field("noise_scale", RH.get_field("noise_speed", 2.0)))
 	noise_x.button_pressed = bool(RH.get_field("noise_x", true))
 	noise_y.button_pressed = bool(RH.get_field("noise_y", true))
 	noise_z.button_pressed = bool(RH.get_field("noise_z", true))
@@ -432,14 +455,15 @@ func _ready() -> void:
 	_select_driver(noise_source, str(RH.get_field("noise_source", "bass")))
 	_select_camera_preset(str(RH.get_field("camera_preset", "Off")))
 	camera_motion_toggle.button_pressed = str(RH.get_field("camera_preset", "Off")) != "Off"
-	# Camera rate/depth UI are 1–100 ints; settings store float rate and 0–1 depth.
-	camera_rate.value = clampf(float(RH.get_field("camera_rate", 1.0)) * 20.0, 1.0, 100.0)
-	camera_depth.value = clampf(float(RH.get_field("camera_depth", 0.55)) * 100.0, 0.0, 100.0)
+	# Camera rate/depth UI are 1–100; settings retain the normalized values.
+	camera_rate.value = clampf(float(RH.get_field("camera_rate", 0.4)) * 20.0, 1.0, 100.0)
+	camera_depth.value = clampf(float(RH.get_field("camera_depth", 0.75)) * 100.0, 0.0, 100.0)
 
 	reactivity_toggle.toggled.connect(_on_reactivity_toggled)
 	if reset_defaults_btn:
 		reset_defaults_btn.pressed.connect(_on_reset_to_defaults)
 	ShowDirector.stage_defaults_restored.connect(_sync_reactivity_widgets_from_rh)
+	ShowDirector.stage_defaults_restored.connect(_sync_stage_camera_card)
 	intensity_slider.value_changed.connect(func(_v: float) -> void: AudioAnalyzer.master_intensity = SliderSpinLinkScr.eval_of(intensity_slider))
 	scale_amount_spin.value_changed.connect(_on_scale_amount)
 	rotation_amount_spin.value_changed.connect(_on_rotation_amount)
@@ -472,11 +496,11 @@ func _ready() -> void:
 	camera_schedule.toggled.connect(func(v: bool) -> void: _on_react_schedule("camera", v))
 	camera_motion_toggle.toggled.connect(_on_camera_motion_toggled)
 	camera_preset.item_selected.connect(_on_camera_preset)
-	# Camera rate/depth: attach_driven callbacks (bare slider ÷ UI scale; expressions as-is).
+	# Camera motion has its own mapping, so typed/driver values above 100 stay useful.
 
 	play_all_toggle.toggled.connect(_on_play_all_toggled)
+	play_all_toggle.tooltip_text = "Auto Mode: drive effects with Presets (one saved look) or Play All (full stack). Not both."
 	play_mode.item_selected.connect(_on_play_mode_selected)
-	play_speed_slider.value_changed.connect(_on_play_speed)
 	play_audio_reactive.toggled.connect(_on_play_audio_reactive)
 	style_switch_toggle.toggled.connect(_on_style_switch_toggled)
 	style_interval_slider.value_changed.connect(_on_style_interval)
@@ -515,6 +539,7 @@ func _ready() -> void:
 	camera_fx_aperture_slider.value_changed.connect(_on_camera_fx_params)
 	camera_fx_focus_slider.value_changed.connect(_on_camera_fx_params)
 	camera_fx_focus_far_slider.value_changed.connect(_on_camera_fx_params)
+	camera_fx_falloff_slider.value_changed.connect(_on_camera_fx_params)
 	camera_fx_bokeh_slider.value_changed.connect(_on_camera_fx_params)
 	camera_fx_schedule.toggled.connect(func(v: bool) -> void: _on_effect_schedule("camera_fx", v))
 
@@ -529,12 +554,17 @@ func _ready() -> void:
 	_attach_slider_value_fields()
 	_setup_camera_lens_control()
 	_setup_point_cloud_targets()
+	_setup_auto_mode_section()
 	_setup_shuffle_and_random()
 	_flatten_effect_list()
 	_apply_effect_hierarchy_styling()
 	_setup_search_filter()
 	_setup_content_tabs()
+	# Playlist creates the stage-camera fields and shuffle controls during its own ready.
+	# Defer one frame, then place it directly after the Auto Mode card.
+	call_deferred("_move_stage_camera_controls_here")
 	_setup_driver_modal()
+	_setup_preset_ui()
 	SliderSpinLinkScr.add_new_handler = _open_driver_modal_for
 	ShowDirector.show_loaded.connect(func(_n: String) -> void: _rebuild_cues())
 	ShowDirector.effect_style_advanced.connect(_on_style_advanced_ui)
@@ -573,12 +603,13 @@ func _attach_slider_value_fields() -> void:
 	SliderSpinLinkScr.attach_driven(noise_floor_slider, func(_v: float = 0.0) -> void:
 		AudioAnalyzer.set_noise_floor(SliderSpinLinkScr.eval_of(noise_floor_slider))
 	, 1.0)
-	SliderSpinLinkScr.attach_driven(play_speed_slider, _on_play_speed, 1.0)
 	SliderSpinLinkScr.attach_driven(style_interval_slider, _on_style_interval, 1.0)
 	SliderSpinLinkScr.attach_driven(noise_amount, func(_v: float = 0.0) -> void: RH.set_field("noise_amount", _deform_num(noise_amount)), 1.0)
 	SliderSpinLinkScr.attach_driven(noise_scale, func(_v: float = 0.0) -> void: RH.set_field("noise_scale", _deform_num(noise_scale)), 1.0)
-	SliderSpinLinkScr.attach_driven(camera_rate, func(_v: float = 0.0) -> void: RH.set_field("camera_rate", _deform_num(camera_rate, 20.0)), 1.0)
-	SliderSpinLinkScr.attach_driven(camera_depth, func(_v: float = 0.0) -> void: RH.set_field("camera_depth", _deform_num(camera_depth, 100.0)), 1.0)
+	SliderSpinLinkScr.attach_driven(camera_rate, func(_v: float = 0.0) -> void: RH.set_field("camera_rate", _camera_motion_rate()), 1.0)
+	SliderSpinLinkScr.attach_driven(camera_depth, func(_v: float = 0.0) -> void: RH.set_field("camera_depth", _camera_motion_depth()), 1.0)
+	camera_rate.tooltip_text = "Walking cadence. The default is deliberately slow; higher values speed it up gently."
+	camera_depth.tooltip_text = "Walking presence. Values above 100 keep growing softly instead of becoming violent."
 	SliderSpinLinkScr.attach_driven(feedback_mix_slider, _on_feedback_params, 100.0)
 	SliderSpinLinkScr.attach_driven(feedback_persist_slider, _on_feedback_params, 100.0)
 	if feedback_mix_slider:
@@ -607,6 +638,7 @@ func _attach_slider_value_fields() -> void:
 	SliderSpinLinkScr.attach_driven(camera_fx_aperture_slider, _on_camera_fx_params, 1.0)
 	SliderSpinLinkScr.attach_driven(camera_fx_focus_slider, _on_camera_fx_params, 1.0)
 	SliderSpinLinkScr.attach_driven(camera_fx_focus_far_slider, _on_camera_fx_params, 1.0)
+	SliderSpinLinkScr.attach_driven(camera_fx_falloff_slider, _on_camera_fx_params, 100.0)
 	SliderSpinLinkScr.attach_driven(camera_fx_bokeh_slider, _on_camera_fx_params, 100.0)
 	if _ascii_density_slider:
 		SliderSpinLinkScr.attach_driven(_ascii_density_slider, _on_ascii_density_driven, 1.0)
@@ -683,7 +715,7 @@ func _setup_search_filter() -> void:
 			"section": "fx",
 			"header": play_all_toggle,
 			"body": play_all_body,
-			"text": "play all mode speed audio reactive schedule",
+			"text": "auto mode presets play all mode audio reactive schedule full stack saved snapshot look",
 		},
 		{
 			"section": "fx",
@@ -887,12 +919,15 @@ func _nest_react_bodies() -> void:
 
 func _effect_rows() -> Array:
 	## The single flat effect list, top to bottom: [header, settings body].
-	## Deform (scale / rotation / noise / camera motion) is just another effect here.
+	## Auto Mode leads so its global playback choice is always immediately available.
 	return [
+		[play_all_toggle, play_all_body],
+		[camera_motion_toggle, camera_body],
+		[camera_fx_toggle, camera_fx_body],
+		[nonlinear_camera_toggle, nonlinear_camera_body],
 		[affect_scale, _scale_body],
 		[affect_rotation, _rotation_body],
 		[affect_noise, _noise_body],
-		[camera_motion_toggle, camera_body],
 		[ascii_toggle, ascii_body],
 		[feedback_toggle, feedback_body],
 		[glitch_toggle, glitch_body],
@@ -901,10 +936,8 @@ func _effect_rows() -> Array:
 		[hole_toggle, hole_body],
 		[wireframe_toggle, wireframe_body],
 		[point_cloud_toggle, point_cloud_body],
-		[camera_fx_toggle, camera_fx_body],
 		[material_override_toggle, material_override_body],
 		[fog_toggle, fog_body],
-		[nonlinear_camera_toggle, nonlinear_camera_body],
 	]
 
 
@@ -917,10 +950,6 @@ func _flatten_effect_list() -> void:
 	if targets_label:
 		targets_label.visible = false
 	var ordered: Array = []
-	if play_all_toggle:
-		ordered.append(play_all_toggle)
-	if play_all_body:
-		ordered.append(play_all_body)
 	for row_any in _effect_rows():
 		var row: Array = row_any as Array
 		for n_any in row:
@@ -1137,6 +1166,8 @@ func _setup_camera_focus_sliders() -> void:
 		camera_fx_focus_far_slider.max_value = SceneMeshFx.CAM_FOCUS_FAR_MAX
 		camera_fx_focus_far_slider.step = 0.1
 		camera_fx_focus_far_slider.tooltip_text = "Leave at max for infinity — background stays sharp. Pull in to soften the rest."
+	if camera_fx_falloff_slider:
+		camera_fx_falloff_slider.tooltip_text = "How gradually focus fades into blur. Higher makes a longer, softer focus gradient; lower creates a sharper cutoff."
 
 
 func _setup_point_cloud_targets() -> void:
@@ -1196,15 +1227,6 @@ func _setup_dual_ranges() -> void:
 	if ascii_density_label:
 		ascii_density_label.text = "Density"
 		ascii_density_label.tooltip_text = "Glyph density. Type or paste bass * 80, or pick from Driver."
-
-	_play_schedule_range = ScheduleSecondsPairScr.new()
-	_play_schedule_range.min_value = 1.0
-	_play_schedule_range.max_value = 60.0
-	_play_schedule_range.step = 1.0
-	_play_schedule_range.set_range_values(4.0, 4.0)
-	_play_schedule_range.range_changed.connect(_on_play_schedule_range)
-	play_schedule_host.add_child(_play_schedule_range)
-	play_schedule_host.custom_minimum_size = Vector2(0, 96)
 
 	var hosts := {
 		"ascii": ascii_schedule_host,
@@ -1509,7 +1531,7 @@ func _on_audio(state: AudioState) -> void:
 		var v := clampf(state.bands[i], 0.0, 1.0)
 		# Grow from the bottom: top offset = -(height * value).
 		_spectrum_bar_nodes[i].offset_top = -SPECTRUM_BAR_H * v
-	if play_all_toggle.button_pressed and play_audio_reactive.button_pressed:
+	if play_all_toggle.button_pressed and _auto_mode_is_play_all() and play_audio_reactive.button_pressed:
 		ShowDirector.fx_automation.set_play_all_audio_energy(clampf(state.energy, 0.0, 1.0))
 
 
@@ -1521,8 +1543,660 @@ func _on_reactivity_toggled(enabled: bool) -> void:
 
 
 func _on_reset_to_defaults() -> void:
-	ShowDirector.reset_stage_to_defaults()
+	var playlist := get_node_or_null("../PlaylistSidebar")
+	if playlist != null and playlist.has_method("reset_all_to_defaults"):
+		playlist.call("reset_all_to_defaults")
+	else:
+		ShowDirector.reset_stage_to_defaults()
 	_sync_all_widgets_after_defaults_reset()
+
+
+func _setup_preset_ui() -> void:
+	_setup_preset_action_row()
+	_setup_preset_name_dialog()
+	_setup_preset_manager_dialog()
+	_setup_preset_delete_dialog()
+	_refresh_play_preset_menu()
+
+
+func _setup_preset_action_row() -> void:
+	if reset_defaults_btn == null or not is_instance_valid(reset_defaults_btn):
+		return
+	var col := reset_defaults_btn.get_parent()
+	if col == null:
+		return
+	var idx := reset_defaults_btn.get_index()
+	_preset_actions = HBoxContainer.new()
+	_preset_actions.name = "HeaderActions"
+	_preset_actions.add_theme_constant_override("separation", 6)
+	col.add_child(_preset_actions)
+	col.move_child(_preset_actions, idx)
+	save_preset_btn = Button.new()
+	save_preset_btn.name = "SavePresetBtn"
+	save_preset_btn.text = "Save"
+	save_preset_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	save_preset_btn.custom_minimum_size = Vector2(0, 28)
+	save_preset_btn.add_theme_font_size_override("font_size", FX_CONTROL_FONT_SIZE)
+	save_preset_btn.tooltip_text = "Save the current effect stack as a named preset. Play it under Auto Mode → Presets."
+	save_preset_btn.pressed.connect(_on_save_preset_pressed)
+	_preset_actions.add_child(save_preset_btn)
+	reset_defaults_btn.reparent(_preset_actions)
+	reset_defaults_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	reset_defaults_btn.custom_minimum_size = Vector2(0, 28)
+	reset_defaults_btn.add_theme_font_size_override("font_size", FX_CONTROL_FONT_SIZE)
+
+
+func _setup_auto_mode_section() -> void:
+	## One Auto Mode accordion: radios choose Presets vs Play All; only that branch's settings show.
+	if play_all_toggle == null or play_all_body == null:
+		return
+	if auto_mode_presets_radio != null and is_instance_valid(auto_mode_presets_radio):
+		return
+
+	play_all_toggle.text = "Auto Mode"
+	play_all_toggle.tooltip_text = "Drive effects automatically. Presets = one saved look. Play All = full default stack."
+
+	play_all_settings = VBoxContainer.new()
+	play_all_settings.name = "PlayAllSettings"
+	play_all_settings.add_theme_constant_override("separation", 4)
+	var existing: Array = play_all_body.get_children()
+	for c_any in existing:
+		var child: Node = c_any as Node
+		if child:
+			child.reparent(play_all_settings)
+
+	_auto_mode_group = ButtonGroup.new()
+	var mode_row := HBoxContainer.new()
+	mode_row.name = "AutoModeBranchRow"
+	mode_row.add_theme_constant_override("separation", 12)
+	auto_mode_presets_radio = CheckBox.new()
+	auto_mode_presets_radio.name = "AutoModePresets"
+	auto_mode_presets_radio.text = "Presets"
+	auto_mode_presets_radio.button_group = _auto_mode_group
+	auto_mode_presets_radio.tooltip_text = "Play one saved snapshot. Extra effects stay off."
+	auto_mode_play_all_radio = CheckBox.new()
+	auto_mode_play_all_radio.name = "AutoModePlayAll"
+	auto_mode_play_all_radio.text = "Play All"
+	auto_mode_play_all_radio.button_group = _auto_mode_group
+	auto_mode_play_all_radio.button_pressed = true
+	auto_mode_play_all_radio.tooltip_text = "Enable the full default effect stack (mode, audio, schedules)."
+	mode_row.add_child(auto_mode_presets_radio)
+	mode_row.add_child(auto_mode_play_all_radio)
+
+	play_preset_body = VBoxContainer.new()
+	play_preset_body.name = "PlayPresetBody"
+	play_preset_body.add_theme_constant_override("separation", 4)
+	var lab := Label.new()
+	lab.name = "PlayPresetLabel"
+	lab.text = "Preset"
+	play_preset_menu = OptionButton.new()
+	play_preset_menu.name = "PlayPresetMenu"
+	play_preset_menu.fit_to_longest_item = false
+	play_preset_menu.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	play_preset_menu.tooltip_text = "Choose a saved look. Only those effects play — not the full Play All stack."
+	play_preset_menu.item_selected.connect(_on_play_preset_selected)
+	play_preset_body.add_child(lab)
+	play_preset_body.add_child(play_preset_menu)
+
+	play_all_body.add_child(mode_row)
+	play_all_body.add_child(play_preset_body)
+	play_all_body.add_child(play_all_settings)
+
+	auto_mode_presets_radio.toggled.connect(_on_auto_mode_presets_toggled)
+	auto_mode_play_all_radio.toggled.connect(_on_auto_mode_play_all_toggled)
+	_sync_auto_mode_panels()
+
+
+func _auto_mode_on() -> bool:
+	return play_all_toggle != null and play_all_toggle.button_pressed
+
+
+func _auto_mode_is_presets() -> bool:
+	return auto_mode_presets_radio != null and auto_mode_presets_radio.button_pressed
+
+
+func _auto_mode_is_play_all() -> bool:
+	return auto_mode_play_all_radio != null and auto_mode_play_all_radio.button_pressed
+
+
+func _play_all_driving() -> bool:
+	return _auto_mode_on() and _auto_mode_is_play_all()
+
+
+func _presets_driving() -> bool:
+	return _auto_mode_on() and _auto_mode_is_presets()
+
+
+func _sync_auto_mode_panels() -> void:
+	var presets_on := _auto_mode_is_presets()
+	if play_preset_body:
+		play_preset_body.visible = presets_on
+	if play_all_settings:
+		play_all_settings.visible = not presets_on
+
+
+func _on_auto_mode_presets_toggled(on: bool) -> void:
+	if not on or _auto_mode_branch_busy:
+		return
+	_on_auto_mode_branch_changed()
+
+
+func _on_auto_mode_play_all_toggled(on: bool) -> void:
+	if not on or _auto_mode_branch_busy:
+		return
+	_on_auto_mode_branch_changed()
+
+
+func _on_auto_mode_branch_changed() -> void:
+	_sync_auto_mode_panels()
+	if not _auto_mode_on():
+		return
+	if _auto_mode_is_presets():
+		_stop_play_all_keep_look()
+		var key := _selected_play_preset_name()
+		if key.is_empty():
+			_sync_conditional_ui()
+			return
+		var data: Dictionary = FxPresetStoreScr.get_preset(key)
+		if data.is_empty():
+			_sync_conditional_ui()
+			return
+		_apply_fx_preset(data)
+		_sync_conditional_ui()
+		return
+	# Play All branch — never keep a named preset selected as if it were playing.
+	_clear_play_preset_selection()
+	_enable_default_play_all_stack()
+
+
+func _set_auto_mode_branch_presets(on: bool) -> void:
+	if auto_mode_presets_radio == null or auto_mode_play_all_radio == null:
+		return
+	_auto_mode_branch_busy = true
+	if on:
+		auto_mode_presets_radio.button_pressed = true
+	else:
+		auto_mode_play_all_radio.button_pressed = true
+	_auto_mode_branch_busy = false
+	_sync_auto_mode_panels()
+
+
+func _setup_preset_name_dialog() -> void:
+	_preset_dialog = AcceptDialog.new()
+	_preset_dialog.title = "Save preset"
+	_preset_dialog.ok_button_text = "Save"
+	_preset_dialog.min_size = Vector2(320, 120)
+	var body := VBoxContainer.new()
+	body.add_theme_constant_override("separation", 6)
+	var nlab := Label.new()
+	nlab.text = "Name"
+	body.add_child(nlab)
+	_preset_name = LineEdit.new()
+	_preset_name.placeholder_text = "My look"
+	body.add_child(_preset_name)
+	_preset_dialog.add_child(body)
+	_preset_dialog.register_text_enter(_preset_name)
+	_preset_dialog.confirmed.connect(_on_preset_name_confirmed)
+	add_child(_preset_dialog)
+
+
+func _setup_preset_delete_dialog() -> void:
+	_preset_delete_dialog = ConfirmationDialog.new()
+	_preset_delete_dialog.title = "Delete preset"
+	_preset_delete_dialog.ok_button_text = "Delete"
+	_preset_delete_dialog.confirmed.connect(_on_preset_delete_confirmed)
+	add_child(_preset_delete_dialog)
+
+
+func _setup_preset_manager_dialog() -> void:
+	_preset_manager_dialog = AcceptDialog.new()
+	_preset_manager_dialog.title = "Edit presets"
+	_preset_manager_dialog.ok_button_text = "Done"
+	_preset_manager_dialog.min_size = Vector2(460, 320)
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.custom_minimum_size = Vector2(420, 240)
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_preset_manager_list = VBoxContainer.new()
+	_preset_manager_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_preset_manager_list.add_theme_constant_override("separation", 6)
+	scroll.add_child(_preset_manager_list)
+	_preset_manager_dialog.add_child(scroll)
+	add_child(_preset_manager_dialog)
+
+
+func _open_preset_manager() -> void:
+	if _preset_manager_dialog == null:
+		return
+	_rebuild_preset_manager()
+	_preset_manager_dialog.popup_centered()
+
+
+func _rebuild_preset_manager() -> void:
+	if _preset_manager_list == null:
+		return
+	for child in _preset_manager_list.get_children():
+		child.queue_free()
+	var names: PackedStringArray = FxPresetStoreScr.list_names()
+	if names.is_empty():
+		var empty := Label.new()
+		empty.text = "No saved presets yet. Save a look from the Effects panel to add one."
+		empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_preset_manager_list.add_child(empty)
+		return
+	for preset_name_any in names:
+		var preset_name := str(preset_name_any)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		var name_edit := LineEdit.new()
+		name_edit.text = preset_name
+		name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		name_edit.tooltip_text = "Change the name, then choose Rename."
+		var rename_btn := Button.new()
+		rename_btn.text = "Rename"
+		rename_btn.pressed.connect(func() -> void:
+			_on_preset_rename_pressed(preset_name, name_edit)
+		)
+		var delete_btn := Button.new()
+		delete_btn.text = "Delete"
+		delete_btn.tooltip_text = "Delete this preset. A confirmation is required."
+		delete_btn.pressed.connect(func() -> void:
+			_request_preset_delete(preset_name)
+		)
+		row.add_child(name_edit)
+		row.add_child(rename_btn)
+		row.add_child(delete_btn)
+		_preset_manager_list.add_child(row)
+
+
+func _on_preset_rename_pressed(old_name: String, name_edit: LineEdit) -> void:
+	if name_edit == null:
+		return
+	var new_name := name_edit.text.strip_edges()
+	if new_name.is_empty() or new_name == old_name:
+		return
+	var selected := _selected_play_preset_name()
+	if not FxPresetStoreScr.rename_preset(old_name, new_name):
+		push_warning("Effects: could not rename preset '%s'. Names must be unique." % old_name)
+		return
+	_refresh_play_preset_menu(new_name if selected == old_name else selected)
+	_rebuild_preset_manager()
+
+
+func _request_preset_delete(key: String) -> void:
+	if key.is_empty() or _preset_delete_dialog == null:
+		return
+	_preset_delete_key = key
+	_preset_delete_dialog.dialog_text = "Delete the preset '%s'? This cannot be undone." % key
+	_preset_delete_dialog.popup_centered()
+
+
+func _restore_preset_menu_selection() -> void:
+	# Opening the manager is an action, not a preset choice. Return to the first/current preset.
+	_refresh_play_preset_menu()
+
+
+func _on_save_preset_pressed() -> void:
+	if _preset_dialog == null or _preset_name == null:
+		return
+	_preset_name.text = ""
+	_preset_dialog.popup_centered()
+	_preset_name.grab_focus()
+
+
+func _on_preset_name_confirmed() -> void:
+	if _preset_name == null:
+		return
+	var key := _preset_name.text.strip_edges()
+	if key.is_empty():
+		return
+	if not FxPresetStoreScr.save_preset(key, _capture_fx_preset()):
+		push_warning("Effects: could not save preset '%s'" % key)
+		return
+	var select := key
+	# If Play All is driving, do not display the new name as if that look were playing.
+	if _play_all_driving():
+		select = ""
+	_refresh_play_preset_menu(select)
+	_rebuild_preset_manager()
+
+
+func _refresh_play_preset_menu(select_name: String = "") -> void:
+	if play_preset_menu == null:
+		return
+	var current := _selected_play_preset_name()
+	_preset_menu_busy = true
+	play_preset_menu.clear()
+	var names: PackedStringArray = FxPresetStoreScr.list_names()
+	if names.is_empty():
+		play_preset_menu.add_item(EDIT_PRESETS_MENU_ITEM)
+		play_preset_menu.disabled = false
+		play_preset_menu.select(0)
+		_preset_menu_busy = false
+		return
+	play_preset_menu.disabled = false
+	for n_any in names:
+		play_preset_menu.add_item(str(n_any))
+	play_preset_menu.add_separator()
+	play_preset_menu.add_item(EDIT_PRESETS_MENU_ITEM)
+	var wanted := select_name if not select_name.is_empty() else current
+	var select_idx := 0
+	for i in names.size():
+		if str(names[i]) == wanted:
+			select_idx = i
+			break
+	play_preset_menu.select(select_idx)
+	_preset_menu_busy = false
+
+
+func _on_play_preset_selected(index: int) -> void:
+	if _preset_menu_busy or play_preset_menu == null:
+		return
+	if play_preset_menu.disabled:
+		return
+	if play_preset_menu.get_item_text(index) == EDIT_PRESETS_MENU_ITEM:
+		_open_preset_manager()
+		_restore_preset_menu_selection()
+		return
+	var key := play_preset_menu.get_item_text(index).strip_edges()
+	if key.is_empty():
+		return
+	_start_play_preset(key)
+
+
+func _on_preset_delete_confirmed() -> void:
+	var key := _preset_delete_key
+	_preset_delete_key = ""
+	if key.is_empty():
+		return
+	if not FxPresetStoreScr.delete_preset(key):
+		push_warning("Effects: could not delete preset '%s'" % key)
+		return
+	_refresh_play_preset_menu()
+	_rebuild_preset_manager()
+	if _presets_driving():
+		var next_key := _selected_play_preset_name()
+		if not next_key.is_empty():
+			_start_play_preset(next_key)
+		else:
+			_set_check_no_signal(play_all_toggle, false)
+	_sync_conditional_ui()
+
+
+func _start_play_preset(key: String) -> void:
+	var data: Dictionary = FxPresetStoreScr.get_preset(key)
+	if data.is_empty():
+		return
+	if _play_all_driving():
+		_stop_play_all_keep_look()
+	_set_auto_mode_branch_presets(true)
+	_apply_fx_preset(data)
+	_set_check_no_signal(play_all_toggle, true)
+	_sync_conditional_ui()
+
+
+func _clear_play_preset_selection() -> void:
+	if play_preset_menu == null or play_preset_menu.disabled:
+		return
+	_preset_menu_busy = true
+	play_preset_menu.select(0)
+	_preset_menu_busy = false
+
+
+func _capture_fx_preset() -> Dictionary:
+	var fx: Dictionary = ShowDirector.export_fx_state()
+	var enabled: Dictionary = {}
+	if fx.get("enabled") is Dictionary:
+		enabled = (fx["enabled"] as Dictionary).duplicate(true)
+	var params: Dictionary = {}
+	if fx.get("params") is Dictionary:
+		params = (fx["params"] as Dictionary).duplicate(true)
+	var toggles := {
+		"ascii": ascii_toggle,
+		"feedback": feedback_toggle,
+		"glitch": glitch_toggle,
+		"chromatic": chromatic_toggle,
+		"tone": tone_toggle,
+		"hole": hole_toggle,
+		"wireframe": wireframe_toggle,
+		"point_cloud": point_cloud_toggle,
+		"camera_fx": camera_fx_toggle,
+		"material_override": material_override_toggle,
+		"fog": fog_toggle,
+	}
+	for eid in toggles.keys():
+		var btn: CheckButton = toggles[eid]
+		if btn:
+			enabled[str(eid)] = btn.button_pressed
+	params["ascii"] = _ascii_params()
+	params["feedback"] = _feedback_params()
+	params["glitch"] = _glitch_params()
+	params["chromatic"] = _chromatic_params()
+	params["tone"] = _tone_params()
+	params["hole"] = _hole_params()
+	params["wireframe"] = _wireframe_params()
+	params["point_cloud"] = _point_cloud_params()
+	params["camera_fx"] = _camera_fx_params()
+	params["material_override"] = _material_override_params()
+	params["fog"] = _fog_params()
+	fx["enabled"] = enabled
+	fx["params"] = params
+	var schedules := _capture_fx_schedules()
+	var play := {
+		"mode": _play_mode_id(),
+		"audio_reactive": play_audio_reactive.button_pressed if play_audio_reactive else false,
+	}
+	var deform := {}
+	for field in [
+		"affect_scale", "scale_x", "scale_y", "scale_z", "scale_amount", "scale_source",
+		"affect_rotation", "rotation_x", "rotation_y", "rotation_z", "rotation_amount", "rotation_source",
+		"affect_noise", "noise_x", "noise_y", "noise_z", "noise_amount", "noise_scale", "noise_source",
+		"camera_preset", "camera_rate", "camera_depth",
+		"target_main", "target_scatter", "target_environment", "target_lights",
+		"rotation_target_main", "rotation_target_scatter", "rotation_target_environment",
+		"rotation_target_lights", "rotation_target_camera",
+		"noise_target_main", "noise_target_scatter", "noise_target_environment", "noise_target_lights",
+	]:
+		deform[field] = RH.get_field(str(field), null)
+	deform["camera_motion"] = camera_motion_toggle.button_pressed if camera_motion_toggle else false
+	deform["scale_schedule"] = scale_schedule.button_pressed if scale_schedule else false
+	deform["rotation_schedule"] = rotation_schedule.button_pressed if rotation_schedule else false
+	deform["noise_schedule"] = noise_schedule.button_pressed if noise_schedule else false
+	deform["camera_schedule"] = camera_schedule.button_pressed if camera_schedule else false
+	var drivers := {}
+	var hub = _drv()
+	if hub != null and hub.has_method("serialize"):
+		var d: Variant = hub.call("serialize")
+		if d is Dictionary:
+			drivers = d
+	return {
+		"fx": fx,
+		"play_all": play,
+		"deform": deform,
+		"drivers": drivers,
+		"bend": _capture_bend_preset(),
+		"schedules": schedules,
+	}
+
+
+func _capture_bend_preset() -> Dictionary:
+	return {
+		"on": nonlinear_camera_toggle.button_pressed if nonlinear_camera_toggle else false,
+		"schedule": nonlinear_camera_schedule.button_pressed if nonlinear_camera_schedule else false,
+		"strength": SliderSpinLinkScr.param_of(np_strength_slider) if np_strength_slider else 1.0,
+		"near": SliderSpinLinkScr.param_of(np_start_slider) if np_start_slider else 4.0,
+		"far": SliderSpinLinkScr.param_of(np_end_slider) if np_end_slider else 35.0,
+		"bend": SliderSpinLinkScr.param_of(np_bend_slider) if np_bend_slider else 90.0,
+		"auto_center": np_auto_center.button_pressed if np_auto_center else true,
+		"lift": SliderSpinLinkScr.param_of(np_lift_slider) if np_lift_slider else 0.0,
+	}
+
+
+func _play_all_fx_pairs() -> Array:
+	return [
+		[ascii_toggle, ascii_schedule, "ascii"],
+		[feedback_toggle, feedback_schedule, "feedback"],
+		[glitch_toggle, glitch_schedule, "glitch"],
+		[chromatic_toggle, chromatic_schedule, "chromatic"],
+		[tone_toggle, tone_schedule, "tone"],
+		[hole_toggle, hole_schedule, "hole"],
+		[wireframe_toggle, wireframe_schedule, "wireframe"],
+		[point_cloud_toggle, point_cloud_schedule, "point_cloud"],
+		[camera_fx_toggle, camera_fx_schedule, "camera_fx"],
+		[material_override_toggle, material_override_schedule, "material_override"],
+	]
+
+
+func _capture_fx_schedules() -> Dictionary:
+	var schedules := {}
+	for sid in _play_all_fx_pairs():
+		var sched: CheckButton = sid[1]
+		if sched:
+			schedules[str(sid[2])] = sched.button_pressed
+	if fog_schedule:
+		schedules["fog"] = fog_schedule.button_pressed
+	if style_switch_toggle:
+		schedules["style_switch"] = style_switch_toggle.button_pressed
+	return schedules
+
+
+func _selected_play_preset_name() -> String:
+	if play_preset_menu == null or play_preset_menu.disabled:
+		return ""
+	var i := play_preset_menu.selected
+	if i < 0 or i >= play_preset_menu.item_count:
+		return ""
+	var text := play_preset_menu.get_item_text(i).strip_edges()
+	if text == EDIT_PRESETS_MENU_ITEM:
+		return ""
+	return text
+
+
+func _enabled_play_all_fx_ids(enabled: Dictionary) -> Array:
+	var ids: Array = []
+	for eid in ShowDirector.PLAY_ALL_FX_IDS:
+		if bool(enabled.get(eid, false)):
+			ids.append(eid)
+	return ids
+
+
+func _apply_fx_preset(data: Dictionary) -> void:
+	## Restore the snapshot only. Never start Play All or force-on extra FX.
+	var drv: Variant = data.get("drivers", {})
+	if drv is Dictionary and _drv() != null and _drv().has_method("deserialize"):
+		_drv().call("deserialize", drv)
+		_rebuild_driver_cards()
+	var deform: Variant = data.get("deform", {})
+	if deform is Dictionary:
+		_apply_deform_preset(deform as Dictionary)
+	var fx: Variant = data.get("fx", {})
+	if fx is Dictionary:
+		ShowDirector.import_fx_state(fx as Dictionary)
+		_restore_fx_sliders_from_director()
+	_apply_bend_preset(data.get("bend", {}))
+	var schedules: Variant = data.get("schedules", {})
+	if schedules is Dictionary:
+		_apply_fx_schedules(schedules as Dictionary)
+	_sync_conditional_ui()
+
+
+func _apply_play_all_preset_knobs(play: Dictionary) -> void:
+	var mode := str(play.get("mode", "cycle"))
+	# Presets saved before Audio became a separate switch fall back to Cycle.
+	if mode == "audio":
+		mode = "cycle"
+	var mi := PLAY_MODE_IDS.find(mode)
+	if play_mode and mi >= 0:
+		play_mode.set_block_signals(true)
+		play_mode.select(mi)
+		play_mode.set_block_signals(false)
+	if play_audio_reactive:
+		_set_check_no_signal(play_audio_reactive, bool(play.get("audio_reactive", false)))
+
+
+func _apply_deform_preset(deform: Dictionary) -> void:
+	for field in deform.keys():
+		var key := str(field)
+		if key in ["camera_motion", "scale_schedule", "rotation_schedule", "noise_schedule", "camera_schedule"]:
+			continue
+		var v: Variant = deform[field]
+		if v != null:
+			RH.set_field(key, v)
+	_syncing_ui = true
+	_set_check_no_signal(affect_scale, bool(RH.get_field("affect_scale", false)))
+	_set_check_no_signal(affect_rotation, bool(RH.get_field("affect_rotation", false)))
+	_set_check_no_signal(affect_noise, bool(RH.get_field("affect_noise", false)))
+	_set_check_no_signal(scale_x, bool(RH.get_field("scale_x", true)))
+	_set_check_no_signal(scale_y, bool(RH.get_field("scale_y", true)))
+	_set_check_no_signal(scale_z, bool(RH.get_field("scale_z", true)))
+	_set_check_no_signal(rotation_x, bool(RH.get_field("rotation_x", true)))
+	_set_check_no_signal(rotation_y, bool(RH.get_field("rotation_y", true)))
+	_set_check_no_signal(rotation_z, bool(RH.get_field("rotation_z", true)))
+	_set_check_no_signal(noise_x, bool(RH.get_field("noise_x", true)))
+	_set_check_no_signal(noise_y, bool(RH.get_field("noise_y", true)))
+	_set_check_no_signal(noise_z, bool(RH.get_field("noise_z", true)))
+	_sync_target_checkboxes_from_rh()
+	_select_camera_preset(str(RH.get_field("camera_preset", "Off")))
+	var cam_on := bool(deform.get("camera_motion", str(RH.get_field("camera_preset", "Off")) != "Off"))
+	_set_check_no_signal(camera_motion_toggle, cam_on)
+	_select_driver(scale_source, str(RH.get_field("scale_source", "off")))
+	_select_driver(rotation_source, str(RH.get_field("rotation_source", "highs")))
+	_select_driver(noise_source, str(RH.get_field("noise_source", "bass")))
+	_reset_driven_num(_scale_amount_slider, float(RH.get_field("scale_amount", 25.0)))
+	if scale_amount_spin:
+		scale_amount_spin.set_value_no_signal(float(RH.get_field("scale_amount", 25.0)))
+	_reset_driven_num(_rotation_amount_slider, float(RH.get_field("rotation_amount", 1.0)))
+	if rotation_amount_spin:
+		rotation_amount_spin.set_value_no_signal(float(RH.get_field("rotation_amount", 1.0)))
+	_reset_driven_num(noise_amount, float(RH.get_field("noise_amount", 2.0)))
+	_reset_driven_num(noise_scale, float(RH.get_field("noise_scale", 2.0)))
+	_reset_driven_num(camera_rate, clampf(float(RH.get_field("camera_rate", 0.4)) * 20.0, 1.0, 100.0))
+	_reset_driven_num(camera_depth, clampf(float(RH.get_field("camera_depth", 0.75)) * 100.0, 0.0, 100.0))
+	if not cam_on:
+		_select_camera_preset("Off")
+		RH.set_field("camera_preset", "Off")
+	if deform.has("scale_schedule"):
+		_set_check_no_signal(scale_schedule, bool(deform["scale_schedule"]))
+		ShowDirector.fx_automation.set_gate_enabled(RH.schedule_gate_id("scale"), bool(deform["scale_schedule"]))
+	if deform.has("rotation_schedule"):
+		_set_check_no_signal(rotation_schedule, bool(deform["rotation_schedule"]))
+		ShowDirector.fx_automation.set_gate_enabled(RH.schedule_gate_id("rotation"), bool(deform["rotation_schedule"]))
+	if deform.has("noise_schedule"):
+		_set_check_no_signal(noise_schedule, bool(deform["noise_schedule"]))
+		ShowDirector.fx_automation.set_gate_enabled(RH.schedule_gate_id("noise"), bool(deform["noise_schedule"]))
+	if deform.has("camera_schedule"):
+		_set_check_no_signal(camera_schedule, bool(deform["camera_schedule"]))
+		ShowDirector.fx_automation.set_gate_enabled(RH.schedule_gate_id("camera"), bool(deform["camera_schedule"]))
+	_syncing_ui = false
+	if not bool(RH.get_field("affect_rotation", false)):
+		ShowDirector.restore_reactive_poses()
+
+
+func _apply_bend_preset(raw: Variant) -> void:
+	if not (raw is Dictionary) or (raw as Dictionary).is_empty():
+		return
+	var bend: Dictionary = raw
+	_restore_preset_slider(np_strength_slider, bend.get("strength", 1.0))
+	_restore_preset_slider(np_start_slider, bend.get("near", 4.0))
+	_restore_preset_slider(np_end_slider, bend.get("far", 35.0))
+	_restore_preset_slider(np_bend_slider, bend.get("bend", 90.0))
+	_restore_preset_slider(np_lift_slider, bend.get("lift", 0.0))
+	if np_auto_center:
+		_set_check_no_signal(np_auto_center, bool(bend.get("auto_center", true)))
+	var on := bool(bend.get("on", false))
+	_set_check_no_signal(nonlinear_camera_toggle, on)
+	if nonlinear_camera_schedule:
+		_set_check_no_signal(nonlinear_camera_schedule, bool(bend.get("schedule", on)))
+	_apply_nonlinear_camera(on)
+
+
+func _restore_preset_slider(slider: HSlider, raw: Variant) -> void:
+	if slider == null or not is_instance_valid(slider):
+		return
+	if raw is String:
+		SliderSpinLinkScr.set_expr(slider, str(raw), false)
+	else:
+		_reset_driven_num(slider, float(raw))
 
 
 func _sync_all_widgets_after_defaults_reset() -> void:
@@ -1552,13 +2226,15 @@ func _sync_all_widgets_after_defaults_reset() -> void:
 	_reset_driven_num(_rotation_amount_slider, 1.0)
 	if rotation_amount_spin:
 		rotation_amount_spin.set_value_no_signal(1.0)
-	_reset_driven_num(noise_amount, 28.0)
-	_reset_driven_num(noise_scale, 4.0)
-	_reset_driven_num(camera_rate, 20.0)
-	_reset_driven_num(camera_depth, 55.0)
+	_reset_driven_num(noise_amount, 2.0)
+	_reset_driven_num(noise_scale, 2.0)
+	_reset_driven_num(camera_rate, 8.0)
+	_reset_driven_num(camera_depth, 75.0)
 	for sched in [scale_schedule, light_schedule, emission_schedule, rotation_schedule, noise_schedule, camera_schedule, nonlinear_camera_schedule]:
 		_set_check_no_signal(sched, false)
 	_set_check_no_signal(play_all_toggle, false)
+	_set_auto_mode_branch_presets(false)
+	_clear_play_preset_selection()
 	_set_check_no_signal(ascii_toggle, false)
 	_set_check_no_signal(particles_toggle, false)
 	_set_check_no_signal(feedback_toggle, false)
@@ -1633,15 +2309,12 @@ func _sync_all_widgets_after_defaults_reset() -> void:
 	_reset_driven_num(intensity_slider, 2.0)
 	_reset_driven_num(sensitivity_slider, 5.0)
 	_reset_driven_num(noise_floor_slider, 0.018)
-	_reset_driven_num(play_speed_slider, 1.0)
-	_reset_driven_num(play_cycle_slider, 12.0)
-	_reset_driven_num(play_active_slider, 6.0)
 	_reset_driven_num(style_interval_slider, 5.0)
-	_reset_driven_num(feedback_mix_slider, 70.0)
-	_reset_driven_num(feedback_persist_slider, 85.0)
-	_reset_driven_num(feedback_blur_slider, 35.0)
+	_reset_driven_num(feedback_mix_slider, FEEDBACK_DEFAULT_OPACITY)
+	_reset_driven_num(feedback_persist_slider, FEEDBACK_DEFAULT_PERSISTENCE)
+	_reset_driven_num(feedback_blur_slider, FEEDBACK_DEFAULT_BLUR)
 	if feedback_blend and feedback_blend.item_count > 0:
-		feedback_blend.select(0)
+		feedback_blend.select(FEEDBACK_BLEND_NAMES.find(FEEDBACK_DEFAULT_BLEND))
 	_reset_driven_num(glitch_vsize_slider, 24.0)
 	_reset_driven_num(glitch_amount_slider, 85.0)
 	_reset_driven_num(glitch_speed_slider, 6.0)
@@ -1662,6 +2335,7 @@ func _sync_all_widgets_after_defaults_reset() -> void:
 	_reset_driven_num(camera_fx_aperture_slider, 2.8)
 	_reset_driven_num(camera_fx_focus_slider, SceneMeshFx.CAM_FOCUS_NEAR_DEFAULT)
 	_reset_driven_num(camera_fx_focus_far_slider, SceneMeshFx.CAM_FOCUS_FAR_MAX)
+	_reset_driven_num(camera_fx_falloff_slider, 70.0)
 	_reset_driven_num(camera_fx_bokeh_slider, 55.0)
 	_reset_driven_num(_camera_fx_lens_slider, 0.0)
 	_user_density_min = 8.0
@@ -1669,8 +2343,6 @@ func _sync_all_widgets_after_defaults_reset() -> void:
 	_reset_driven_num(_ascii_density_slider, 80.0)
 	if _density_range and _density_range.has_method("reset_to_defaults"):
 		_density_range.reset_to_defaults(8.0, 80.0)
-	if _play_schedule_range and _play_schedule_range.has_method("reset_to_defaults"):
-		_play_schedule_range.reset_to_defaults(4.0, 4.0)
 	for rs_any in _schedule_ranges.values():
 		if rs_any != null and is_instance_valid(rs_any) and rs_any.has_method("reset_to_defaults"):
 			rs_any.reset_to_defaults(4.0, 4.0)
@@ -1747,7 +2419,10 @@ func _sync_conditional_ui() -> void:
 		nonlinear_camera_body.visible = nonlinear_camera_toggle.button_pressed
 	if nonlinear_camera_schedule_host and nonlinear_camera_toggle and nonlinear_camera_schedule:
 		nonlinear_camera_schedule_host.visible = nonlinear_camera_toggle.button_pressed and nonlinear_camera_schedule.button_pressed
+	# Keep Auto Mode's branch controls inside its expanded toggle; they are not
+	# actionable until the master mode is enabled.
 	play_all_body.visible = play_all_toggle.button_pressed
+	_sync_auto_mode_panels()
 	ascii_schedule_host.visible = ascii_toggle.button_pressed and ascii_schedule.button_pressed
 	feedback_schedule_host.visible = feedback_toggle.button_pressed and feedback_schedule.button_pressed
 	glitch_schedule_host.visible = glitch_toggle.button_pressed and glitch_schedule.button_pressed
@@ -1926,7 +2601,7 @@ func _on_particles_target_toggled(_v: bool = false) -> void:
 func _on_camera_motion_toggled(on: bool) -> void:
 	if on:
 		if camera_preset.selected <= 0:
-			camera_preset.select(1)  # Pitch rock
+			camera_preset.select(1)  # Walk
 			RH.set_field("camera_preset", CAMERA_PRESETS[1])
 	else:
 		camera_preset.select(0)
@@ -2091,7 +2766,7 @@ func _feedback_params() -> Dictionary:
 		"mix_amount": op,
 		"opacity": op,
 		"persistence": SliderSpinLinkScr.mapped_param(feedback_persist_slider, 100.0),
-		"blur": SliderSpinLinkScr.mapped_param(feedback_blur_slider, 100.0) if feedback_blur_slider else 0.35,
+		"blur": SliderSpinLinkScr.mapped_param(feedback_blur_slider, 100.0) if feedback_blur_slider else 0.20,
 		"blend": _feedback_blend_name(),
 	}
 
@@ -2099,7 +2774,7 @@ func _feedback_params() -> Dictionary:
 func _feedback_blend_name() -> String:
 	var idx := feedback_blend.selected if feedback_blend else 0
 	if idx < 0 or idx >= FEEDBACK_BLEND_NAMES.size():
-		return "Normal"
+		return FEEDBACK_DEFAULT_BLEND
 	return str(FEEDBACK_BLEND_NAMES[idx])
 
 
@@ -2252,6 +2927,7 @@ func _camera_fx_params() -> Dictionary:
 		"focus_near": near_m,
 		"focus_far": far_m,
 		"focus_distance": near_m,
+		"focus_softness": SliderSpinLinkScr.mapped_param(camera_fx_falloff_slider, 100.0),
 		"bokeh": SliderSpinLinkScr.mapped_param(camera_fx_bokeh_slider, 100.0),
 		"lens_distortion": SliderSpinLinkScr.mapped_param(_camera_fx_lens_slider, 100.0) if _camera_fx_lens_slider else 0.0,
 		"near_enabled": true,
@@ -2278,9 +2954,6 @@ func _on_effect_schedule(effect_id: String, on: bool) -> void:
 		var rs = _schedule_ranges[effect_id]
 		active = float(rs.get_active())
 		inactive = float(rs.get_inactive())
-	elif _play_schedule_range:
-		active = float(_play_schedule_range.get_active())
-		inactive = float(_play_schedule_range.get_inactive())
 	ShowDirector.fx_automation.set_gate_active_inactive(effect_id, active, inactive)
 	ShowDirector.fx_automation.set_gate_enabled(effect_id, on)
 	ShowDirector.refresh_effect(effect_id)
@@ -2313,145 +2986,165 @@ func _on_effect_schedule_range(effect_id: String, active: float, inactive: float
 			ShowDirector.refresh_effect(effect_id)
 
 
-func _on_play_schedule_range(active: float, inactive: float) -> void:
-	## Random / Evolution: Active/Inactive is the master mute clock. Cycle/audio: base hint for independent rolls.
-	ShowDirector.fx_automation.set_gate_active_inactive("play_all", active, inactive)
-	if not play_all_toggle.button_pressed:
-		return
-	var mode := _play_mode_id()
-	ShowDirector.fx_automation.configure_play_all(
-		mode,
-		_eval_slider_num(play_speed_slider),
-		play_audio_reactive.button_pressed or mode == "audio",
-		active,
-		inactive
-	)
-	if _play_mode_uses_subset(mode):
-		# Master schedule only — do not re-roll per-effect Active/Inactive.
-		for eid in FX_IDS:
-			ShowDirector.refresh_effect(eid)
-		return
-	_apply_randomized_play_all_schedules(active, inactive)
-	for eid2 in FX_IDS:
-		if ShowDirector.fx_automation.is_gate_enabled(eid2):
-			ShowDirector.refresh_effect(eid2)
-
-
-func _apply_randomized_play_all_schedules(base_active: float, base_inactive: float) -> void:
-	## Roll unique Active/Inactive (+ phase stagger) per effect; sync schedule UI.
-	var rolled: Dictionary = ShowDirector.fx_automation.randomize_play_all_schedules(
-		base_active, base_inactive
-	)
+func _apply_play_all_schedule_state() -> void:
+	## Auto Mode owns post-FX schedules. Cycle gets one sparse, phase-staggered schedule
+	## per effect; Random/Evolution retain their subset scheduling but keep the rows enabled.
+	ShowDirector.fx_automation.set_gate_enabled("play_all", false)
+	if not _play_mode_uses_subset():
+		ShowDirector.fx_automation.apply_play_all_staggered_schedules(
+			PLAY_ALL_INTERNAL_ACTIVE_SEC,
+			PLAY_ALL_INTERNAL_INACTIVE_SEC
+		)
 	_syncing_ui = true
-	for eid in FX_IDS:
-		if str(eid) == "fog":
-			continue
-		var pair = rolled.get(eid, null)
-		if pair == null:
-			pair = ShowDirector.fx_automation.apply_independent_gate_schedule(
-				eid, base_active, base_inactive, true
+	for sid in _play_all_fx_pairs():
+		var schedule: CheckButton = sid[1]
+		var effect_id := str(sid[2])
+		if schedule:
+			_set_check_no_signal(schedule, true)
+		var range = _schedule_ranges.get(effect_id)
+		if range != null and is_instance_valid(range) and range.has_method("reset_to_defaults"):
+			range.reset_to_defaults(
+				ShowDirector.fx_automation.get_gate_active(effect_id),
+				ShowDirector.fx_automation.get_gate_inactive(effect_id)
 			)
-		if _schedule_ranges.has(eid):
-			_schedule_ranges[eid].set_range_values(float(pair.x), float(pair.y))
+	_syncing_ui = false
+	for effect_id in _play_all_schedule_eids():
+		ShowDirector.refresh_effect(str(effect_id))
+
+
+func _apply_fx_schedules(schedules: Dictionary) -> void:
+	_syncing_ui = true
+	for sid in _play_all_fx_pairs():
+		var eid := str(sid[2])
+		if not schedules.has(eid):
+			continue
+		var sched: CheckButton = sid[1]
+		var on := bool(schedules[eid])
+		if sched:
+			_set_check_no_signal(sched, on)
+		ShowDirector.fx_automation.set_gate_enabled(eid, on)
+	if fog_schedule and schedules.has("fog"):
+		_set_check_no_signal(fog_schedule, bool(schedules["fog"]))
+		ShowDirector.fx_automation.set_gate_enabled("fog", bool(schedules["fog"]))
+	if style_switch_toggle and schedules.has("style_switch"):
+		var want_style := bool(schedules["style_switch"])
+		_set_check_no_signal(style_switch_toggle, want_style)
+		ShowDirector.fx_automation.set_style_active(want_style)
 	_syncing_ui = false
 
 
+func _bind_play_all_to_enabled_fx(enabled: Dictionary) -> void:
+	## Play All machinery on the saved-on FX only — do not force deform / extra post-FX.
+	var mode := _play_mode_id()
+	var audio_on := play_audio_reactive.button_pressed if play_audio_reactive else false
+	var ids: Array = _enabled_play_all_fx_ids(enabled)
+	ShowDirector.fx_automation.configure_play_all(mode, 1.0, audio_on, PLAY_ALL_INTERNAL_ACTIVE_SEC, PLAY_ALL_INTERNAL_INACTIVE_SEC)
+	ShowDirector.set_play_all_effects(true, PLAY_ALL_INTERNAL_ACTIVE_SEC + PLAY_ALL_INTERNAL_INACTIVE_SEC, PLAY_ALL_INTERNAL_ACTIVE_SEC, ids)
+	_apply_play_all_schedule_state()
+	if audio_on:
+		_set_check_no_signal(play_audio_reactive, true)
+		ShowDirector.fx_automation.set_play_all_audio_reactive(true)
+		_apply_play_all_audio_drivers(_play_mode_shuffle_on())
+
+
+func _play_all_schedule_eids() -> Array:
+	var ids: Array = ShowDirector.fx_automation.get_play_all_ids()
+	if not ids.is_empty():
+		return ids
+	var fallback: Array = []
+	for eid in ShowDirector.PLAY_ALL_FX_IDS:
+		fallback.append(eid)
+	return fallback
+
+
 func _on_play_all_toggled(on: bool) -> void:
-	_sync_conditional_ui()
+	## Auto Mode master: Presets branch applies one snapshot; Play All enables the full stack.
 	if on:
-		var active: float = float(_play_schedule_range.get_active()) if _play_schedule_range else 4.0
-		var inactive: float = float(_play_schedule_range.get_inactive()) if _play_schedule_range else 4.0
-		var mode := _play_mode_id()
-		var speed := _eval_slider_num(play_speed_slider)
-		var audio_on := play_audio_reactive.button_pressed or mode == "audio"
-		# Enable ALL visual effects + their schedules (Play All = everything).
-		var pairs := [
-			[ascii_toggle, ascii_schedule, "ascii"],
-			[feedback_toggle, feedback_schedule, "feedback"],
-			[glitch_toggle, glitch_schedule, "glitch"],
-			[chromatic_toggle, chromatic_schedule, "chromatic"],
-			[tone_toggle, tone_schedule, "tone"],
-			[hole_toggle, hole_schedule, "hole"],
-			[wireframe_toggle, wireframe_schedule, "wireframe"],
-			[point_cloud_toggle, point_cloud_schedule, "point_cloud"],
-			[camera_fx_toggle, camera_fx_schedule, "camera_fx"],
-			[material_override_toggle, material_override_schedule, "material_override"],
-		]
-		_syncing_ui = true
-		for sid in pairs:
-			var master: CheckButton = sid[0]
-			var sched: CheckButton = sid[1]
-			if master:
-				master.button_pressed = true
-			if sched:
-				sched.button_pressed = true
-		style_switch_toggle.button_pressed = true
-		_syncing_ui = false
-		_enable_deform_for_play_all()
-		# Apply each effect with current params (UI toggles may no-op under _syncing_ui).
-		ShowDirector.set_effect("ascii", true, _ascii_params())
-		ShowDirector.set_effect("feedback", true, _feedback_params())
-		ShowDirector.set_effect("glitch", true, _glitch_params())
-		ShowDirector.set_effect("chromatic", true, _chromatic_params())
-		ShowDirector.set_effect("tone", true, _tone_params())
-		ShowDirector.set_effect("hole", true, _hole_params())
-		ShowDirector.set_effect("wireframe", true, _wireframe_params())
-		ShowDirector.set_effect("point_cloud", true, _point_cloud_params())
-		ShowDirector.set_effect("camera_fx", true, _camera_fx_params())
-		ShowDirector.set_effect("material_override", true, _material_override_params())
-		ShowDirector.fx_automation.set_style_interval(maxf(0.5, _eval_slider_num(style_interval_slider) / maxf(speed, 0.25)))
-		ShowDirector.fx_automation.set_style_active(true)
-		ShowDirector.fx_automation.configure_play_all(mode, speed, audio_on, active, inactive)
-		# enable_play_all: Random/Evolution uses master schedule; cycle/audio rolls independent FX schedules.
-		ShowDirector.set_play_all_effects(true, active + inactive, active)
-		_syncing_ui = true
-		for eid_ui in FX_IDS:
-			if not _schedule_ranges.has(eid_ui):
-				continue
-			if _play_mode_uses_subset(mode):
-				# Mirror master Active/Inactive on per-effect schedule UI for clarity.
-				_schedule_ranges[eid_ui].set_range_values(active, inactive)
-			else:
-				_schedule_ranges[eid_ui].set_range_values(
-					ShowDirector.fx_automation.get_gate_active(eid_ui),
-					ShowDirector.fx_automation.get_gate_inactive(eid_ui)
-				)
-		_syncing_ui = false
-		for eid2 in FX_IDS:
-			ShowDirector.refresh_effect(str(eid2))
-		if audio_on:
-			_set_check_no_signal(play_audio_reactive, true)
-			ShowDirector.fx_automation.set_play_all_audio_reactive(true)
-			_apply_play_all_audio_drivers(_play_mode_shuffle_on())
-		_sync_conditional_ui()
+		if _auto_mode_is_presets():
+			var key := _selected_play_preset_name()
+			if key.is_empty():
+				_sync_conditional_ui()
+				return
+			var data: Dictionary = FxPresetStoreScr.get_preset(key)
+			if data.is_empty():
+				_sync_conditional_ui()
+				return
+			_stop_play_all_keep_look()
+			_apply_fx_preset(data)
+		else:
+			_clear_play_preset_selection()
+			_enable_default_play_all_stack()
 	else:
-		_restore_play_all_audio_drivers()
-		ShowDirector.set_play_all_effects(false)
-		ShowDirector.fx_automation.configure_play_all("cycle", 1.0, false, 4.0, 4.0)
-		_syncing_ui = true
-		ascii_schedule.button_pressed = false
-		feedback_schedule.button_pressed = false
-		glitch_schedule.button_pressed = false
-		chromatic_schedule.button_pressed = false
-		if tone_schedule:
-			tone_schedule.button_pressed = false
-		if hole_schedule:
-			hole_schedule.button_pressed = false
-		wireframe_schedule.button_pressed = false
-		point_cloud_schedule.button_pressed = false
-		camera_fx_schedule.button_pressed = false
-		if material_override_schedule:
-			material_override_schedule.button_pressed = false
-		if fog_schedule:
-			fog_schedule.button_pressed = false
-		style_switch_toggle.button_pressed = false
-		# Leave effect master toggles as-user — only clear Play All scheduling.
-		_syncing_ui = false
-		ShowDirector.fx_automation.set_style_active(false)
-		for eid3 in FX_IDS:
-			ShowDirector.fx_automation.set_gate_enabled(eid3, false)
-			ShowDirector.refresh_effect(eid3)
-		_sync_conditional_ui()
+		_stop_play_all_keep_look()
+	_sync_conditional_ui()
+
+
+func _stop_play_all_keep_look() -> void:
+	## Tear down Play All machinery without forcing a preset. Master FX toggles stay as-is
+	## until the next Play All / Play preset / Reset.
+	_restore_play_all_audio_drivers()
+	ShowDirector.set_play_all_effects(false)
+	ShowDirector.fx_automation.configure_play_all("cycle", 1.0, false, 4.0, 4.0)
+	ShowDirector.fx_automation.set_gate_enabled("play_all", false)
+	_syncing_ui = true
+	ascii_schedule.button_pressed = false
+	feedback_schedule.button_pressed = false
+	glitch_schedule.button_pressed = false
+	chromatic_schedule.button_pressed = false
+	if tone_schedule:
+		tone_schedule.button_pressed = false
+	if hole_schedule:
+		hole_schedule.button_pressed = false
+	wireframe_schedule.button_pressed = false
+	point_cloud_schedule.button_pressed = false
+	camera_fx_schedule.button_pressed = false
+	if material_override_schedule:
+		material_override_schedule.button_pressed = false
+	if fog_schedule:
+		fog_schedule.button_pressed = false
+	style_switch_toggle.button_pressed = false
+	_syncing_ui = false
+	ShowDirector.fx_automation.set_style_active(false)
+	for eid3 in FX_IDS:
+		ShowDirector.fx_automation.set_gate_enabled(eid3, false)
+		ShowDirector.refresh_effect(eid3)
+
+
+func _enable_default_play_all_stack() -> void:
+	## Play All always means the full visual stack + deform. Never a named preset.
+	var mode := _play_mode_id()
+	var audio_on := play_audio_reactive.button_pressed
+	_syncing_ui = true
+	for sid in _play_all_fx_pairs():
+		var master: CheckButton = sid[0]
+		var sched: CheckButton = sid[1]
+		if master:
+			master.button_pressed = true
+		if sched:
+			sched.button_pressed = true
+	style_switch_toggle.button_pressed = true
+	_syncing_ui = false
+	_enable_deform_for_play_all()
+	ShowDirector.set_effect("ascii", true, _ascii_params())
+	ShowDirector.set_effect("feedback", true, _feedback_params())
+	ShowDirector.set_effect("glitch", true, _glitch_params())
+	ShowDirector.set_effect("chromatic", true, _chromatic_params())
+	ShowDirector.set_effect("tone", true, _tone_params())
+	ShowDirector.set_effect("hole", true, _hole_params())
+	ShowDirector.set_effect("wireframe", true, _wireframe_params())
+	ShowDirector.set_effect("point_cloud", true, _point_cloud_params())
+	ShowDirector.set_effect("camera_fx", true, _camera_fx_params())
+	ShowDirector.set_effect("material_override", true, _material_override_params())
+	ShowDirector.fx_automation.set_style_interval(_eval_slider_num(style_interval_slider))
+	ShowDirector.fx_automation.set_style_active(true)
+	ShowDirector.fx_automation.configure_play_all(mode, 1.0, audio_on, PLAY_ALL_INTERNAL_ACTIVE_SEC, PLAY_ALL_INTERNAL_INACTIVE_SEC)
+	ShowDirector.set_play_all_effects(true, PLAY_ALL_INTERNAL_ACTIVE_SEC + PLAY_ALL_INTERNAL_INACTIVE_SEC, PLAY_ALL_INTERNAL_ACTIVE_SEC)
+	_apply_play_all_schedule_state()
+	if audio_on:
+		_set_check_no_signal(play_audio_reactive, true)
+		ShowDirector.fx_automation.set_play_all_audio_reactive(true)
+		_apply_play_all_audio_drivers(_play_mode_shuffle_on())
+	_sync_conditional_ui()
 
 
 func _enable_deform_for_play_all() -> void:
@@ -2486,49 +3179,28 @@ func _play_mode_uses_subset(mode: String = "") -> bool:
 
 
 func _on_play_mode_selected(index: int) -> void:
-	if not play_all_toggle.button_pressed:
+	if not _play_all_driving():
 		return
 	var mode: String = "cycle"
 	if index >= 0 and index < PLAY_MODE_IDS.size():
 		mode = str(PLAY_MODE_IDS[index])
-	if mode == "audio":
-		play_audio_reactive.button_pressed = true
-		_apply_play_all_audio_drivers(_play_mode_shuffle_on())
-	var active := float(_play_schedule_range.get_active()) if _play_schedule_range else 4.0
-	var inactive := float(_play_schedule_range.get_inactive()) if _play_schedule_range else 4.0
 	ShowDirector.fx_automation.configure_play_all(
 		mode,
-		_eval_slider_num(play_speed_slider),
-		play_audio_reactive.button_pressed or mode == "audio",
-		active,
-		inactive
+		1.0,
+		play_audio_reactive.button_pressed,
+		PLAY_ALL_INTERNAL_ACTIVE_SEC,
+		PLAY_ALL_INTERNAL_INACTIVE_SEC
 	)
-	if _play_mode_uses_subset(mode):
-		_syncing_ui = true
-		for eid_ui in FX_IDS:
-			if _schedule_ranges.has(eid_ui):
-				_schedule_ranges[eid_ui].set_range_values(active, inactive)
-		_syncing_ui = false
-		for eid in FX_IDS:
-			ShowDirector.refresh_effect(str(eid))
-	elif mode == "cycle" or mode == "audio":
-		_apply_randomized_play_all_schedules(active, inactive)
-		for eid2 in FX_IDS:
-			ShowDirector.refresh_effect(str(eid2))
-
-
-func _on_play_speed(_v: float = 0.0) -> void:
-	var v := _eval_slider_num(play_speed_slider)
-	ShowDirector.fx_automation.set_play_all_speed(v)
-	if play_all_toggle.button_pressed:
-		ShowDirector.fx_automation.set_style_interval(maxf(0.5, _eval_slider_num(style_interval_slider) / maxf(v, 0.25)))
+	_apply_play_all_schedule_state()
+	for eid in _play_all_schedule_eids():
+		ShowDirector.refresh_effect(str(eid))
 
 
 func _on_play_audio_reactive(on: bool) -> void:
 	ShowDirector.fx_automation.set_play_all_audio_reactive(on)
-	if not play_all_toggle.button_pressed:
+	if not _play_all_driving():
 		return
-	# Do not force Mode=Audio — Shuffle mode still cycles Cycle/Random/Audio/Evolution.
+	# Audio reactivity is independent of mode; Shuffle still cycles Cycle/Random/Evolution.
 	if on:
 		_apply_play_all_audio_drivers(_play_mode_shuffle_on())
 	else:
@@ -2542,11 +3214,11 @@ func _play_mode_shuffle_on() -> bool:
 
 
 func _play_all_audio_wanted() -> bool:
-	if play_all_toggle == null or not play_all_toggle.button_pressed:
+	if not _play_all_driving():
 		return false
 	if play_audio_reactive != null and play_audio_reactive.button_pressed:
 		return true
-	return _play_mode_id() == "audio"
+	return false
 
 
 func _fmt_audio_drive_expr(driver: String, scale: float) -> String:
@@ -2567,9 +3239,9 @@ func _play_all_deform_audio_targets() -> Array:
 	if _rotation_amount_slider:
 		out.append({"kind": "slider", "slider": _rotation_amount_slider, "scale": 3.0, "key": "deform_rotation"})
 	if noise_amount:
-		out.append({"kind": "slider", "slider": noise_amount, "scale": 25.0, "key": "deform_noise_amount"})
+		out.append({"kind": "slider", "slider": noise_amount, "scale": 3.0, "key": "deform_noise_amount"})
 	if noise_scale:
-		out.append({"kind": "slider", "slider": noise_scale, "scale": 5.0, "key": "deform_noise_scale"})
+		out.append({"kind": "slider", "slider": noise_scale, "scale": 2.0, "key": "deform_noise_scale"})
 	if camera_rate:
 		out.append({"kind": "slider", "slider": camera_rate, "scale": 3.0, "key": "deform_camera_rate", "mul_max": 3.0})
 	if camera_depth:
@@ -2584,10 +3256,6 @@ func _play_all_fx_audio_targets() -> Array:
 		out.append({"kind": "slider", "slider": _ascii_density_slider, "scale": 80.0, "key": "ascii_density"})
 	if ascii_preset:
 		out.append({"kind": "choice", "opt": ascii_preset, "scale": 8.0, "key": "ascii_style"})
-	if feedback_mix_slider:
-		out.append({"kind": "slider", "slider": feedback_mix_slider, "scale": 2.0, "key": "feedback_mix"})
-	if feedback_persist_slider:
-		out.append({"kind": "slider", "slider": feedback_persist_slider, "scale": 2.0, "key": "feedback_persist"})
 	if glitch_vsize_slider:
 		out.append({"kind": "slider", "slider": glitch_vsize_slider, "scale": 2.0, "key": "glitch_vsize"})
 	if glitch_amount_slider:
@@ -2602,16 +3270,6 @@ func _play_all_fx_audio_targets() -> Array:
 		out.append({"kind": "slider", "slider": glitch_chaos_slider, "scale": 2.0, "key": "glitch_chaos"})
 	if chromatic_amount_slider:
 		out.append({"kind": "slider", "slider": chromatic_amount_slider, "scale": 3.0, "key": "chromatic"})
-	if feedback_blur_slider:
-		out.append({"kind": "slider", "slider": feedback_blur_slider, "scale": 2.0, "key": "feedback_blur"})
-	if tone_invert_slider:
-		out.append({"kind": "slider", "slider": tone_invert_slider, "scale": 2.0, "key": "tone_invert"})
-	if tone_brightness_slider:
-		out.append({"kind": "slider", "slider": tone_brightness_slider, "scale": 2.0, "key": "tone_brightness", "mul_max": 2.0})
-	if tone_contrast_slider:
-		out.append({"kind": "slider", "slider": tone_contrast_slider, "scale": 2.0, "key": "tone_contrast", "mul_max": 2.0})
-	if tone_saturation_slider:
-		out.append({"kind": "slider", "slider": tone_saturation_slider, "scale": 2.0, "key": "tone_saturation", "mul_max": 2.0})
 	if hole_strength_slider:
 		out.append({"kind": "slider", "slider": hole_strength_slider, "scale": 3.0, "key": "hole_strength"})
 	if hole_size_slider:
@@ -2637,6 +3295,8 @@ func _play_all_fx_audio_targets() -> Array:
 		out.append({"kind": "slider", "slider": camera_fx_focus_slider, "scale": 2.0, "key": "cam_focus_near"})
 	if camera_fx_focus_far_slider:
 		out.append({"kind": "slider", "slider": camera_fx_focus_far_slider, "scale": SceneMeshFx.CAM_FOCUS_FAR_MAX, "key": "cam_focus_far"})
+	if camera_fx_falloff_slider:
+		out.append({"kind": "slider", "slider": camera_fx_falloff_slider, "scale": 1.0, "key": "cam_focus_falloff"})
 	if camera_fx_bokeh_slider:
 		out.append({"kind": "slider", "slider": camera_fx_bokeh_slider, "scale": 2.0, "key": "cam_bokeh"})
 	if _camera_fx_lens_slider:
@@ -3246,14 +3906,14 @@ func _on_tone_params(_v: float = 0.0) -> void:
 
 
 func _setup_feedback_blur() -> void:
-	## Blur 0 = sharp Windows-style trail. 35 reproduces the pre-slider smear look.
+	## Blur 0 = sharp Windows-style trail. The default 20 is a light smear.
 	if feedback_body == null or feedback_persist_slider == null:
 		return
 	var after: Node = feedback_persist_slider.get_parent()
 	if after == null or after == feedback_body:
 		after = feedback_persist_slider
 	after = _fb_add_label(after, "FeedbackBlurLabel", "Blur amount")
-	feedback_blur_slider = _fb_make_slider("FeedbackBlurSlider", 0.0, 100.0, 1.0, 35.0, "0 = sharp trail (no blur or downsample): moving things stamp copies on a frozen buffer. Higher smears the trail.")
+	feedback_blur_slider = _fb_make_slider("FeedbackBlurSlider", 0.0, 100.0, 1.0, FEEDBACK_DEFAULT_BLUR, "0 = sharp trail (no blur or downsample): moving things stamp copies on a frozen buffer. Higher smears the trail.")
 	after = _fb_add_node(after, feedback_blur_slider)
 	SliderSpinLinkScr.attach_driven(feedback_blur_slider, _on_feedback_params, 100.0)
 	_setup_feedback_blend(after)
@@ -3297,8 +3957,8 @@ func _setup_feedback_blend(after: Node) -> void:
 	feedback_blend.name = "FeedbackBlend"
 	for n in FEEDBACK_BLEND_NAMES:
 		feedback_blend.add_item(str(n))
-	feedback_blend.select(0)
-	feedback_blend.tooltip_text = "How the previous frame is laid over the live one. Normal + Blur 0 + Opacity 100 + Persistence 100 = sharp Windows-style trail (moving things stamp, leftover pixels stay). Brightest / Darkest keep whichever frame is lighter / darker. Edges = only what moved stays. Contrast = trails push lights and darks apart."
+	feedback_blend.select(FEEDBACK_BLEND_NAMES.find(FEEDBACK_DEFAULT_BLEND))
+	feedback_blend.tooltip_text = "How the previous frame is laid over the live one. The default is Edges with Opacity 100, Persistence 100, and Blur 20. Brightest / Darkest keep whichever frame is lighter / darker. Edges = only what moved stays. Contrast = trails push lights and darks apart."
 	_fb_add_node(lbl, feedback_blend)
 	feedback_blend.item_selected.connect(_on_feedback_blend)
 
@@ -3347,15 +4007,24 @@ func _setup_shuffle_and_random() -> void:
 		var cam_iv: HSlider = _shuffle_slots["camera"].get("interval")
 		if cam_iv:
 			SliderSpinLinkScr.attach_driven(cam_iv, Callable(), 1.0)
-	if play_all_body and play_mode:
-		_shuffle_slots["play_mode"] = CycleRandomScr.attach_shuffle(play_all_body, play_mode, "Shuffle mode")
+	if play_all_settings and play_mode:
+		_shuffle_slots["play_mode"] = CycleRandomScr.attach_shuffle(play_all_settings, play_mode, "Shuffle mode")
 		var pm_iv: HSlider = _shuffle_slots["play_mode"].get("interval")
 		if pm_iv:
 			SliderSpinLinkScr.attach_driven(pm_iv, Callable(), 1.0)
 		var pm_tog: Variant = _shuffle_slots["play_mode"].get("toggle")
 		if pm_tog is CheckButton:
-			(pm_tog as CheckButton).tooltip_text = "Cycle Play All Mode (Cycle / Random / Audio / Evolution). With Audio reactive, also shuffles each effect's audio driver and multiplies amounts (2x-10x)."
+			(pm_tog as CheckButton).tooltip_text = "Cycle Play All Mode (Cycle / Random / Evolution). With Audio reactive, also shuffles each effect's audio driver and multiplies amounts (2x-10x)."
 			(pm_tog as CheckButton).toggled.connect(_on_play_mode_shuffle_toggled)
+	elif play_all_body and play_mode:
+		_shuffle_slots["play_mode"] = CycleRandomScr.attach_shuffle(play_all_body, play_mode, "Shuffle mode")
+		var pm_iv_fallback: HSlider = _shuffle_slots["play_mode"].get("interval")
+		if pm_iv_fallback:
+			SliderSpinLinkScr.attach_driven(pm_iv_fallback, Callable(), 1.0)
+		var pm_tog_fallback: Variant = _shuffle_slots["play_mode"].get("toggle")
+		if pm_tog_fallback is CheckButton:
+			(pm_tog_fallback as CheckButton).tooltip_text = "Cycle Play All Mode (Cycle / Random / Evolution). With Audio reactive, also shuffles each effect's audio driver and multiplies amounts (2x-10x)."
+			(pm_tog_fallback as CheckButton).toggled.connect(_on_play_mode_shuffle_toggled)
 	if hole_body and hole_shape:
 		_shuffle_slots["hole"] = CycleRandomScr.attach_shuffle(hole_body, hole_shape, "Shuffle shape")
 		var hole_iv: HSlider = _shuffle_slots["hole"].get("interval")
@@ -3424,10 +4093,14 @@ func _tick_shuffle_and_random(delta: float) -> void:
 func _setup_content_tabs() -> void:
 	var column: VBoxContainer = $Margin/Scroll/Column
 	var title: Label = $Margin/Scroll/Column/Title
+	# "Effects" is already the first content tab; do not repeat it as a heading.
+	title.visible = false
 	_tab_bar = TabBar.new()
 	_tab_bar.add_tab("Effects")
 	_tab_bar.add_tab("Drivers")
 	_tab_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_tab_bar.custom_minimum_size = Vector2(0, 28)
+	_tab_bar.add_theme_font_size_override("font_size", FX_CONTROL_FONT_SIZE)
 	column.add_child(_tab_bar)
 	column.move_child(_tab_bar, title.get_index() + 1)
 	_tab_bar.tab_changed.connect(_on_content_tab)
@@ -3438,30 +4111,92 @@ func _setup_content_tabs() -> void:
 	column.add_child(_drivers_section)
 	column.move_child(_drivers_section, fx_section.get_index() + 1)
 	var hint := Label.new()
-	hint.text = "Click a name (or Copy) to clipboard. On every FX value: pick Driver, or type/paste bass, -bass + 1, bass * 10."
+	hint.text = "Click a name (or Copy) to use it in an FX value. Audio Reactive uses only the named audio sources below; raw EQ bins are never assigned automatically."
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	hint.add_theme_font_size_override("font_size", 12)
+	hint.add_theme_font_size_override("font_size", FX_SETTING_FONT_SIZE)
+	hint.add_theme_color_override("font_color", FX_SETTING_LABEL_COLOR)
 	_drivers_section.add_child(hint)
 	var add_btn := Button.new()
 	add_btn.text = "Add driver…"
+	add_btn.add_theme_font_size_override("font_size", FX_SETTING_FONT_SIZE + 1)
 	add_btn.pressed.connect(func() -> void: _open_driver_modal_for(null))
 	_drivers_section.add_child(add_btn)
 	var built_lbl := Label.new()
-	built_lbl.text = "Built-in"
-	built_lbl.add_theme_font_size_override("font_size", 16)
+	built_lbl.text = "Sources"
+	built_lbl.add_theme_font_size_override("font_size", FX_HEADER_FONT_SIZE)
+	built_lbl.add_theme_color_override("font_color", FX_HEADER_COLOR)
 	_drivers_section.add_child(built_lbl)
 	_drivers_builtin_list = VBoxContainer.new()
 	_drivers_builtin_list.add_theme_constant_override("separation", 4)
 	_drivers_section.add_child(_drivers_builtin_list)
 	var sig_lbl := Label.new()
-	sig_lbl.text = "Signals"
-	sig_lbl.add_theme_font_size_override("font_size", 16)
+	sig_lbl.text = "Modulators"
+	sig_lbl.add_theme_font_size_override("font_size", FX_HEADER_FONT_SIZE)
+	sig_lbl.add_theme_color_override("font_color", FX_HEADER_COLOR)
 	_drivers_section.add_child(sig_lbl)
+	var modulators_hint := Label.new()
+	modulators_hint.text = "Editable built-ins plus any LFO, noise, or random drivers you add. Includes slow movement for gradual changes."
+	modulators_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	modulators_hint.add_theme_font_size_override("font_size", FX_SETTING_FONT_SIZE)
+	modulators_hint.add_theme_color_override("font_color", FX_SETTING_LABEL_COLOR)
+	_drivers_section.add_child(modulators_hint)
 	_drivers_signal_list = VBoxContainer.new()
 	_drivers_signal_list.add_theme_constant_override("separation", 8)
 	_drivers_section.add_child(_drivers_signal_list)
 	_rebuild_driver_cards()
 	_relocate_analyzer_to_drivers()
+
+
+func _move_stage_camera_controls_here() -> void:
+	if fx_section == null or _stage_camera_section != null:
+		return
+	var playlist := get_node_or_null("../PlaylistSidebar")
+	if playlist == null or not playlist.has_method("move_stage_camera_controls_to"):
+		return
+	_stage_camera_toggle = CheckButton.new()
+	_stage_camera_toggle.name = "StageCameraToggle"
+	_stage_camera_toggle.text = "Camera"
+	_stage_camera_toggle.tooltip_text = "Enable or pause the fly-through camera."
+	_stage_camera_toggle.add_theme_font_size_override("font_size", FX_HEADER_FONT_SIZE)
+	_stage_camera_toggle.add_theme_color_override("font_color", FX_HEADER_COLOR)
+	_stage_camera_toggle.add_theme_color_override("font_hover_color", FX_HEADER_COLOR)
+	_stage_camera_section = VBoxContainer.new()
+	_stage_camera_section.name = "StageCameraSection"
+	_stage_camera_section.add_theme_constant_override("separation", 6)
+	var enabled := true
+	if playlist.has_method("is_stage_camera_enabled"):
+		enabled = bool(playlist.call("is_stage_camera_enabled"))
+	_stage_camera_toggle.button_pressed = enabled
+	_stage_camera_section.visible = enabled
+	fx_section.add_child(_stage_camera_toggle)
+	fx_section.add_child(_stage_camera_section)
+	# Keep Auto Mode at the absolute top; Camera follows its expanded body.
+	fx_section.move_child(_stage_camera_toggle, 2)
+	fx_section.move_child(_stage_camera_section, 3)
+	playlist.call("move_stage_camera_controls_to", _stage_camera_section)
+	_nest_setting_body(_stage_camera_section)
+	_quiet_setting_labels(_stage_camera_section)
+	_stage_camera_toggle.toggled.connect(_on_stage_camera_toggled)
+
+
+func _on_stage_camera_toggled(enabled: bool) -> void:
+	if _stage_camera_section:
+		_stage_camera_section.visible = enabled
+	var playlist := get_node_or_null("../PlaylistSidebar")
+	if playlist != null and playlist.has_method("set_stage_camera_enabled"):
+		playlist.call("set_stage_camera_enabled", enabled)
+
+
+func _sync_stage_camera_card() -> void:
+	if _stage_camera_toggle == null or not is_instance_valid(_stage_camera_toggle):
+		return
+	var playlist := get_node_or_null("../PlaylistSidebar")
+	if playlist == null or not playlist.has_method("is_stage_camera_enabled"):
+		return
+	var enabled := bool(playlist.call("is_stage_camera_enabled"))
+	_stage_camera_toggle.set_pressed_no_signal(enabled)
+	if _stage_camera_section:
+		_stage_camera_section.visible = enabled
 
 
 func _relocate_analyzer_to_drivers() -> void:
@@ -3490,9 +4225,11 @@ func _apply_content_tab_visibility() -> void:
 	var drivers_on := _content_tab == 1
 	if _drivers_section:
 		_drivers_section.visible = drivers_on
-	if search_edit:
-		search_edit.visible = not drivers_on
-	if reset_defaults_btn:
+	if search_row:
+		search_row.visible = not drivers_on
+	if _preset_actions:
+		_preset_actions.visible = not drivers_on
+	elif reset_defaults_btn:
 		reset_defaults_btn.visible = not drivers_on
 	if audio_section:
 		audio_section.visible = drivers_on
@@ -3596,12 +4333,24 @@ func _rebuild_driver_cards() -> void:
 	_driver_card_writes.clear()
 	if _drv() == null:
 		return
+	var hints: Dictionary = {}
 	for row_any in DriverHubScr.BUILTIN_HINTS:
 		var row: Array = row_any as Array
-		var id := str(row[0])
-		var hint := str(row[1])
-		var card := _make_builtin_row(id, hint)
-		_drivers_builtin_list.add_child(card)
+		if row.size() >= 2:
+			hints[str(row[0])] = str(row[1])
+	for group_any in DriverHubScr.BUILTIN_GROUPS:
+		var group: Array = group_any as Array
+		if group.size() < 2:
+			continue
+		var group_label := Label.new()
+		group_label.text = str(group[0])
+		group_label.add_theme_font_size_override("font_size", FX_SETTING_FONT_SIZE + 1)
+		group_label.add_theme_color_override("font_color", FX_SETTING_LABEL_COLOR)
+		_drivers_builtin_list.add_child(group_label)
+		var ids: Array = group[1] as Array
+		for id_any in ids:
+			var id := str(id_any)
+			_drivers_builtin_list.add_child(_make_builtin_row(id, str(hints.get(id, ""))))
 	for def_any in _drv().list_defs():
 		if not (def_any is Dictionary):
 			continue
@@ -3617,14 +4366,18 @@ func _make_copy_btn(id: String) -> Button:
 	var copy_btn := Button.new()
 	copy_btn.text = "Copy"
 	copy_btn.focus_mode = Control.FOCUS_NONE
+	copy_btn.add_theme_font_size_override("font_size", FX_SETTING_FONT_SIZE)
 	copy_btn.tooltip_text = "Copy '%s' to clipboard" % id
 	copy_btn.pressed.connect(func() -> void: _copy_driver_id(id))
 	return copy_btn
 
 
 func _make_builtin_row(id: String, hint: String) -> Control:
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", _setting_panel_style())
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 1)
+	panel.add_child(box)
 	var top := HBoxContainer.new()
 	top.add_theme_constant_override("separation", 8)
 	var name_btn := Button.new()
@@ -3632,12 +4385,15 @@ func _make_builtin_row(id: String, hint: String) -> Control:
 	name_btn.flat = true
 	name_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	name_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_btn.add_theme_font_size_override("font_size", FX_SETTING_FONT_SIZE + 1)
+	name_btn.add_theme_color_override("font_color", FX_HEADER_COLOR)
+	name_btn.add_theme_color_override("font_hover_color", FX_HEADER_COLOR)
 	name_btn.tooltip_text = "Click to copy '%s'" % id
 	name_btn.pressed.connect(func() -> void: _copy_driver_id(id))
 	top.add_child(name_btn)
 	var val := Label.new()
 	val.text = "—"
-	val.add_theme_font_size_override("font_size", 12)
+	val.add_theme_font_size_override("font_size", FX_SETTING_FONT_SIZE)
 	_register_live_label(id, val)
 	top.add_child(val)
 	top.add_child(_make_copy_btn(id))
@@ -3645,10 +4401,10 @@ func _make_builtin_row(id: String, hint: String) -> Control:
 	var h := Label.new()
 	h.text = hint
 	h.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	h.add_theme_font_size_override("font_size", 11)
-	h.modulate = Color(0.75, 0.78, 0.82)
+	h.add_theme_font_size_override("font_size", FX_SETTING_FONT_SIZE)
+	h.add_theme_color_override("font_color", FX_SETTING_LABEL_COLOR)
 	box.add_child(h)
-	return box
+	return panel
 
 
 func _make_signal_card(def: Dictionary) -> Control:
@@ -3656,6 +4412,7 @@ func _make_signal_card(def: Dictionary) -> Control:
 	var typ := str(def.get("type", "lfo"))
 	var builtin := bool(def.get("builtin", false))
 	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", _setting_panel_style())
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 4)
 	panel.add_child(box)
@@ -3665,12 +4422,15 @@ func _make_signal_card(def: Dictionary) -> Control:
 	title.flat = true
 	title.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.add_theme_font_size_override("font_size", FX_SETTING_FONT_SIZE + 1)
+	title.add_theme_color_override("font_color", FX_HEADER_COLOR)
+	title.add_theme_color_override("font_hover_color", FX_HEADER_COLOR)
 	title.tooltip_text = "Click to copy '%s'" % id
 	title.pressed.connect(func() -> void: _copy_driver_id(id))
 	head.add_child(title)
 	var live := Label.new()
 	live.text = "—"
-	live.add_theme_font_size_override("font_size", 12)
+	live.add_theme_font_size_override("font_size", FX_SETTING_FONT_SIZE)
 	_register_live_label(id, live)
 	head.add_child(live)
 	head.add_child(_make_copy_btn(id))
@@ -3683,10 +4443,10 @@ func _make_signal_card(def: Dictionary) -> Control:
 	box.add_child(head)
 	match typ:
 		"lfo":
-			box.add_child(_driver_slider_row("Rate Hz", 0.05, 16.0, float(def.get("rate", 0.45)), func(v: float) -> void:
+			box.add_child(_driver_slider_row("Rate Hz", 0.005, 16.0, float(def.get("rate", 0.45)), func(v: float) -> void:
 				_drv().update_driver(id, {"rate": v})
 			))
-			box.add_child(_driver_slider_row("Depth", 0.0, 1.5, float(def.get("depth", 1.0)), func(v: float) -> void:
+			box.add_child(_driver_slider_row("Depth", 0.0, 1.0, float(def.get("depth", 1.0)), func(v: float) -> void:
 				_drv().update_driver(id, {"depth": v})
 			))
 			var wave := OptionButton.new()
@@ -3709,13 +4469,13 @@ func _make_signal_card(def: Dictionary) -> Control:
 				_drv().update_driver(id, {"smoothness": v})
 			))
 		"random":
-			box.add_child(_driver_slider_row("Rate Hz", 0.05, 16.0, float(def.get("rate", 2.0)), func(v: float) -> void:
+			box.add_child(_driver_slider_row("Rate Hz", 0.005, 16.0, float(def.get("rate", 2.0)), func(v: float) -> void:
 				_drv().update_driver(id, {"rate": v})
 			))
-			box.add_child(_driver_slider_row("Min", -2.0, 2.0, float(def.get("min", 0.0)), func(v: float) -> void:
+			box.add_child(_driver_slider_row("Min", 0.0, 100.0, float(def.get("min", 0.0)), func(v: float) -> void:
 				_drv().update_driver(id, {"min": v})
 			))
-			box.add_child(_driver_slider_row("Max", -2.0, 2.0, float(def.get("max", 2.0)), func(v: float) -> void:
+			box.add_child(_driver_slider_row("Max", 0.0, 100.0, float(def.get("max", 100.0)), func(v: float) -> void:
 				_drv().update_driver(id, {"max": v})
 			))
 	return panel
@@ -3725,23 +4485,35 @@ func _driver_slider_row(label: String, lo: float, hi: float, value: float, on_ch
 	var box := VBoxContainer.new()
 	var lab := Label.new()
 	lab.text = label
-	lab.add_theme_font_size_override("font_size", 12)
+	lab.add_theme_font_size_override("font_size", FX_SETTING_FONT_SIZE)
+	lab.add_theme_color_override("font_color", FX_SETTING_LABEL_COLOR)
 	box.add_child(lab)
 	var sl := HSlider.new()
-	sl.min_value = lo
-	sl.max_value = hi
-	sl.step = 0.01 if hi <= 2.0 else 0.05
-	sl.value = value
+	sl.min_value = 0.0
+	sl.max_value = 100.0
+	sl.step = 0.1
+	sl.value = _driver_to_percent(value, lo, hi)
+	sl.tooltip_text = "0–100 control range (%s to %s)" % [str(snappedf(lo, 0.001)), str(snappedf(hi, 0.001))]
 	box.add_child(sl)
 	SliderSpinLinkScr.attach_driven(sl, func(_v: float = 0.0) -> void:
-		on_change.call(SliderSpinLinkScr.eval_of(sl))
+		on_change.call(_driver_from_percent(SliderSpinLinkScr.eval_of(sl), lo, hi))
 	, 1.0)
-	_driver_card_writes.append({"slider": sl, "cb": on_change})
+	_driver_card_writes.append({"slider": sl, "cb": on_change, "lo": lo, "hi": hi})
 	var sid := sl.get_instance_id()
 	if not sl.has_meta("card_write_hook"):
 		sl.tree_exiting.connect(_on_driver_card_slider_exiting.bind(sid))
 		sl.set_meta("card_write_hook", true)
 	return box
+
+
+func _driver_to_percent(value: float, lo: float, hi: float) -> float:
+	if is_equal_approx(lo, hi):
+		return 0.0
+	return clampf(inverse_lerp(lo, hi, value) * 100.0, 0.0, 100.0)
+
+
+func _driver_from_percent(percent: float, lo: float, hi: float) -> float:
+	return lerpf(lo, hi, clampf(percent, 0.0, 100.0) / 100.0)
 
 
 func _register_live_label(id: String, lab: Label) -> void:
@@ -3823,30 +4595,41 @@ func _setup_driver_modal() -> void:
 	_modal_params = VBoxContainer.new()
 	_modal_params.add_theme_constant_override("separation", 4)
 	body.add_child(_modal_params)
-	_modal_rate = _modal_spin(0.05, 16.0, 0.5)
-	_modal_depth = _modal_spin(0.0, 1.5, 1.0)
+	_modal_rate = _modal_percent_spin(0.005, 16.0, 0.5)
+	_modal_depth = _modal_percent_spin(0.0, 1.0, 1.0)
 	_modal_wave = OptionButton.new()
 	for labt in DriverHubScr.WAVE_LABELS:
 		_modal_wave.add_item(labt)
-	_modal_speed = _modal_spin(0.05, 16.0, 1.0)
-	_modal_smooth = _modal_spin(0.0, 1.0, 0.65)
-	_modal_rmin = _modal_spin(-2.0, 2.0, 0.0)
-	_modal_rmax = _modal_spin(-2.0, 2.0, 2.0)
+	_modal_speed = _modal_percent_spin(0.05, 16.0, 1.0)
+	_modal_smooth = _modal_percent_spin(0.0, 1.0, 0.65)
+	_modal_rmin = _modal_percent_spin(0.0, 100.0, 0.0)
+	_modal_rmax = _modal_percent_spin(0.0, 100.0, 100.0)
 	_driver_modal.add_child(body)
 	_driver_modal.confirmed.connect(_on_driver_modal_create)
 	add_child(_driver_modal)
 	_sync_modal_type()
 
 
-func _modal_spin(lo: float, hi: float, val: float) -> SpinBox:
+func _modal_percent_spin(lo: float, hi: float, val: float) -> SpinBox:
 	var s := SpinBox.new()
-	s.min_value = lo
-	s.max_value = hi
-	s.step = 0.01
-	s.value = val
-	s.set_meta("vis_min", lo)
-	s.set_meta("vis_max", hi)
+	s.min_value = 0.0
+	s.max_value = 100.0
+	s.step = 0.1
+	s.value = _driver_to_percent(val, lo, hi)
+	s.tooltip_text = "0–100 control range (%s to %s)" % [str(snappedf(lo, 0.001)), str(snappedf(hi, 0.001))]
+	s.set_meta("vis_min", 0.0)
+	s.set_meta("vis_max", 100.0)
+	s.set_meta("native_min", lo)
+	s.set_meta("native_max", hi)
 	return s
+
+
+func _modal_native_value(spin: SpinBox) -> float:
+	if spin == null:
+		return 0.0
+	var lo := float(spin.get_meta("native_min")) if spin.has_meta("native_min") else 0.0
+	var hi := float(spin.get_meta("native_max")) if spin.has_meta("native_max") else 100.0
+	return _driver_from_percent(SliderSpinLinkScr.eval_spin(spin), lo, hi)
 
 
 func _add_modal_driven(spin: SpinBox) -> void:
@@ -3928,6 +4711,17 @@ func _deform_num(slider: HSlider, ui_div: float = 1.0) -> float:
 	return clampf(v, -1.0e6, 1.0e6)
 
 
+func _camera_motion_rate() -> float:
+	## Camera controls are percentages whether dragged, typed, or driven.
+	return clampf(_eval_slider_num(camera_rate) / 20.0, 0.0, 1.0e6)
+
+
+func _camera_motion_depth() -> float:
+	## Do not use _deform_num here: it treated a typed 120 as a raw 120,
+	## which was the source of the runaway walking motion.
+	return clampf(_eval_slider_num(camera_depth) / 100.0, -1.0e6, 1.0e6)
+
+
 func _lbl(t: String) -> Label:
 	var l := Label.new()
 	l.text = t
@@ -3950,17 +4744,17 @@ func _on_driver_modal_create() -> void:
 	var def: Dictionary = {"id": _modal_name.text if _modal_name else "drv"}
 	if t == 1:
 		def["type"] = "noise"
-		def["speed"] = SliderSpinLinkScr.eval_spin(_modal_speed)
-		def["smoothness"] = SliderSpinLinkScr.eval_spin(_modal_smooth)
+		def["speed"] = _modal_native_value(_modal_speed)
+		def["smoothness"] = _modal_native_value(_modal_smooth)
 	elif t == 2:
 		def["type"] = "random"
-		def["rate"] = SliderSpinLinkScr.eval_spin(_modal_rate)
-		def["min"] = SliderSpinLinkScr.eval_spin(_modal_rmin)
-		def["max"] = SliderSpinLinkScr.eval_spin(_modal_rmax)
+		def["rate"] = _modal_native_value(_modal_rate)
+		def["min"] = _modal_native_value(_modal_rmin)
+		def["max"] = _modal_native_value(_modal_rmax)
 	else:
 		def["type"] = "lfo"
-		def["rate"] = SliderSpinLinkScr.eval_spin(_modal_rate)
-		def["depth"] = SliderSpinLinkScr.eval_spin(_modal_depth)
+		def["rate"] = _modal_native_value(_modal_rate)
+		def["depth"] = _modal_native_value(_modal_depth)
 		var wi := _modal_wave.selected if _modal_wave else 0
 		def["wave"] = DriverHubScr.WAVE_IDS[wi] if wi >= 0 and wi < DriverHubScr.WAVE_IDS.size() else "sine"
 	var id := str(_drv().add_driver(def))
@@ -3984,11 +4778,9 @@ func _push_driven_reactivity() -> void:
 	if is_instance_valid(noise_scale):
 		RH.set_field("noise_scale", _deform_num(noise_scale))
 	if is_instance_valid(camera_rate):
-		RH.set_field("camera_rate", _deform_num(camera_rate, 20.0))
+		RH.set_field("camera_rate", _camera_motion_rate())
 	if is_instance_valid(camera_depth):
-		RH.set_field("camera_depth", _deform_num(camera_depth, 100.0))
-	if is_instance_valid(play_speed_slider):
-		_on_play_speed()
+		RH.set_field("camera_depth", _camera_motion_depth())
 	if is_instance_valid(style_interval_slider):
 		_on_style_interval()
 	_push_driven_schedules()
@@ -4006,7 +4798,9 @@ func _push_driven_reactivity() -> void:
 			continue
 		kept_writes.append(w)
 		if SliderSpinLinkScr.looks_driven_expr(sl):
-			(cb as Callable).call(SliderSpinLinkScr.eval_of(sl))
+			var lo := float(w.get("lo", 0.0))
+			var hi := float(w.get("hi", 100.0))
+			(cb as Callable).call(_driver_from_percent(SliderSpinLinkScr.eval_of(sl), lo, hi))
 	_driver_card_writes = kept_writes
 
 
@@ -4020,13 +4814,7 @@ func _push_driven_analyzer() -> void:
 
 
 func _push_driven_schedules() -> void:
-	## Live-eval Active/Inactive (and Play All master) without re-rolling Play All.
-	if is_instance_valid(_play_schedule_range):
-		ShowDirector.fx_automation.set_gate_active_inactive(
-			"play_all",
-			float(_play_schedule_range.eval_active()),
-			float(_play_schedule_range.eval_inactive())
-		)
+	## Live-eval individual effect schedules without re-rolling Auto Mode.
 	var dead: Array = []
 	for eid_any in _schedule_ranges.keys():
 		var eid := str(eid_any)
@@ -4088,10 +4876,9 @@ func _restore_fx_sliders_from_director() -> void:
 	SliderSpinLinkScr.set_mapped_param(feedback_mix_slider, fb_op, 100.0)
 	SliderSpinLinkScr.set_mapped_param(feedback_persist_slider, fb.get("persistence", feedback_persist_slider.value / 100.0), 100.0)
 	if feedback_blur_slider:
-		# Sessions saved before Blur existed have no key — fall back to the look they had.
-		SliderSpinLinkScr.set_mapped_param(feedback_blur_slider, fb.get("blur", 0.35), 100.0)
+		SliderSpinLinkScr.set_mapped_param(feedback_blur_slider, fb.get("blur", 0.20), 100.0)
 	if feedback_blend:
-		feedback_blend.select(FeedbackEffect.blend_index_from_param(fb.get("blend", "Normal")))
+		feedback_blend.select(FeedbackEffect.blend_index_from_param(fb.get("blend", FEEDBACK_DEFAULT_BLEND)))
 	var ch: Dictionary = params.get("chromatic", {}) as Dictionary if params.get("chromatic", {}) is Dictionary else {}
 	SliderSpinLinkScr.set_mapped_param(chromatic_amount_slider, ch.get("amount", chromatic_amount_slider.value / 28.0), 28.0)
 	var tn: Dictionary = params.get("tone", {}) as Dictionary if params.get("tone", {}) is Dictionary else {}
@@ -4130,6 +4917,7 @@ func _restore_fx_sliders_from_director() -> void:
 	var loaded := SceneMeshFx.camera_focus_range(cam)
 	SliderSpinLinkScr.set_mapped_param(camera_fx_focus_slider, loaded.x, 1.0)
 	SliderSpinLinkScr.set_mapped_param(camera_fx_focus_far_slider, loaded.y, 1.0)
+	SliderSpinLinkScr.set_mapped_param(camera_fx_falloff_slider, cam.get("focus_softness", 0.7), 100.0)
 	SliderSpinLinkScr.set_mapped_param(camera_fx_bokeh_slider, cam.get("bokeh", camera_fx_bokeh_slider.value / 100.0), 100.0)
 	if _camera_fx_lens_slider:
 		SliderSpinLinkScr.set_mapped_param(_camera_fx_lens_slider, cam.get("lens_distortion", 0.0), 100.0)

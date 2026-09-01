@@ -5,6 +5,39 @@
 [ext_resource type="PackedScene" path="res://ui/playlist_sidebar.tscn" id="3"]
 [ext_resource type="PackedScene" path="res://ui/effects_sidebar.tscn" id="4"]
 
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_present_normal"]
+bg_color = Color(0.12, 0.52, 0.28, 1)
+content_margin_left = 14.0
+content_margin_top = 5.0
+content_margin_right = 14.0
+content_margin_bottom = 5.0
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_present_hover"]
+bg_color = Color(0.16, 0.64, 0.34, 1)
+content_margin_left = 14.0
+content_margin_top = 5.0
+content_margin_right = 14.0
+content_margin_bottom = 5.0
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_present_pressed"]
+bg_color = Color(0.08, 0.38, 0.2, 1)
+content_margin_left = 14.0
+content_margin_top = 5.0
+content_margin_right = 14.0
+content_margin_bottom = 5.0
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
 [node name="Main" type="Control" unique_id=1254530233]
 layout_mode = 3
 anchors_preset = 15
@@ -37,16 +70,30 @@ theme_override_constants/separation = 0
 
 [node name="OutputHeader" type="HBoxContainer" parent="Root/OutputPane/OutputColumn" unique_id=623481720]
 layout_mode = 2
+theme_override_constants/separation = 8
 
 [node name="OutputTitle" type="Label" parent="Root/OutputPane/OutputColumn/OutputHeader" unique_id=1824400668]
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 13
-text = "  Preview  —  Pop Out Stage = detach live scene window (Esc/F11 docks)"
+text = "  Preview  —  Present opens a live scene window (F11 fullscreen, Esc exits)"
+
+[node name="FpsLabel" type="Label" parent="Root/OutputPane/OutputColumn/OutputHeader" unique_id=465133954]
+custom_minimum_size = Vector2(62, 0)
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+tooltip_text = "Current rendered frame rate"
+text = "— FPS"
+horizontal_alignment = 1
 
 [node name="PresentButton" type="Button" parent="Root/OutputPane/OutputColumn/OutputHeader" unique_id=1465027784]
 layout_mode = 2
-text = "Pop Out Stage"
+theme_override_colors/font_color = Color(0.96, 1, 0.97, 1)
+theme_override_colors/font_hover_color = Color(1, 1, 1, 1)
+theme_override_styles/normal = SubResource("StyleBoxFlat_present_normal")
+theme_override_styles/hover = SubResource("StyleBoxFlat_present_hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_present_pressed")
+text = "Present"
 
 [node name="OutputViewportContainer" type="SubViewportContainer" parent="Root/OutputPane/OutputColumn" unique_id=149018989]
 layout_mode = 2

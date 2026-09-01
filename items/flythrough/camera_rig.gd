@@ -1,7 +1,7 @@
 extends RefCounted
 class_name FlythroughCameraRig
 
-## Follows a Curve3D; mouse/gamepad look + shared ModulatorBus rotation offsets.
+## Follows a Curve3D; mouse/gamepad look + shared ModulatorBus camera motion.
 ## Orientation uses look-ahead + basis slerp so corners (square) and loop seams stay smooth.
 ## Path speed is dampened in high-curvature sections so square corners don't rush.
 
@@ -37,6 +37,9 @@ var _reactive_roll: float = 0.0
 var _mod: ModulatorBus
 var _smooth_basis: Basis = Basis.IDENTITY
 var _has_smooth_basis: bool = false
+## Low-pass the modulator so even audio-driven changes never snap the camera.
+var _smooth_motion_angles: Vector3 = Vector3.ZERO
+var _smooth_motion_offset: Vector3 = Vector3.ZERO
 
 
 func apply_camera_fx(on: bool, params: Dictionary = {}) -> void:
@@ -51,6 +54,8 @@ func setup(camera: Camera3D, curve: Curve3D) -> void:
 	_pitch = 0.0
 	_spin_roll = 0.0
 	_has_smooth_basis = false
+	_smooth_motion_angles = Vector3.ZERO
+	_smooth_motion_offset = Vector3.ZERO
 	reset_reactive_spin()
 	_bind_shared_modulator()
 	_apply_transform()
@@ -107,6 +112,8 @@ func set_curve(curve: Curve3D, reset_progress: bool = false) -> void:
 			frac = _distance / old_len
 	_curve = curve
 	_has_smooth_basis = false
+	_smooth_motion_angles = Vector3.ZERO
+	_smooth_motion_offset = Vector3.ZERO
 	if reset_progress or _curve == null:
 		_distance = 0.0
 	else:
@@ -199,14 +206,22 @@ func _apply_transform(delta: float = 1.0 / 60.0) -> void:
 	var yaw := _yaw + _reactive_yaw
 	var pitch := _pitch + _reactive_pitch
 	var roll := _spin_roll + _reactive_roll
+	var target_angles := Vector3.ZERO
+	var target_offset := Vector3.ZERO
 	if _mod and RH.property_active("camera"):
-		yaw += _mod.yaw_offset
-		pitch += _mod.pitch_offset
-		roll += _mod.roll_offset
-	else:
-		pitch = clampf(pitch, deg_to_rad(-max_pitch_deg), deg_to_rad(max_pitch_deg))
+		target_angles = Vector3(_mod.pitch_offset, _mod.yaw_offset, _mod.roll_offset)
+		target_offset = _mod.position_offset
+	# Exponential smoothing is frame-rate independent and removes jagged changes.
+	var blend := 1.0 - exp(-10.0 * maxf(delta, 0.0001))
+	_smooth_motion_angles = _smooth_motion_angles.lerp(target_angles, blend)
+	_smooth_motion_offset = _smooth_motion_offset.lerp(target_offset, blend)
+	yaw += _smooth_motion_angles.y
+	pitch += _smooth_motion_angles.x
+	roll += _smooth_motion_angles.z
+	pitch = clampf(pitch, deg_to_rad(-max_pitch_deg), deg_to_rad(max_pitch_deg))
 	var look := Basis.from_euler(Vector3(pitch, yaw, roll))
-	_camera.global_transform = Transform3D(path_xf.basis * look, path_xf.origin)
+	var bobbed_origin := path_xf.origin + path_xf.basis * _smooth_motion_offset
+	_camera.global_transform = Transform3D(path_xf.basis * look, bobbed_origin)
 
 
 func _path_transform_at(distance: float, smooth: bool = false, delta: float = 1.0 / 60.0) -> Transform3D:
@@ -265,4 +280,3 @@ func _curvature_speed_mul(distance: float, length: float) -> float:
 	# ang/sample ≈ rad per world-unit; scale into a soft brake curve.
 	var curv := ang / maxf(sample, 0.001)
 	return clampf(1.0 / (1.0 + curv * curvature_brake), min_corner_speed_mul, 1.0)
-

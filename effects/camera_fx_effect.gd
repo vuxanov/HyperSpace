@@ -7,6 +7,7 @@ var _focal_length: float = 28.0
 var _aperture: float = 2.8
 var _focus_near: float = 1.5
 var _focus_far: float = 80.0
+var _focus_softness: float = 0.7
 var _bokeh: float = 0.55
 var _lens_distortion: float = 0.0
 var _rect: ColorRect
@@ -78,6 +79,7 @@ func _resolve() -> void:
 	if has_raw_param("focus_far"):
 		_focus_far = eval_num("focus_far", _focus_far, SceneMeshFx.CAM_FOCUS_NEAR_MIN, 400.0)
 	_focus_far = maxf(_focus_far, _focus_near)
+	_focus_softness = eval_num("focus_softness", _focus_softness, 0.0, 1.0)
 	if has_raw_param("bokeh"):
 		_bokeh = eval_num("bokeh", _bokeh, 0.0, 1.5)
 	elif has_raw_param("dof_amount"):
@@ -93,6 +95,7 @@ func _pack() -> Dictionary:
 		"focus_near": _focus_near,
 		"focus_far": _focus_far,
 		"focus_distance": _focus_near,
+		"focus_softness": _focus_softness,
 		"bokeh": _bokeh,
 		"dof_amount": _bokeh,
 		"lens_distortion": _lens_distortion,

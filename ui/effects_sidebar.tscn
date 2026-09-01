@@ -1,6 +1,21 @@
 [gd_scene format=3 uid="uid://bi6ktdhmoalrv"]
 
 [ext_resource type="Script" uid="uid://djn4hcd508828" path="res://ui/effects_sidebar.gd" id="1"]
+[ext_resource type="Texture2D" uid="uid://cljabjmamh4jq" path="res://assets/icons/search.svg" id="2_search"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_search"]
+bg_color = Color(0.075, 0.078, 0.09, 0.96)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.34, 0.36, 0.4, 0.72)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_search"]
 
 [node name="EffectsSidebar" type="PanelContainer" unique_id=923067040]
 custom_minimum_size = Vector2(340, 0)
@@ -29,15 +44,43 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 18
 text = "Effects"
 
-[node name="SearchEdit" type="LineEdit" parent="Margin/Scroll/Column" unique_id=95352515]
+[node name="SearchRow" type="PanelContainer" parent="Margin/Scroll/Column" unique_id=95352515]
 layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_search")
+
+[node name="SearchMargin" type="MarginContainer" parent="Margin/Scroll/Column/SearchRow" unique_id=291091569]
+layout_mode = 2
+theme_override_constants/margin_left = 9
+theme_override_constants/margin_top = 2
+theme_override_constants/margin_right = 6
+theme_override_constants/margin_bottom = 2
+
+[node name="SearchContent" type="HBoxContainer" parent="Margin/Scroll/Column/SearchRow/SearchMargin" unique_id=1788444129]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="SearchIcon" type="TextureRect" parent="Margin/Scroll/Column/SearchRow/SearchMargin/SearchContent" unique_id=545786485]
+custom_minimum_size = Vector2(16, 0)
+layout_mode = 2
+tooltip_text = "Search effects"
+mouse_filter = 2
+texture = ExtResource("2_search")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="SearchEdit" type="LineEdit" parent="Margin/Scroll/Column/SearchRow/SearchMargin/SearchContent" unique_id=1980992785]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_styles/normal = SubResource("StyleBoxEmpty_search")
+theme_override_styles/read_only = SubResource("StyleBoxEmpty_search")
+theme_override_styles/focus = SubResource("StyleBoxEmpty_search")
 placeholder_text = "Search effects…"
 clear_button_enabled = true
 
 [node name="ResetDefaultsBtn" type="Button" parent="Margin/Scroll/Column" unique_id=188373214]
 layout_mode = 2
-tooltip_text = "Reset every Effects control (Deform and visual FX) to defaults. Playlist assets stay."
-text = "Reset to default"
+tooltip_text = "Reset all effects and stage settings, including camera, environment, main, scatter, and lighting. Playlist assets stay."
+text = "Reset"
 
 [node name="AudioSection" type="VBoxContainer" parent="Margin/Scroll/Column" unique_id=933688121]
 layout_mode = 2
@@ -371,7 +414,10 @@ text = "Displace Strength (how much)"
 
 [node name="NoiseAmount" type="HSlider" parent="Margin/Scroll/Column/Targets" unique_id=1763983729]
 layout_mode = 2
-value = 28.0
+tooltip_text = "Gentle at low values. Type any higher value directly when you need an extreme result."
+max_value = 12.0
+step = 0.05
+value = 2.0
 
 [node name="NoiseScaleLabel" type="Label" parent="Margin/Scroll/Column/Targets" unique_id=1490054248]
 layout_mode = 2
@@ -381,8 +427,9 @@ text = "Noise Scale"
 layout_mode = 2
 tooltip_text = "Spatial feature size of the deform noise (larger = bigger blobs)"
 min_value = 1.0
-max_value = 40.0
-value = 4.0
+max_value = 8.0
+step = 0.05
+value = 2.0
 
 [node name="NoiseAxisRow" type="HBoxContainer" parent="Margin/Scroll/Column/Targets" unique_id=2115501585]
 layout_mode = 2
@@ -434,7 +481,7 @@ text = "Speed"
 [node name="CameraRate" type="HSlider" parent="Margin/Scroll/Column/Targets/CameraBody" unique_id=369275243]
 layout_mode = 2
 min_value = 1.0
-value = 20.0
+value = 8.0
 
 [node name="CameraDepthLabel" type="Label" parent="Margin/Scroll/Column/Targets/CameraBody" unique_id=1166926025]
 layout_mode = 2
@@ -442,7 +489,7 @@ text = "Amount"
 
 [node name="CameraDepth" type="HSlider" parent="Margin/Scroll/Column/Targets/CameraBody" unique_id=866362388]
 layout_mode = 2
-value = 55.0
+value = 75.0
 
 [node name="CameraSchedule" type="CheckButton" parent="Margin/Scroll/Column/Targets/CameraBody" unique_id=984464190]
 layout_mode = 2
@@ -462,7 +509,7 @@ text = "Visual Effects"
 
 [node name="PlayAllToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection" unique_id=758668749]
 layout_mode = 2
-text = "Play All"
+text = "Auto Mode"
 
 [node name="PlayAllBody" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection" unique_id=451276210]
 visible = false
@@ -476,51 +523,9 @@ text = "Mode"
 [node name="PlayMode" type="OptionButton" parent="Margin/Scroll/Column/FxSection/PlayAllBody" unique_id=391545741]
 layout_mode = 2
 
-[node name="PlaySpeedLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PlayAllBody" unique_id=855498825]
-layout_mode = 2
-text = "Speed"
-
-[node name="PlaySpeedSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/PlayAllBody" unique_id=1997449966]
-layout_mode = 2
-min_value = 0.25
-max_value = 3.0
-step = 0.05
-value = 1.0
-
 [node name="PlayAudioReactive" type="CheckButton" parent="Margin/Scroll/Column/FxSection/PlayAllBody" unique_id=367895791]
 layout_mode = 2
 text = "Audio reactive"
-
-[node name="PlayScheduleLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PlayAllBody" unique_id=1133353486]
-layout_mode = 2
-text = "Active / Inactive schedule"
-
-[node name="PlayCycleLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PlayAllBody" unique_id=1648659159]
-visible = false
-layout_mode = 2
-text = "Default Active / Inactive (sec)"
-
-[node name="PlayCycleSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/PlayAllBody" unique_id=1403942412]
-visible = false
-layout_mode = 2
-min_value = 4.0
-max_value = 60.0
-value = 12.0
-
-[node name="PlayActiveLabel" type="Label" parent="Margin/Scroll/Column/FxSection/PlayAllBody" unique_id=393770499]
-visible = false
-layout_mode = 2
-text = "Active window (sec)"
-
-[node name="PlayActiveSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/PlayAllBody" unique_id=1971960948]
-visible = false
-layout_mode = 2
-min_value = 1.0
-max_value = 30.0
-value = 6.0
-
-[node name="PlayScheduleHost" type="VBoxContainer" parent="Margin/Scroll/Column/FxSection/PlayAllBody" unique_id=147218212]
-layout_mode = 2
 
 [node name="AsciiToggle" type="CheckButton" parent="Margin/Scroll/Column/FxSection" unique_id=542455955]
 layout_mode = 2
@@ -637,7 +642,7 @@ text = "Opacity"
 [node name="FeedbackMixSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/FeedbackBody" unique_id=450747862]
 layout_mode = 2
 tooltip_text = "Trail overlay on top of ASCII. 0 = hidden, 100 = full-strength color trail."
-value = 70.0
+value = 100.0
 
 [node name="FeedbackPersistLabel" type="Label" parent="Margin/Scroll/Column/FxSection/FeedbackBody" unique_id=1525853289]
 layout_mode = 2
@@ -647,7 +652,7 @@ text = "Persistence"
 [node name="FeedbackPersistSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/FeedbackBody" unique_id=1952014818]
 layout_mode = 2
 tooltip_text = "How long trails last. 0 = fade immediately, 100 = no fade (trails stay fully visible)."
-value = 85.0
+value = 100.0
 
 [node name="FeedbackSensLabel" type="Label" parent="Margin/Scroll/Column/FxSection/FeedbackBody" unique_id=150642120]
 layout_mode = 2
@@ -914,6 +919,14 @@ min_value = 0.4
 max_value = 80.0
 step = 0.1
 value = 80.0
+
+[node name="CameraFxFalloffLabel" type="Label" parent="Margin/Scroll/Column/FxSection/CameraFxBody"]
+layout_mode = 2
+text = "Focus falloff"
+
+[node name="CameraFxFalloffSlider" type="HSlider" parent="Margin/Scroll/Column/FxSection/CameraFxBody"]
+layout_mode = 2
+value = 70.0
 
 [node name="CameraFxBokehLabel" type="Label" parent="Margin/Scroll/Column/FxSection/CameraFxBody" unique_id=150606963]
 layout_mode = 2

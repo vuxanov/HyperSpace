@@ -207,9 +207,12 @@ static func apply_camera_fx(camera: Camera3D, on: bool, params: Dictionary) -> v
 	# That full-blur plane must stay in FRONT of the camera or close env never smears.
 	near_dist = maxf(near_dist, cam_near + 0.12)
 	var fstop := maxf(aperture, 0.7)
-	# Wide open (low f) = shallower DoF: tighter ramp so more of the near/far field is fully smeared.
+	# Focus falloff expands the transition region rather than changing the blur strength.
+	# That keeps the focal plane readable while removing the hard in/out-of-focus edge.
+	var focus_softness := clampf(float(params.get("focus_softness", 0.7)), 0.0, 1.0)
+	# Wide open (low f) = shallower DoF: tighter baseline ramp.
 	var deep := clampf((fstop - 0.7) / 21.3, 0.0, 1.0)
-	var near_frac := lerpf(0.28, 0.75, deep)
+	var near_frac := lerpf(lerpf(0.28, 0.75, deep), 0.95, focus_softness)
 	var near_trans := clampf(near_dist * near_frac, 0.18, 3.5)
 	near_trans = minf(near_trans, maxf(near_dist - cam_near - 0.04, 0.08))
 	attr.dof_blur_near_enabled = bool(params.get("near_enabled", true))
@@ -220,9 +223,9 @@ static func apply_camera_fx(camera: Camera3D, on: bool, params: Dictionary) -> v
 	attr.dof_blur_far_enabled = not far_at_inf
 	if not far_at_inf:
 		var far_plane := maxf(far_dist, near_dist + 0.15)
-		var far_frac := lerpf(0.14, 0.45, deep)
+		var far_frac := lerpf(lerpf(0.14, 0.45, deep), 0.9, focus_softness)
 		attr.dof_blur_far_distance = far_plane
-		attr.dof_blur_far_transition = clampf(far_plane * far_frac, 0.6, 12.0)
+		attr.dof_blur_far_transition = clampf(far_plane * far_frac, 0.6, 32.0)
 	# Aperture is primary (∝ 1/N). Bokeh scales it. Never force 1.0 from bokeh alone.
 	var b01 := clampf(bokeh, 0.0, 1.0)
 	var n_k := clampf(2.4 / fstop, 0.12, 1.0)

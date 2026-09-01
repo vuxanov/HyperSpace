@@ -13,12 +13,21 @@ const _BootCache := preload("res://core/boot_cache.gd")
 const SliderSpinLinkScr := preload("res://ui/slider_spin_link.gd")
 const CycleRandomScr := preload("res://ui/cycle_random.gd")
 
+## Match the Effects sidebar hierarchy: bright section title and compact muted settings.
+const SIDEBAR_TITLE_FONT_SIZE := 18
+const SIDEBAR_CONTROL_FONT_SIZE := 14
+const SIDEBAR_LABEL_FONT_SIZE := 11
+const SIDEBAR_TITLE_COLOR := Color(0.94, 0.96, 0.99)
+const SIDEBAR_LABEL_COLOR := Color(0.70, 0.75, 0.81)
+
 @onready var show_label: Label = $Margin/Column/Header/ShowLabel
 @onready var status_label: Label = $Margin/Column/Header/StatusLabel
 @onready var fly_speed: SpinBox = $Margin/Column/Header/FlyRow/FlySpeed
 @onready var path_style: OptionButton = $Margin/Column/Header/PathRow/PathStyle
 @onready var reset_defaults_btn: Button = $Margin/Column/Header/ResetDefaultsBtn
 @onready var asset_tabs: TabContainer = $Margin/Column/AssetTabs
+var _asset_tab_row: HBoxContainer
+var _asset_tab_buttons: Array[Button] = []
 
 @onready var env_list: VBoxContainer = $Margin/Column/AssetTabs/Environments/EnvScroll/EnvList
 @onready var main_list: VBoxContainer = $"Margin/Column/AssetTabs/Main character/MainScroll/MainList"
@@ -59,6 +68,7 @@ var _sel_light: int = -1
 ## Independent autoplay per category.
 var _autoplay: Array[bool] = [false, false, false, false]
 var _shuffle_slots: Dictionary = {}
+var _stage_camera_speed_before_disable: float = 2.0
 var _elapsed: Array[float] = [0.0, 0.0, 0.0, 0.0]
 var _layer_pick: String = ""  # environment | scatter | centerpiece | replace_*
 var _replace_tab: int = -1
@@ -137,6 +147,7 @@ func _ready() -> void:
 		light_file_btn.disabled = false
 		light_file_btn.tooltip_text = "Add an HDR / EXR panorama for IBL lighting"
 		light_file_btn.pressed.connect(func() -> void: _pick_layer_file("lighting"))
+	_setup_delete_overflow_menus()
 	env_play_btn.pressed.connect(func() -> void: _toggle_tab_autoplay(TAB_ENV))
 	main_play_btn.pressed.connect(func() -> void: _toggle_tab_autoplay(TAB_MAIN))
 	scatter_play_btn.pressed.connect(func() -> void: _toggle_tab_autoplay(TAB_SCATTER))
@@ -157,7 +168,8 @@ func _ready() -> void:
 	if scatter_global_scale:
 		SliderSpinLinkScr.replace_spin_with_driven(scatter_global_scale, func(_v: float = 0.0) -> void:
 			_on_scatter_global_scale_changed(SliderSpinLinkScr.eval_spin(scatter_global_scale))
-		, 1.0, 0.1, 5.0)
+		, 1.0, 0.1, 1000.0)
+		scatter_global_scale.tooltip_text = "Size of the scatter formation. When enlarged, it follows the active camera so the field stays in view."
 	SliderSpinLinkScr.replace_spin_with_driven(env_duration, func(_v: float = 0.0) -> void: _schedule_autosave(), 1.0, 1.0, 60.0)
 	SliderSpinLinkScr.replace_spin_with_driven(main_duration, func(_v: float = 0.0) -> void: _schedule_autosave(), 1.0, 1.0, 60.0)
 	SliderSpinLinkScr.replace_spin_with_driven(scatter_duration, func(_v: float = 0.0) -> void: _schedule_autosave(), 1.0, 1.0, 60.0)
@@ -189,7 +201,36 @@ func _ready() -> void:
 	_sync_scatter_settings_from_stage()
 	_update_all_play_buttons()
 	_start_warm_all(-1)
+	_apply_effects_sidebar_visual_language()
 	set_process(true)
+
+
+func _setup_delete_overflow_menus() -> void:
+	## Keep the destructive global action out of the normal flow, beside every Add File action.
+	var rows: Array[HBoxContainer] = [
+		env_file_btn.get_parent() as HBoxContainer,
+		main_file_btn.get_parent() as HBoxContainer,
+		scatter_file_btn.get_parent() as HBoxContainer,
+		get_node_or_null("Margin/Column/AssetTabs/Lighting/LightAddRow") as HBoxContainer,
+	]
+	for row in rows:
+		if row == null or row.get_node_or_null("DeleteOverflow") != null:
+			continue
+		var overflow := MenuButton.new()
+		overflow.name = "DeleteOverflow"
+		overflow.text = "⋮"
+		overflow.tooltip_text = "More actions"
+		overflow.custom_minimum_size = Vector2(32, 0)
+		overflow.add_theme_font_size_override("font_size", SIDEBAR_CONTROL_FONT_SIZE + 4)
+		var menu := overflow.get_popup()
+		menu.add_item("Delete all", 1)
+		menu.id_pressed.connect(_on_delete_overflow_selected)
+		row.add_child(overflow)
+
+
+func _on_delete_overflow_selected(id: int) -> void:
+	if id == 1:
+		_on_clear()
 
 
 func _notification(what: int) -> void:
@@ -205,6 +246,38 @@ func _setup_autosave_timer() -> void:
 	_autosave_timer.one_shot = true
 	_autosave_timer.timeout.connect(_save_session_now)
 	add_child(_autosave_timer)
+
+
+func _apply_effects_sidebar_visual_language() -> void:
+	## Keep the asset browser readable like Effects: one clear title, quieter settings,
+	## and compact controls without adding a card around the tab content.
+	if show_label:
+		show_label.add_theme_font_size_override("font_size", SIDEBAR_TITLE_FONT_SIZE)
+		show_label.add_theme_color_override("font_color", SIDEBAR_TITLE_COLOR)
+	if asset_tabs:
+		var tab_bar := asset_tabs.get_tab_bar()
+		if tab_bar:
+			tab_bar.add_theme_font_size_override("font_size", SIDEBAR_CONTROL_FONT_SIZE)
+	_style_left_sidebar_nodes($Margin/Column)
+
+
+func _style_left_sidebar_nodes(root: Node) -> void:
+	for child_any in root.get_children():
+		var child := child_any as Node
+		if child == null:
+			continue
+		if child is Label and child != show_label:
+			var label := child as Label
+			label.add_theme_font_size_override("font_size", SIDEBAR_LABEL_FONT_SIZE)
+			label.add_theme_color_override("font_color", SIDEBAR_LABEL_COLOR)
+		elif child is BaseButton:
+			var button := child as BaseButton
+			button.add_theme_font_size_override("font_size", SIDEBAR_CONTROL_FONT_SIZE)
+			button.add_theme_color_override("font_color", SIDEBAR_LABEL_COLOR)
+			button.add_theme_color_override("font_hover_color", SIDEBAR_TITLE_COLOR)
+			button.custom_minimum_size.y = maxf(button.custom_minimum_size.y, 28.0)
+		if child.get_child_count() > 0:
+			_style_left_sidebar_nodes(child)
 
 
 func _setup_edit_dialog() -> void:
@@ -1315,6 +1388,60 @@ func _setup_preset_shuffles() -> void:
 			SliderSpinLinkScr.attach_driven(siv, Callable(), 1.0)
 
 
+func move_stage_camera_controls_to(host: Container) -> void:
+	## Keep the camera controls and their signal owners here, but display them with Effects.
+	if host == null:
+		return
+	var header: Control = $Margin/Column/Header
+	var nodes: Array[Control] = []
+	if fly_speed and fly_speed.get_parent() is Control:
+		nodes.append(fly_speed.get_parent() as Control)
+	if path_style and path_style.get_parent() is Control:
+		nodes.append(path_style.get_parent() as Control)
+	var shuffle: Dictionary = _shuffle_slots.get("path", {})
+	for key in ["toggle", "body"]:
+		var value: Variant = shuffle.get(key)
+		if value is Control and is_instance_valid(value):
+			nodes.append(value as Control)
+	for control in nodes:
+		if control.get_parent() != host:
+			control.reparent(host)
+	# Camera, title, and reset no longer live here. Do not leave an empty header gap
+	# above the asset tabs.
+	if header:
+		header.visible = false
+	var column: VBoxContainer = $Margin/Column
+	if asset_tabs and asset_tabs.get_parent() == column:
+		if _asset_tab_row and _asset_tab_row.get_parent() == column:
+			column.move_child(_asset_tab_row, 0)
+			column.move_child(asset_tabs, 1)
+		else:
+			column.move_child(asset_tabs, 0)
+
+
+func is_stage_camera_enabled() -> bool:
+	return SliderSpinLinkScr.eval_spin(fly_speed, 2.0) > 0.0
+
+
+func set_stage_camera_enabled(enabled: bool) -> void:
+	## The Camera card controls the actual fly-through, not merely its visibility.
+	var current := SliderSpinLinkScr.eval_spin(fly_speed, 2.0)
+	if not enabled and current > 0.0:
+		_stage_camera_speed_before_disable = current
+	var target_speed := maxf(_stage_camera_speed_before_disable, 0.01) if enabled else 0.0
+	var slider := SliderSpinLinkScr.slider_of_spin(fly_speed)
+	if slider:
+		SliderSpinLinkScr.reset_to_number(slider, target_speed, true)
+	elif fly_speed:
+		fly_speed.value = target_speed
+		_on_fly_speed_changed(target_speed)
+	if not enabled:
+		var shuffle: Dictionary = _shuffle_slots.get("path", {})
+		var toggle: Variant = shuffle.get("toggle")
+		if toggle is CheckButton and (toggle as CheckButton).button_pressed:
+			(toggle as CheckButton).button_pressed = false
+
+
 func _process(delta: float) -> void:
 	_apply_live_playlist_drivers()
 	if CycleRandomScr.tick_slot(_shuffle_slots.get("path", {}), delta):
@@ -1399,18 +1526,84 @@ func _any_tab_autoplaying() -> bool:
 
 
 func _setup_tab_icons() -> void:
-	## Icon-only tabs so Env / Main / Scatter / Lighting all fit.
+	## Clear text tabs make the four asset layers immediately identifiable.
+	var tab_bar := asset_tabs.get_tab_bar()
+	if tab_bar:
+		tab_bar.visible = false
+	asset_tabs.tabs_visible = false
+	asset_tabs.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 	var specs := [
-		{"title": "", "tip": "Environments", "color": Color(0.35, 0.75, 0.45), "shape": "terrain"},
-		{"title": "", "tip": "Main character", "color": Color(0.95, 0.7, 0.25), "shape": "diamond"},
-		{"title": "", "tip": "Scattering", "color": Color(0.45, 0.7, 1.0), "shape": "dots"},
-		{"title": "", "tip": "Lighting", "color": Color(1.0, 0.85, 0.35), "shape": "sun"},
+		{"title": "Environment", "tip": "Environments"},
+		{"title": "Main", "tip": "Main character"},
+		{"title": "Scatter", "tip": "Scattering"},
+		{"title": "Lighting", "tip": "Lighting"},
 	]
 	for i in specs.size():
 		var spec: Dictionary = specs[i]
 		asset_tabs.set_tab_title(i, str(spec["title"]))
-		asset_tabs.set_tab_icon(i, _make_tab_icon(spec["color"] as Color, str(spec["shape"])))
+		asset_tabs.set_tab_icon(i, null)
 		asset_tabs.set_tab_tooltip(i, str(spec["tip"]))
+	_setup_full_width_asset_tabs(specs)
+
+
+func _setup_full_width_asset_tabs(specs: Array) -> void:
+	if _asset_tab_row != null or asset_tabs == null:
+		return
+	var column: VBoxContainer = $Margin/Column
+	_asset_tab_row = HBoxContainer.new()
+	_asset_tab_row.name = "AssetTabRow"
+	_asset_tab_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_asset_tab_row.add_theme_constant_override("separation", 0)
+	var group := ButtonGroup.new()
+	for i in specs.size():
+		var spec: Dictionary = specs[i]
+		var button := Button.new()
+		button.text = str(spec["title"])
+		button.tooltip_text = str(spec["tip"])
+		button.toggle_mode = true
+		button.button_group = group
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button.add_theme_font_size_override("font_size", SIDEBAR_CONTROL_FONT_SIZE)
+		button.custom_minimum_size = Vector2(0, 28)
+		button.add_theme_stylebox_override("normal", _asset_tab_style(false, false))
+		button.add_theme_stylebox_override("hover", _asset_tab_style(false, true))
+		button.add_theme_stylebox_override("pressed", _asset_tab_style(true, false))
+		button.add_theme_stylebox_override("hover_pressed", _asset_tab_style(true, true))
+		button.pressed.connect(_select_asset_tab.bind(i))
+		_asset_tab_row.add_child(button)
+		_asset_tab_buttons.append(button)
+	column.add_child(_asset_tab_row)
+	column.move_child(_asset_tab_row, asset_tabs.get_index())
+	asset_tabs.tab_changed.connect(_sync_asset_tab_buttons)
+	_sync_asset_tab_buttons(asset_tabs.current_tab)
+
+
+func _asset_tab_style(active: bool, hovering: bool) -> StyleBoxFlat:
+	## Match the Effects/Drivers tabs: squared segments and a bright top edge for selection.
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.035, 0.037, 0.043, 0.98) if active else Color(0.075, 0.078, 0.09, 0.96)
+	if hovering and not active:
+		style.bg_color = Color(0.12, 0.125, 0.14, 0.98)
+	if active:
+		style.border_width_top = 2
+		style.border_color = Color(0.9, 0.92, 0.95, 0.95)
+	style.content_margin_left = 7
+	style.content_margin_right = 7
+	style.content_margin_top = 4 if active else 6
+	style.content_margin_bottom = 6 if active else 4
+	return style
+
+
+func _select_asset_tab(index: int) -> void:
+	if asset_tabs:
+		asset_tabs.current_tab = index
+
+
+func _sync_asset_tab_buttons(index: int) -> void:
+	for i in _asset_tab_buttons.size():
+		var button := _asset_tab_buttons[i]
+		if button and is_instance_valid(button):
+			button.set_pressed_no_signal(i == index)
 
 
 func _make_tab_icon(color: Color, shape: String) -> Texture2D:
@@ -1734,12 +1927,7 @@ func _fill_scatter_layout_options() -> void:
 	if scatter_density:
 		scatter_density.tooltip_text = "How many scatter props to spawn (1–2000). GPU-instanced. GIF/video share one decoder."
 	if scatter_global_scale:
-		scatter_global_scale.tooltip_text = "Scale the whole scatter formation (spacing + volume cube). Per-item size stays in ✎ Edit."
-	var hint: Label = get_node_or_null("Margin/Column/AssetTabs/Scattering/ScatterHint") as Label
-	if hint:
-		hint.text = "Fill a volume cube (up to 2000 instances). Layout picks the pattern; density is count. Global scale grows or shrinks the whole cluster. Per-item size is ✎ Edit."
-
-
+		scatter_global_scale.tooltip_text = "Scale the whole scatter formation (spacing + volume cube). Slider reaches 1,000; type up to 10,000 for extreme coverage. Per-item size stays in ✎ Edit."
 func _scatter_layout_id() -> String:
 	if scatter_layout == null or scatter_layout.selected < 0:
 		return "random"
@@ -1758,7 +1946,7 @@ func _scatter_density_value() -> int:
 func _scatter_global_scale_value() -> float:
 	if scatter_global_scale == null:
 		return 1.0
-	return clampf(SliderSpinLinkScr.eval_spin(scatter_global_scale, 1.0), 0.01, 100.0)
+	return clampf(SliderSpinLinkScr.eval_spin(scatter_global_scale, 1.0), 0.01, 10000.0)
 
 
 func _select_scatter_layout_no_signal(layout: String) -> void:
@@ -1789,9 +1977,9 @@ func _sync_scatter_settings_from_stage() -> void:
 		if sc_cfg.has("count"):
 			density_val = clampi(int(sc_cfg["count"]), 1, 2000)
 		if sc_cfg.has("global_scale"):
-			global_scale_val = clampf(float(sc_cfg["global_scale"]), 0.01, 100.0)
+			global_scale_val = clampf(float(sc_cfg["global_scale"]), 0.01, 10000.0)
 		elif params.has("scatter_global_scale"):
-			global_scale_val = clampf(float(params["scatter_global_scale"]), 0.01, 100.0)
+			global_scale_val = clampf(float(params["scatter_global_scale"]), 0.01, 10000.0)
 	_select_scatter_layout_no_signal(layout_val)
 	if scatter_density:
 		SliderSpinLinkScr.set_spin_driven(scatter_density, float(density_val))
@@ -2408,6 +2596,7 @@ func _rebuild_all_lists() -> void:
 	_rebuild_list(light_list, _light_entries, TAB_LIGHT, _sel_light)
 	_rebuilding = false
 	_update_all_play_buttons()
+	_apply_effects_sidebar_visual_language()
 
 
 func _ellipsis_middle(text: String, max_chars: int = 28) -> String:
@@ -2884,24 +3073,54 @@ func _on_reset_to_defaults() -> void:
 		_edit_dialog.hide()
 		_clear_edit_dialog_target()
 	ShowDirector.reset_stage_to_defaults()
-	_sync_fly_speed_from_stage()
+	# Reset must clear driver expressions, not merely overwrite their displayed values.
+	# `set_spin_driven` preserves expressions by design, so it cannot be used here.
+	_reset_sidebar_driven_spin(fly_speed, 2.0)
+	_reset_sidebar_driven_spin(env_scale, 1.0)
+	_reset_sidebar_driven_spin(scatter_density, 18.0)
+	_reset_sidebar_driven_spin(scatter_global_scale, 1.0)
+	_reset_sidebar_driven_spin(env_duration, 8.0)
+	_reset_sidebar_driven_spin(main_duration, 8.0)
+	_reset_sidebar_driven_spin(scatter_duration, 8.0)
+	_reset_sidebar_driven_spin(light_duration, 8.0)
+	_stage_camera_speed_before_disable = 2.0
 	_sync_path_style_from_stage()
-	_sync_env_scale_from_stage()
-	_sync_scatter_settings_from_stage()
 	_scatter_settings_busy = true
 	_select_scatter_layout_no_signal("random")
-	if scatter_density:
-		SliderSpinLinkScr.set_spin_driven(scatter_density, 18.0)
-	if scatter_global_scale:
-		SliderSpinLinkScr.set_spin_driven(scatter_global_scale, 1.0)
 	_scatter_settings_busy = false
-	if env_scale:
-		var sl := SliderSpinLinkScr.slider_of_spin(env_scale)
-		if sl:
-			SliderSpinLinkScr.reset_to_number(sl, 1.0, false)
-		else:
-			SliderSpinLinkScr.set_spin_driven(env_scale, 1.0)
+	for slot_any in _shuffle_slots.values():
+		if not (slot_any is Dictionary):
+			continue
+		var slot: Dictionary = slot_any as Dictionary
+		CycleRandomScr.reset_slot(slot)
+		var interval: Variant = slot.get("interval")
+		if interval is HSlider:
+			SliderSpinLinkScr.reset_to_number(interval as HSlider, CycleRandomScr.SHUFFLE_DEFAULT, false)
+	for i in _autoplay.size():
+		_set_tab_autoplay(i, false)
+	_pending_play_tab = -1
+	if asset_tabs:
+		asset_tabs.current_tab = TAB_ENV
+	# Recreate the left asset rows after their stored customizations are cleared.
+	# Without this, existing rows kept displaying their old per-item UI values.
+	_rebuild_all_lists()
+	_refresh_status()
 	_save_session_now()
+
+
+func _reset_sidebar_driven_spin(spin: SpinBox, value: float) -> void:
+	if spin == null:
+		return
+	var slider := SliderSpinLinkScr.slider_of_spin(spin)
+	if slider:
+		SliderSpinLinkScr.reset_to_number(slider, value, false)
+	else:
+		spin.set_value_no_signal(value)
+
+
+func reset_all_to_defaults() -> void:
+	## Public entry point used by the sole visible reset button in the Effects sidebar.
+	_on_reset_to_defaults()
 	if status_label:
 		status_label.text = "Stage + effects reset to defaults"
 
@@ -2910,6 +3129,7 @@ func _reset_sidebar_entry_customizations() -> void:
 	_reset_entries_customizations(_env_entries, "environment")
 	_reset_entries_customizations(_main_entries, "centerpiece")
 	_reset_entries_customizations(_scatter_entries, "scatter")
+	_reset_entries_customizations(_light_entries, "lighting")
 
 
 func _reset_entries_customizations(entries: Array[Dictionary], layer_id: String) -> void:
