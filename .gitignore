@@ -24,3 +24,7 @@ tools/ffmpeg/ffmpeg.exe
 tools/ffmpeg/ffprobe.exe
 tools/ffmpeg/*.zip
 tools/ffmpeg/extract/
+
+# Private local notes — never publish these with the public project.
+issue_log.md
+issues/
