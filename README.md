@@ -64,10 +64,3 @@ Drop `.glb`/`.gltf`/`.tscn` files into your show's `content/` folder. For GIFs, 
 
 By default HyperSpace captures the **microphone** for FFT analysis. For DJ mixer or system audio, route audio to an input device or use a virtual cable (e.g. VB-Audio on Windows).
 
-## Kinect
-
-See [docs/kinect_setup.md](docs/kinect_setup.md). Run KinectV2-OSC on Windows; HyperSpace listens on UDP port **12345**.
-
-## Development in Cursor
-
-All show logic is in GDScript and JSON — no Blueprints or visual scripting required. Edit scripts, shaders, and `show.json` manifests directly in Cursor.
